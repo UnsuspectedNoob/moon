@@ -1,0 +1,399 @@
+This is the most satisfying part of the process. We are now building **The Bridge**.
+
+Currently, you have a pile of bricks (Tokens) on one side and a machine (VM) on the other. **The Compiler** is the worker that picks up the bricks and arranges them into instructions for the machine.
+
+### Phase 3: The Pratt Parser (Expression Compilation)
+
+We are using a **Pratt Parser** (Top-Down Operator Precedence). This is the gold standard for interpreters because it handles operator precedence (like `*` before `+`) using a simple table rather than a complex mess of `if/else` statements.
+
+We will write `src/compiler.c`. This file will:
+
+1. Ask the Scanner for a token.
+2. Look up that token in a **Rule Table**.
+3. Execute the function associated with that token (e.g., if it sees a number, call `number()`).
+4. Emit the corresponding Bytecode to the Chunk.
+
+---
+
+### 1. `src/compiler.h`
+
+Simple interface. "Here is source code; put the bytecode into this chunk."
+
+```c
+#ifndef MOON_COMPILER_H
+#define MOON_COMPILER_H
+
+#include "vm.h"
+
+bool compile(const char* source, Chunk* chunk);
+
+#endif
+
+```
+
+### 2. `src/compiler.c`
+
+This is a dense file, but it's the brain of the language.
+
+**Key Concept:** `Precedence`.
+The enum `Precedence` orders how "sticky" operators are. `*` (FACTOR) is stickier than `+` (TERM).
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "common.h"
+#include "compiler.h"
+#include "scanner.h"
+
+#ifdef DEBUG_PRINT_CODE
+#include "debug.h"
+#endif
+
+typedef struct {
+  Token current;
+  Token previous;
+  bool hadError;
+  bool panicMode;
+} Parser;
+
+// Order of operations (lowest to highest)
+typedef enum {
+  PREC_NONE,
+  PREC_ASSIGNMENT,  // =
+  PREC_OR,          // or
+  PREC_AND,         // and
+  PREC_EQUALITY,    // == !=
+  PREC_COMPARISON,  // < > <= >=
+  PREC_TERM,        // + -
+  PREC_FACTOR,      // * /
+  PREC_UNARY,       // ! -
+  PREC_CALL,        // . ()
+  PREC_PRIMARY
+} Precedence;
+
+typedef void (*ParseFn)();
+
+typedef struct {
+  ParseFn prefix;
+  ParseFn infix;
+  Precedence precedence;
+} ParseRule;
+
+Parser parser;
+Chunk* compilingChunk;
+
+static Chunk* currentChunk() {
+  return compilingChunk;
+}
+
+// -- Error Handling --
+
+static void errorAt(Token* token, const char* message) {
+  if (parser.panicMode) return;
+  parser.panicMode = true;
+  fprintf(stderr, "[line %d] Error", token->line);
+
+  if (token->type == TOKEN_EOF) {
+    fprintf(stderr, " at end");
+  } else if (token->type == TOKEN_ERROR) {
+    // Nothing.
+  } else {
+    fprintf(stderr, " at '%.*s'", token->length, token->start);
+  }
+
+  fprintf(stderr, ": %s\n", message);
+  parser.hadError = true;
+}
+
+static void error(const char* message) {
+  errorAt(&parser.previous, message);
+}
+
+static void errorAtCurrent(const char* message) {
+  errorAt(&parser.current, message);
+}
+
+// -- Token Advancement --
+
+static void advance() {
+  parser.previous = parser.current;
+
+  for (;;) {
+    parser.current = scanToken();
+    if (parser.current.type != TOKEN_ERROR) break;
+
+    errorAtCurrent(parser.current.start);
+  }
+}
+
+static void consume(TokenType type, const char* message) {
+  if (parser.current.type == type) {
+    advance();
+    return;
+  }
+  errorAtCurrent(message);
+}
+
+// -- Bytecode Emission --
+
+static void emitByte(uint8_t byte) {
+  writeChunk(currentChunk(), byte, parser.previous.line);
+}
+
+static void emitBytes(uint8_t byte1, uint8_t byte2) {
+  emitByte(byte1);
+  emitByte(byte2);
+}
+
+static void emitReturn() {
+  emitByte(OP_RETURN);
+}
+
+static uint8_t makeConstant(Value value) {
+  int constant = addConstant(currentChunk(), value);
+  if (constant > 255) {
+    error("Too many constants in one chunk.");
+    return 0;
+  }
+  return (uint8_t)constant;
+}
+
+static void emitConstant(Value value) {
+  emitBytes(OP_CONSTANT, makeConstant(value));
+}
+
+// -- Parsing Expressions --
+
+static void expression();
+static ParseRule* getRule(TokenType type);
+static void parsePrecedence(Precedence precedence);
+
+static void binary() {
+  TokenType operatorType = parser.previous.type;
+  ParseRule* rule = getRule(operatorType);
+  parsePrecedence((Precedence)(rule->precedence + 1));
+
+  switch (operatorType) {
+    case TOKEN_PLUS:          emitByte(OP_ADD); break;
+    case TOKEN_MINUS:         emitByte(OP_SUBTRACT); break;
+    case TOKEN_STAR:          emitByte(OP_MULTIPLY); break;
+    case TOKEN_SLASH:         emitByte(OP_DIVIDE); break;
+    default: return; // Unreachable.
+  }
+}
+
+static void grouping() {
+  expression();
+  consume(TOKEN_RIGHT_PAREN, "Expect ')' after expression.");
+}
+
+static void number() {
+  double value = strtod(parser.previous.start, NULL);
+  emitConstant(value);
+}
+
+static void unary() {
+  TokenType operatorType = parser.previous.type;
+
+  // Compile the operand.
+  parsePrecedence(PREC_UNARY);
+
+  // Emit the operator instruction.
+  switch (operatorType) {
+    case TOKEN_MINUS: emitByte(OP_NEGATE); break;
+    default: return; // Unreachable.
+  }
+}
+
+// -- The Pratt Parsing Core --
+
+static void parsePrecedence(Precedence precedence) {
+  advance();
+  ParseFn prefixRule = getRule(parser.previous.type)->prefix;
+  if (prefixRule == NULL) {
+    error("Expect expression.");
+    return;
+  }
+
+  prefixRule();
+
+  while (precedence <= getRule(parser.current.type)->precedence) {
+    advance();
+    ParseFn infixRule = getRule(parser.previous.type)->infix;
+    infixRule();
+  }
+}
+
+// -- The Rule Table --
+// This maps tokens to {Prefix Function, Infix Function, Precedence}
+
+ParseRule rules[] = {
+  [TOKEN_LEFT_PAREN]    = {grouping, NULL,   PREC_NONE},
+  [TOKEN_RIGHT_PAREN]   = {NULL,     NULL,   PREC_NONE},
+  [TOKEN_LEFT_BRACKET]  = {NULL,     NULL,   PREC_NONE}, 
+  [TOKEN_RIGHT_BRACKET] = {NULL,     NULL,   PREC_NONE},
+  [TOKEN_COMMA]         = {NULL,     NULL,   PREC_NONE},
+  [TOKEN_DOT]           = {NULL,     NULL,   PREC_NONE},
+  [TOKEN_MINUS]         = {unary,    binary, PREC_TERM},
+  [TOKEN_PLUS]          = {NULL,     binary, PREC_TERM},
+  [TOKEN_SLASH]         = {NULL,     binary, PREC_FACTOR},
+  [TOKEN_STAR]          = {NULL,     binary, PREC_FACTOR},
+  [TOKEN_NUMBER]        = {number,   NULL,   PREC_NONE},
+  // We will fill in more (strings, identifiers) later
+  [TOKEN_EOF]           = {NULL,     NULL,   PREC_NONE},
+};
+
+static ParseRule* getRule(TokenType type) {
+  return &rules[type];
+}
+
+static void expression() {
+  parsePrecedence(PREC_ASSIGNMENT);
+}
+
+bool compile(const char* source, Chunk* chunk) {
+  initScanner(source);
+  compilingChunk = chunk;
+
+  parser.hadError = false;
+  parser.panicMode = false;
+
+  advance();
+  expression();
+  consume(TOKEN_EOF, "Expect end of expression.");
+  
+  emitReturn();
+  return !parser.hadError;
+}
+
+```
+
+### 3. Update `src/vm.c`
+
+We need to change `interpret` to take source code, call `compile`, and then run.
+
+**Replace the old `interpret` function with this:**
+
+```c
+#include "compiler.h" // Add this include
+
+// ... (keep initVM, freeVM, push, pop, run)
+
+InterpretResult interpret(const char* source) {
+  Chunk chunk;
+  initChunk(&chunk);
+
+  if (!compile(source, &chunk)) {
+    freeChunk(&chunk);
+    return INTERPRET_COMPILE_ERROR;
+  }
+
+  vm.chunk = &chunk;
+  vm.ip = vm.chunk->code;
+
+  InterpretResult result = run();
+
+  freeChunk(&chunk);
+  return result;
+}
+
+```
+
+### 4. Update `src/vm.h`
+
+Update the prototype.
+
+```c
+InterpretResult interpret(const char* source);
+
+```
+
+### 5. Update `src/main.c`
+
+Now we have a real calculator REPL!
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "common.h"
+#include "chunk.h"
+#include "debug.h"
+#include "vm.h"
+
+static void repl() {
+  char line[1024];
+  for (;;) {
+    printf("> ");
+
+    if (!fgets(line, sizeof(line), stdin)) {
+      printf("\n");
+      break;
+    }
+
+    interpret(line);
+  }
+}
+
+int main(int argc, char* argv[]) {
+  initVM();
+  repl();
+  freeVM();
+  return 0;
+}
+
+```
+
+### 6. Update `Makefile`
+
+Add `src/compiler.c` to the source list.
+
+```makefile
+SRC = src/main.c src/compiler.c src/scanner.c src/value.c src/chunk.c src/debug.c src/vm.c
+
+```
+
+### Run it
+
+Compile and run.
+
+```bash
+make
+./moon
+
+```
+
+**Try these inputs:**
+
+```text
+> 1 + 2
+3
+> 1 + 2 * 3
+7
+> (1 + 2) * 3
+9
+> -5 + 10
+5
+> 10 / 2
+5
+
+```
+
+**What just happened?**
+
+1. You typed `1 + 2 * 3`.
+2. `compile()` started. It saw `1` (`number()`), emitted `OP_CONSTANT`.
+3. It saw `+`. The rule for `+` is `PREC_TERM`.
+4. It saw `2`.
+5. It saw `*`. The rule for `*` is `PREC_FACTOR` (Higher than `+`).
+6. Because `*` is higher, it grabbed `3` immediately and emitted `OP_MULTIPLY`.
+7. Then it finished the `+` and emitted `OP_ADD`.
+8. The VM ran the resulting bytecode: `PUSH 1, PUSH 2, PUSH 3, MULT, ADD`.
+
+If this works, we have successfully completed the **"Calculator Phase."**
+
+**Next Step (Phase 4):**
+We need memory. We need variables. We need **The Stack** to persist data across statements.
+Are you ready to implement `let`, `set`, and global/local variables?

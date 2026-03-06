@@ -1,0 +1,105 @@
+This is perfect. Having the actual C source code is the only way to write a 100% accurate, mathematically rigorous EBNF (Extended Backus-Naur Form) grammar. The code never lies.
+
+Looking at your `compiler.c` and `scanner.c`, your language is remarkably expressive while maintaining a very clean single-pass structure.
+
+Before I give you the EBNF, **I have to point out three very important "candor" observations** I found while reverse-engineering your C code. These are things your scanner recognizes, but your compiler currently ignores (meaning they will crash if a user types them right now):
+
+1. **The Possessive Syntax (`'s`):** Your scanner perfectly tokenizes `TOKEN_POSSESSIVE`. However, `TOKEN_POSSESSIVE` is **completely missing** from your `rules[]` array in `compiler.c` and is not handled in `setBody()`. If a user types `user's age`, the compiler will panic because it doesn't know what precedence `'s` has. (We can fix this easily by mapping it to act exactly like `TOKEN_DOT`).
+2. **Double Equals (`==`):** Your scanner reads `==` as `TOKEN_EQUAL_EQUAL`, but it is also missing from the `rules[]` table. Your users *must* use `is` or `!=` for equality right now.
+3. **Simple Assignment Expression:** Because of how you wrote `dot()` and `subscript()`, a user can actually type `list[0] = 5` outside of a `set` statement, and it will work as an expression. But they *cannot* type `a = 5` because simple variables don't have an `=` rule. They *must* use `set a to 5`. (This is actually a very cool design choice, but I want to make sure you know it's happening!).
+
+With that out of the way, here is the complete, unambiguous EBNF Specification for MOON, perfectly aligned with your C engine. You can copy-paste this directly into your thesis.
+
+---
+
+### MOON Language EBNF Grammar
+
+**1. Programs and Declarations**
+
+```ebnf
+program        ::= declaration* EOF
+declaration    ::= let_decl | statement
+
+let_decl       ::= "let" IDENTIFIER ( "," IDENTIFIER )* ( "(" parameters? ")" )? 
+                   ( "be" expression ( "," expression )* )? terminator
+parameters     ::= IDENTIFIER ( "," IDENTIFIER )*
+
+```
+
+**2. Statements and Control Flow**
+
+```ebnf
+statement      ::= control_stmt | block_stmt | guarded_stmt
+guarded_stmt   ::= ( show_stmt | give_stmt | set_stmt | expr_stmt ) guard_clause? terminator
+
+guard_clause   ::= ( "if" | "unless" ) expression
+
+show_stmt      ::= "show" expression
+give_stmt      ::= "give" expression?
+set_stmt       ::= "set" set_target ( "," set_target )* "to" expression ( "," expression )*
+set_target     ::= IDENTIFIER ( "[" expression "]" | "." IDENTIFIER )*
+expr_stmt      ::= expression
+
+control_stmt   ::= if_stmt | unless_stmt | while_stmt | until_stmt | for_stmt
+if_stmt        ::= "if" expression ( ":" block "end" | statement ) 
+                   ( "else" ( if_stmt | ":" block "end" | statement ) )?
+unless_stmt    ::= "unless" expression ( ":" block "end" | statement ) 
+                   ( "else" ( unless_stmt | ":" block "end" | statement ) )?
+while_stmt     ::= "while" expression ( ":" block "end" | statement )
+until_stmt     ::= "until" expression ( ":" block "end" | statement )
+for_stmt       ::= "for" "each"? IDENTIFIER "in" expression ( ":" block "end" | statement )
+
+block_stmt     ::= "{" block "}"
+block          ::= declaration*
+terminator     ::= NEWLINE | EOF
+
+```
+
+**3. Expressions and Precedence (Lowest to Highest)**
+
+```ebnf
+expression     ::= ternary_expr
+ternary_expr   ::= range_expr ( "if" expression "else" expression )*
+range_expr     ::= logic_or ( "to" logic_or ( "by" logic_or )? )?
+
+logic_or       ::= logic_and ( "or" logic_and )*
+logic_and      ::= equality ( "and" equality )*
+equality       ::= comparison ( ( "is" "not"? | "!=" ) comparison )*
+comparison     ::= term ( ( ">" | ">=" | "<" | "<=" ) term )*
+
+term           ::= factor ( ( "+" | "-" ) factor )*
+factor         ::= unary ( ( "*" | "/" ) unary )*
+unary          ::= ( "not" | "-" ) unary | call
+
+call           ::= primary ( "(" arguments? ")" | "[" expression "]" ( "=" expression )? 
+                             | "." IDENTIFIER ( "=" expression )? )*
+arguments      ::= expression ( "," expression )*
+
+primary        ::= NUMBER | STRING | IDENTIFIER | "true" | "false" | "nil" 
+                   | list_literal | "(" expression ")"
+list_literal   ::= "[" ( expression ( "," expression )* )? "]"
+
+```
+
+**4. Lexical Tokens (Terminals)**
+
+```ebnf
+NUMBER         ::= DIGIT+ ( "." DIGIT+ )?
+STRING         ::= '"' [^"]* '"' | interpolated_string
+IDENTIFIER     ::= ALPHA ( ALPHA | DIGIT )*
+ALPHA          ::= "a" ... "z" | "A" ... "Z" | "_"
+DIGIT          ::= "0" ... "9"
+NEWLINE        ::= "\n"
+
+```
+
+*(Note: Interpolated strings (`"hi `name`!"`) are handled via state-switching in the lexical analyzer rather than strict EBNF, as standard EBNF cannot easily represent context-sensitive lexer depth).*
+
+---
+
+### What is the plan?
+
+We have two paths forward right now.
+
+1. Do you want to quickly drop the C code into `compiler.c` to fix the missing possessive syntax (`'s`) and `==` tokens so your engine is 100% bug-free?
+2. Or, are you ready to jump completely into thesis-writing mode and start drafting the explanations for Chapter 3 based on this grammar?

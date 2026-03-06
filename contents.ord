@@ -1,0 +1,260 @@
+@@ ============================================================================
+@@ MOON LANGUAGE SPECIFICATION (MASTER PLAN)
+@@ ============================================================================
+@@ This file outlines every grammatical structure and feature of the language.
+@@ It serves as the roadmap for the Scanner, Parser, and VM implementation.
+@@ ============================================================================
+
+@@ ----------------------------------------------------------------------------
+@@ SECTION 1: LEXICAL STRUCTURE (The Scanner)
+@@ ----------------------------------------------------------------------------
+@@ 1.1 Comments
+@@     - Single line using '@@'
+@@     - (Optional) Multi-line blocks
+
+@@ 1.2 Literals & Primitives
+@@     - Numbers (Integers, Floats)
+@@     - Booleans (true, false)
+@@     - Null (null)
+@@     - Strings ("Double Quoted")
+@@     - String Interpolation ("Hello `name`")
+
+@@ 1.3 Separators
+@@     - Newlines as statement terminators
+@@     - Indentation (Optional or Significant? Currently we use 'end')
+@@     - The Dot '.' (Strictly for Indexing/Offset)
+@@     - The Possessive "'s" (Strictly for Named Properties)
+
+
+@@ ----------------------------------------------------------------------------
+@@ SECTION 2: VARIABLES & DATA (The Stack)
+@@ ----------------------------------------------------------------------------
+@@ 2.1 Declaration
+@@     - 'let x be v' (Standard)
+@@     - 'let x, y be v1, v2' (Multi-assignment / Unpacking)
+
+@@ 2.2 Scoping
+@@     - Block scope visibility (variables inside 'if' die at 'end')
+@@     - Shadowing (re-declaring a variable in a child scope)
+
+@@ 2.3 Assignment (The 'Set' Command)
+@@     - 'set x to v'
+@@     - 'set x, y to y, x' (Parallel Swapping)
+@@     - 'set list.0 to v' (Index assignment, valid l-values)
+
+@@ 2.4 Collections (Lists)
+@@     - Literal syntax: [1, 2, 3]
+@@     - Index Access: list.0 (First item)
+@@     - Relative Access: list[-1] (Last item)
+@@     - Slicing: list[1 to end]
+@@     - Spread/Rest: [1, ...others] (Future)
+
+
+@@ ----------------------------------------------------------------------------
+@@ SECTION 3: THE POLYMORPHIC "ADD" (The Engine)
+@@ ----------------------------------------------------------------------------
+@@ 3.1 Arithmetic Add
+@@     - add 1 to x
+
+@@ 3.2 Collection Append
+@@     - add item to list
+
+@@ 3.3 Vectorized Add
+@@     - add (1, 2) to (x, y)
+
+@@ 3.4 Broadcast Add
+@@     - add item to (list_a, list_b)
+
+
+@@ ----------------------------------------------------------------------------
+@@ SECTION 4: CONTROL FLOW (The Logic)
+@@ ----------------------------------------------------------------------------
+@@ 4.1 Conditionals
+@@     - if / else if / else
+@@     - unless (Negated if)
+@@     - The "Is" Operator (Pattern Matching): 'if x is even'
+
+@@ 4.2 Loops
+@@     - while condition: ... end
+@@     - until condition: ... end
+@@     - for each item in list: ... end
+
+@@ 4.3 Guards (Postfix Logic)
+@@     - statement if condition (e.g., 'quit if error')
+@@     - statement unless condition
+
+@@ 4.4 Range Loops
+@@     - for i in 1 to 10
+
+
+@@ ----------------------------------------------------------------------------
+@@ SECTION 5: FUNCTIONS (The Verbs)
+@@ ----------------------------------------------------------------------------
+@@ 5.1 Standard Functions
+@@     - let name (args): ... end
+
+@@ 5.2 Phrasal Functions (The Signature Trie)
+@@     - let move (item) from (source) to (dest): ... end
+
+@@ 5.3 Single-Line / Expression Bodies
+@@     - let double(x) give x * 2
+
+@@ 5.4 Return Values
+@@     - 'give' keyword
+
+
+@@ ----------------------------------------------------------------------------
+@@ SECTION 6: TYPES & OBJECTS (The Nouns)
+@@ ----------------------------------------------------------------------------
+@@ 6.1 Type Definition
+@@     - type Person is (args): ... end
+
+@@ 6.2 Properties (Stored)
+@@     - name is "Value"
+
+@@ 6.3 Computed Properties (Getters)
+@@     - is_adult is => age >= 18
+
+@@ 6.4 Methods
+@@     - name (args): ... end
+
+@@ 6.5 Instantiation
+@@     - let p be Person("Name", 20)
+
+@@ 6.6 Access
+@@     - p's name (Property access)
+
+
+@@ ----------------------------------------------------------------------------
+@@ SECTION 7: STANDARD LIBRARY (The Toolkit)
+@@ ----------------------------------------------------------------------------
+@@ 7.1 I/O
+@@     - show (Print)
+@@     - ask (Input - Future)
+
+@@ 7.2 Math Utils
+@@     - min, max, clamp, random
+
+@@ 7.3 List Utils
+@@     - length, reverse, sort
+
+@@ ============================================================================
+@@ MOON LANGUAGE SPECIFICATION (MASTER PLAN) v1.1
+@@ ============================================================================
+
+@@ ----------------------------------------------------------------------------
+@@ SECTION 1: LEXICAL STRUCTURE
+@@ ----------------------------------------------------------------------------
+@@ 1.1 Comments & Formatting
+@@     - Single line using '@@'
+@@     - Newlines as statement terminators
+
+@@ 1.2 Literals
+@@     - Numbers (Integers, Floats)
+@@     - Booleans (true, false)
+@@     - Null (null)
+@@     - Strings ("Double Quoted")
+@@     - String Interpolation ("Hello `name`")
+
+@@ 1.3 Separators
+@@     - The Dot '.' (Strictly for Numeric Indexing/Offset)
+@@     - The Possessive "'s" (Strictly for Named Property Lookup)
+@@     - The Comma ',' (For lists and parallel structures)
+
+
+@@ ----------------------------------------------------------------------------
+@@ SECTION 2: VARIABLES & DATA
+@@ ----------------------------------------------------------------------------
+@@ 2.1 Declaration
+@@     - 'let x be v'
+@@     - 'let x, y be v1, v2' (Destructuring Declaration)
+
+@@ 2.2 Assignment (The 'Set' Command)
+@@     - 'set x to v'
+@@     - 'set x, y to y, x' (Parallel Swapping)
+@@     - 'set list.0 to v' (Index assignment)
+
+@@ 2.3 Collections (Lists)
+@@     - Literal: [1, 2, 3]
+@@     - Slicing: list[1 to end]
+@@     - Negative Indexing: list[-1]
+
+
+@@ ----------------------------------------------------------------------------
+@@ SECTION 3: THE POLYMORPHIC "ADD"
+@@ ----------------------------------------------------------------------------
+@@ 3.1 Arithmetic & Append
+@@     - add 1 to x
+@@     - add item to list
+
+@@ 3.2 Vectorized & Broadcast
+@@     - add (1, 2) to (x, y)
+@@     - add item to (list_a, list_b)
+
+
+@@ ----------------------------------------------------------------------------
+@@ SECTION 4: CONTROL FLOW
+@@ ----------------------------------------------------------------------------
+@@ 4.1 Conditionals
+@@     - if / else if / else
+@@     - unless (Negated if)
+@@     - The "Is" Operator (Pattern Matching): 'if x is even'
+
+@@ 4.2 Loops
+@@     - while / until
+@@     - for each item in list
+@@     - for i in 1 to 10
+
+@@ 4.3 Jump Statements
+@@     - skip (Continue to next iteration)
+@@     - break (Exit loop)
+@@     - quit (Terminate program)
+@@     - return / give (Exit function)
+
+@@ 4.4 Guards (Postfix)
+@@     - skip if condition
+@@     - quit if condition
+
+
+@@ ----------------------------------------------------------------------------
+@@ SECTION 5: FUNCTIONS & PREDICATES
+@@ ----------------------------------------------------------------------------
+@@ 5.1 Standard Functions
+@@     - let name (args): ... end
+
+@@ 5.2 Phrasal Functions
+@@     - let move (item) from (src) to (dest): ... end
+
+@@ 5.3 Predicate Definitions (Reverse Syntax)
+@@     - let (x) is even: ... end
+
+@@ 5.4 Expression Bodies
+@@     - let double of (x) give x * 2
+
+print(double(2))
+
+@@ ----------------------------------------------------------------------------
+@@ SECTION 6: TYPES & OBJECTS
+@@ ----------------------------------------------------------------------------
+@@ 6.1 Type Definition
+@@     - type Person is (args): ... end
+
+@@ 6.2 Properties
+@@     - name is "Value" (Stored)
+@@     - is_adult is => age >= 18 (Computed)
+
+@@ 6.3 Methods (Closures)
+@@     - name (args): ... end
+@@     - greets (name) in (language): ... end (Phrasal Method)
+
+@@ 6.4 Instantiation & Access
+@@     - let p be Person("Name")
+@@     - p's name
+
+
+@@ ----------------------------------------------------------------------------
+@@ SECTION 7: FUTURE / TBD
+@@ ----------------------------------------------------------------------------
+@@ 7.1 Error Handling (try / catch?)
+@@ 7.2 Modules (import / export)
+@@ 7.3 The Standard Library (IO, Math, System)

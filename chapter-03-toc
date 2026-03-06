@@ -1,0 +1,32 @@
+3.0 Introduction
+3.1 Research Methodology
+  3.1.1 Iterative and Incremental Development Model
+3.2 Analysis of the Proposed System
+  3.2.1 Functional Requirements
+  3.2.2 Non-Functional Requirements (Performance, Memory, Pedagogy)
+3.3 High-Level System Architecture
+  3.3.1 The Compilation Pipeline and Data Flow
+  3.3.2 State Transition Architecture
+3.4 Language Specification and Formal Grammar
+  3.4.1 Lexical Elements (Keywords, Identifiers, Operators)
+  3.4.2 Context-Free Grammar (EBNF Representation)
+  3.4.3 Syntactic Innovations: Sticky Subjects and Anaphoric Scope
+3.5 Front-End Design: The Single-Pass Compiler
+  3.5.1 The Lexical Analyser (Scanner) Architecture
+  3.5.2 Top-Down Recursive Descent Parsing Model
+  3.5.3 Pratt Parsing Algorithm for Operator Precedence
+  3.5.4 ByteCode Emission and the "Chunk" Data Structure
+  3.5.5 Syntax Error Detection and Panic Mode Recovery (Added)
+3.6 Back-End Design: The Virtual Machine (VM)
+  3.6.1 Instruction Set Architecture (ISA) and OpCodes
+  3.6.2 The Operand Stack and the Fetch-Decode-Execute Cycle
+  3.6.3 Call Frames, User-Defined Functions, and Scope Resolution
+  3.6.4 Native Function Binding (C-Interface Integration) (Added)
+  3.6.5 Runtime Error Handling and Stack Tracing (Added)
+3.7 Memory Management and Data Structures
+  3.7.1 Dynamic Type Representation (The Value System / Tagged Unions)
+  3.7.2 Object Allocation and Heap Management
+  3.7.3 The Mark-and-Sweep Garbage Collection Algorithm
+3.8 System Interfaces
+  3.8.1 Command-Line Interface (CLI) Architecture
+  3.8.2 Interactive Mode (REPL) vs. File Execution Mode

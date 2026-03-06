@@ -1,0 +1,469 @@
+I am glad the Scanner is solid. Now we build the engine that runs the code.
+
+### Phase 2: The Virtual Machine & Bytecode
+
+We are building a **Stack-Based Virtual Machine**.
+This means instructions don't say "add register A to register B". They say "pop two numbers, add them, and push the result."
+
+To make this work, we need three new components:
+
+1. **Values:** A way to represent data (starting with `double` for numbers).
+2. **Chunks:** A dynamic array (buffer) that holds the bytecode instructions.
+3. **The VM:** A loop that reads the Chunk and modifies the Stack.
+
+We will not write the Parser (Compiler) in this step. Instead, we will **manually assemble** a chunk of code in `main.c` to prove the VM works. This isolates bugs: if it crashes, it's the VM, not the Parser.
+
+---
+
+### 1. `src/value.h` & `src/value.c`
+
+We need a constant pool. When you write `print 123`, the `123` is stored in a "Value Array", and the bytecode just refers to its index.
+
+**`src/value.h`**
+
+```c
+#ifndef MOON_VALUE_H
+#define MOON_VALUE_H
+
+#include "common.h"
+
+// For now, all values are doubles. 
+// Phase 5 will upgrade this to a Tagged Union (for Strings/Objects).
+typedef double Value;
+
+typedef struct {
+  int capacity;
+  int count;
+  Value* values;
+} ValueArray;
+
+void initValueArray(ValueArray* array);
+void writeValueArray(ValueArray* array, Value value);
+void freeValueArray(ValueArray* array);
+void printValue(Value value);
+
+#endif
+
+```
+
+**`src/value.c`**
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "memory.h" // We will define a simple realloc wrapper later
+#include "value.h"
+
+void initValueArray(ValueArray* array) {
+  array->values = NULL;
+  array->capacity = 0;
+  array->count = 0;
+}
+
+void writeValueArray(ValueArray* array, Value value) {
+  if (array->capacity < array->count + 1) {
+    int oldCapacity = array->capacity;
+    array->capacity = (oldCapacity < 8) ? 8 : oldCapacity * 2;
+    // We use standard realloc for now, simplified
+    array->values = (Value*)realloc(array->values, sizeof(Value) * array->capacity);
+  }
+
+  array->values[array->count] = value;
+  array->count++;
+}
+
+void freeValueArray(ValueArray* array) {
+  free(array->values);
+  initValueArray(array);
+}
+
+void printValue(Value value) {
+  printf("%g", value);
+}
+
+```
+
+---
+
+### 2. `src/chunk.h` & `src/chunk.c`
+
+A "Chunk" is a blob of bytecode. It holds the instructions (`code`) and the constants (`constants`).
+
+**`src/chunk.h`**
+
+```c
+#ifndef MOON_CHUNK_H
+#define MOON_CHUNK_H
+
+#include "common.h"
+#include "value.h"
+
+// The Instruction Set Architecture (ISA)
+typedef enum {
+  OP_CONSTANT, // Load a number onto the stack
+  OP_ADD,      // +
+  OP_SUBTRACT, // -
+  OP_MULTIPLY, // *
+  OP_DIVIDE,   // /
+  OP_NEGATE,   // - (Unary)
+  OP_RETURN,   // Stop execution
+} OpCode;
+
+typedef struct {
+  int count;
+  int capacity;
+  uint8_t* code;    // The actual bytecode bytes
+  int* lines;       // Line number for each byte (for debugging)
+  ValueArray constants; // The pool of numbers/strings
+} Chunk;
+
+void initChunk(Chunk* chunk);
+void freeChunk(Chunk* chunk);
+void writeChunk(Chunk* chunk, uint8_t byte, int line);
+int addConstant(Chunk* chunk, Value value);
+
+#endif
+
+```
+
+**`src/chunk.c`**
+
+```c
+#include <stdlib.h>
+
+#include "chunk.h"
+
+void initChunk(Chunk* chunk) {
+  chunk->count = 0;
+  chunk->capacity = 0;
+  chunk->code = NULL;
+  chunk->lines = NULL;
+  initValueArray(&chunk->constants);
+}
+
+void freeChunk(Chunk* chunk) {
+  free(chunk->code);
+  free(chunk->lines);
+  freeValueArray(&chunk->constants);
+  initChunk(chunk);
+}
+
+void writeChunk(Chunk* chunk, uint8_t byte, int line) {
+  if (chunk->capacity < chunk->count + 1) {
+    int oldCapacity = chunk->capacity;
+    chunk->capacity = (oldCapacity < 8) ? 8 : oldCapacity * 2;
+    chunk->code = (uint8_t*)realloc(chunk->code, sizeof(uint8_t) * chunk->capacity);
+    chunk->lines = (int*)realloc(chunk->lines, sizeof(int) * chunk->capacity);
+  }
+
+  chunk->code[chunk->count] = byte;
+  chunk->lines[chunk->count] = line;
+  chunk->count++;
+}
+
+int addConstant(Chunk* chunk, Value value) {
+  writeValueArray(&chunk->constants, value);
+  return chunk->constants.count - 1; // Return index of the new constant
+}
+
+```
+
+---
+
+### 3. `src/debug.h` & `src/debug.c` (The Disassembler)
+
+This is **critical**. You cannot debug bytecode by staring at raw numbers. This tool translates `00 01` into `OP_CONSTANT 1.2`.
+
+**`src/debug.h`**
+
+```c
+#ifndef MOON_DEBUG_H
+#define MOON_DEBUG_H
+
+#include "chunk.h"
+
+void disassembleChunk(Chunk* chunk, const char* name);
+int disassembleInstruction(Chunk* chunk, int offset);
+
+#endif
+
+```
+
+**`src/debug.c`**
+
+```c
+#include <stdio.h>
+#include "debug.h"
+#include "value.h"
+
+void disassembleChunk(Chunk* chunk, const char* name) {
+  printf("== %s ==\n", name);
+
+  for (int offset = 0; offset < chunk->count;) {
+    offset = disassembleInstruction(chunk, offset);
+  }
+}
+
+static int simpleInstruction(const char* name, int offset) {
+  printf("%s\n", name);
+  return offset + 1;
+}
+
+static int constantInstruction(const char* name, Chunk* chunk, int offset) {
+  uint8_t constant = chunk->code[offset + 1];
+  printf("%-16s %4d '", name, constant);
+  printValue(chunk->constants.values[constant]);
+  printf("'\n");
+  return offset + 2;
+}
+
+int disassembleInstruction(Chunk* chunk, int offset) {
+  printf("%04d ", offset);
+  if (offset > 0 && chunk->lines[offset] == chunk->lines[offset - 1]) {
+    printf("   | ");
+  } else {
+    printf("%4d ", chunk->lines[offset]);
+  }
+
+  uint8_t instruction = chunk->code[offset];
+  switch (instruction) {
+    case OP_RETURN:
+      return simpleInstruction("OP_RETURN", offset);
+    case OP_CONSTANT:
+      return constantInstruction("OP_CONSTANT", chunk, offset);
+    case OP_ADD:
+      return simpleInstruction("OP_ADD", offset);
+    case OP_SUBTRACT:
+      return simpleInstruction("OP_SUBTRACT", offset);
+    case OP_MULTIPLY:
+      return simpleInstruction("OP_MULTIPLY", offset);
+    case OP_DIVIDE:
+      return simpleInstruction("OP_DIVIDE", offset);
+    case OP_NEGATE:
+      return simpleInstruction("OP_NEGATE", offset);
+    default:
+      printf("Unknown opcode %d\n", instruction);
+      return offset + 1;
+  }
+}
+
+```
+
+---
+
+### 4. `src/vm.h` & `src/vm.c` (The Heart)
+
+The VM maintains the `stack` and the `ip` (Instruction Pointer).
+
+**`src/vm.h`**
+
+```c
+#ifndef MOON_VM_H
+#define MOON_VM_H
+
+#include "chunk.h"
+#include "value.h"
+
+#define STACK_MAX 256
+
+typedef enum {
+  INTERPRET_OK,
+  INTERPRET_COMPILE_ERROR,
+  INTERPRET_RUNTIME_ERROR
+} InterpretResult;
+
+typedef struct {
+  Chunk* chunk;
+  uint8_t* ip; // Instruction Pointer (points to next byte of code)
+  Value stack[STACK_MAX];
+  Value* stackTop; // Points to where the NEXT value will go
+} VM;
+
+void initVM();
+void freeVM();
+InterpretResult interpret(Chunk* chunk);
+void push(Value value);
+Value pop();
+
+#endif
+
+```
+
+**`src/vm.c`**
+
+```c
+#include <stdio.h>
+
+#include "common.h"
+#include "debug.h"
+#include "vm.h"
+
+VM vm;
+
+void initVM() {
+  vm.stackTop = vm.stack;
+}
+
+void freeVM() {
+}
+
+void push(Value value) {
+  *vm.stackTop = value;
+  vm.stackTop++;
+}
+
+Value pop() {
+  vm.stackTop--;
+  return *vm.stackTop;
+}
+
+static InterpretResult run() {
+#define READ_BYTE() (*vm.ip++)
+#define READ_CONSTANT() (vm.chunk->constants.values[READ_BYTE()])
+#define BINARY_OP(op) \
+    do { \
+      double b = pop(); \
+      double a = pop(); \
+      push(a op b); \
+    } while (false)
+
+  for (;;) {
+    
+    // Debug Trace: Print stack and current instruction
+    #ifdef DEBUG_TRACE_EXECUTION
+    printf("          ");
+    for (Value* slot = vm.stack; slot < vm.stackTop; slot++) {
+      printf("[ ");
+      printValue(*slot);
+      printf(" ]");
+    }
+    printf("\n");
+    disassembleInstruction(vm.chunk, (int)(vm.ip - vm.chunk->code));
+    #endif
+
+    uint8_t instruction;
+    switch (instruction = READ_BYTE()) {
+      case OP_CONSTANT: {
+        Value constant = READ_CONSTANT();
+        push(constant);
+        break;
+      }
+      case OP_ADD:      BINARY_OP(+); break;
+      case OP_SUBTRACT: BINARY_OP(-); break;
+      case OP_MULTIPLY: BINARY_OP(*); break;
+      case OP_DIVIDE:   BINARY_OP(/); break;
+      case OP_NEGATE:   push(-pop()); break;
+      case OP_RETURN: {
+        printValue(pop());
+        printf("\n");
+        return INTERPRET_OK;
+      }
+    }
+  }
+
+#undef READ_BYTE
+#undef READ_CONSTANT
+#undef BINARY_OP
+}
+
+InterpretResult interpret(Chunk* chunk) {
+  vm.chunk = chunk;
+  vm.ip = vm.chunk->code;
+  return run();
+}
+
+```
+
+---
+
+### 5. `src/main.c` (Manual Test Harness)
+
+We replace the previous Scanner test with a VM test.
+We will manually program the VM to calculate `-((1.2 + 3.4) / 5.6)`.
+
+**`src/main.c`**
+
+```c
+#include <stdio.h>
+#include "common.h"
+#include "chunk.h"
+#include "debug.h"
+#include "vm.h"
+
+int main(int argc, char* argv[]) {
+  initVM();
+
+  Chunk chunk;
+  initChunk(&chunk);
+
+  // Manually writing bytecode for: -((1.2 + 3.4) / 5.6)
+  
+  // 1. Load 1.2
+  int constant = addConstant(&chunk, 1.2);
+  writeChunk(&chunk, OP_CONSTANT, 123);
+  writeChunk(&chunk, constant, 123);
+
+  // 2. Load 3.4
+  constant = addConstant(&chunk, 3.4);
+  writeChunk(&chunk, OP_CONSTANT, 123);
+  writeChunk(&chunk, constant, 123);
+
+  // 3. Add them (Stack: 4.6)
+  writeChunk(&chunk, OP_ADD, 123);
+
+  // 4. Load 5.6
+  constant = addConstant(&chunk, 5.6);
+  writeChunk(&chunk, OP_CONSTANT, 123);
+  writeChunk(&chunk, constant, 123);
+
+  // 5. Divide (4.6 / 5.6)
+  writeChunk(&chunk, OP_DIVIDE, 123);
+
+  // 6. Negate
+  writeChunk(&chunk, OP_NEGATE, 123);
+
+  // 7. Return (Print result)
+  writeChunk(&chunk, OP_RETURN, 123);
+
+  // Verify by disassembling first
+  disassembleChunk(&chunk, "test chunk");
+  
+  // Run it
+  printf("\n== EXECUTION ==\n");
+  interpret(&chunk);
+
+  freeChunk(&chunk);
+  freeVM();
+  return 0;
+}
+
+```
+
+### Instructions
+
+1. Enable debugging in `src/common.h` by uncommenting:
+```c
+#define DEBUG_TRACE_EXECUTION 
+
+```
+
+
+*(This is crucial to watch the stack moving!)*
+2. Update your Makefile:
+```makefile
+SRC = src/main.c src/chunk.c src/memory.c src/debug.c src/value.c src/vm.c src/scanner.c
+
+```
+
+
+*(Wait, I haven't given you `memory.c` yet, but I used `realloc` directly. Remove `src/memory.c` from the makefile list for now, or just create a dummy one. Better yet, just use standard `stdlib.h` functions as written above).*
+
+**Run the VM.**
+You should see:
+
+1. The disassembly (the code we wrote).
+2. The stack growing and shrinking step-by-step.
+3. The final result: `-0.8214...`
+
+**Does the VM behave as expected?** If yes, we are ready for the **Parser** (Phase 3), where we will finally connect the tokens to this bytecode engine.

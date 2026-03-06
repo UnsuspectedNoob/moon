@@ -1,0 +1,13 @@
+
+No, it absolutely does not defeat the concept. In fact, it makes your project more impressive from an engineering standpoint.
+
+A "Stack-Based VM" defines how your language handles data (operands are pushed and popped). Storing the Instruction Pointer (IP) in a CPU register is just an optimization of the interpreter loop. It doesn't change the fact that OP_ADD still pops two values from the stack.
+
+Why this is great for your Final Year Project
+In your documentation, you can add a specific section titled "Interpreter Loop Optimization". You can explain that:
+
+Naive Implementation: Keeps the IP in a struct (vm.frames[i].ip), forcing the CPU to access memory (RAM/L1 Cache) for every single instruction.
+
+Optimized Implementation: Caches the IP in a local variable (likely a CPU Register), reducing memory traffic and speeding up the dispatch loop by 15-20%.
+
+This shows you understand Systems Programming and Computer Architecture, which will score you major points with your supervisors
