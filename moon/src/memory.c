@@ -6,6 +6,8 @@
 #include "vm.h"
 
 void *reallocate(void *pointer, size_t oldSize, size_t newSize) {
+  (void)oldSize; // Silence unused parameter warning
+
   if (newSize == 0) {
     free(pointer);
     return NULL;
@@ -20,7 +22,6 @@ void *reallocate(void *pointer, size_t oldSize, size_t newSize) {
 void freeObject(Obj *object) {
   switch (object->type) {
   case OBJ_RANGE: {
-    // Ranges don't own any other memory, so just free the struct.
     FREE(ObjRange, object);
     break;
   }
@@ -36,6 +37,18 @@ void freeObject(Obj *object) {
     ObjString *string = (ObjString *)object;
     FREE_ARRAY(char, string->chars, string->length + 1);
     FREE(ObjString, object);
+    break;
+  }
+
+  case OBJ_FUNCTION: {
+    ObjFunction *function = (ObjFunction *)object;
+    freeChunk(&function->chunk); // Free the bytecode!
+    FREE(ObjFunction, object);
+    break;
+  }
+
+  case OBJ_NATIVE: {
+    FREE(ObjNative, object);
     break;
   }
   }

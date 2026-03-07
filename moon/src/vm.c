@@ -55,6 +55,8 @@ static void defineNative(const char *name, NativeFn function) {
 }
 
 static Value clockNative(int argCount, Value *args) {
+  (void)argCount; // Silence warning
+  (void)args;     // Silence warning
   return NUMBER_VAL((double)clock() / CLOCKS_PER_SEC);
 }
 
@@ -752,6 +754,62 @@ static InterpretResult run() {
       }
 
       runtimeError("Can only call functions and classes.");
+      return INTERPRET_RUNTIME_ERROR;
+    }
+
+    case OP_CALL_PHRASAL: {
+      int argCount = READ_BYTE();
+      Value function = pop(); // The function is currently at the very top
+
+      // We need to shift the stack: [Arg1] [Arg2] -> [Function] [Arg1] [Arg2]
+      // 1. Expand the stack by 1 to make room
+      vm.stackTop++;
+
+      // 2. Shift all the arguments up by one memory slot
+      for (int i = 0; i < argCount; i++) {
+        *(vm.stackTop - 1 - i) = *(vm.stackTop - 2 - i);
+      }
+
+      // 3. Slide the function into the bottom slot, right where OP_CALL expects
+      // it!
+      *(vm.stackTop - 1 - argCount) = function;
+
+      // 4. Execute standard call logic (Using your inline execution
+      // architecture)
+      Value callee = function;
+
+      if (IS_NATIVE(callee)) {
+        NativeFn native = AS_NATIVE(callee);
+        Value result = native(argCount, vm.stackTop - argCount);
+        vm.stackTop -= argCount + 1;
+        push(result);
+        break;
+      } else if (IS_FUNCTION(callee)) {
+        ObjFunction *func = AS_FUNCTION(callee);
+        if (argCount != func->arity) {
+          runtimeError("Expected %d arguments but got %d.", func->arity,
+                       argCount);
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        if (vm.frameCount == FRAMES_MAX) {
+          runtimeError("Stack overflow.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        // Setup the CallFrame manually
+        frame->ip = ip;
+        CallFrame *newFrame = &vm.frames[vm.frameCount++];
+        newFrame->function = func;
+        newFrame->ip = func->chunk.code;
+        newFrame->slots = vm.stackTop - argCount - 1;
+
+        frame = newFrame;
+        ip = frame->ip;
+        break;
+      }
+
+      runtimeError("Can only call functions and native classes.");
       return INTERPRET_RUNTIME_ERROR;
     }
 

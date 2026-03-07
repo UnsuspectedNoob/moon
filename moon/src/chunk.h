@@ -51,6 +51,7 @@ typedef enum {
   OP_GET_ITER, // <--- Add this
 
   OP_CALL,
+  OP_CALL_PHRASAL,
   OP_CLOSURE,
   OP_RETURN,
 } OpCode;
