@@ -200,7 +200,8 @@ static TokenType identifierType() {
         return checkKeyword(2, 1, "l", TOKEN_NIL);
       }
     }
-    return checkKeyword(1, 3, "il", TOKEN_NIL);
+
+    break;
   }
 
   case 'o':
@@ -208,6 +209,9 @@ static TokenType identifierType() {
 
   case 'q':
     return checkKeyword(1, 3, "uit", TOKEN_QUIT);
+
+  case 'r':
+    return checkKeyword(1, 5, "eturn", TOKEN_GIVE);
 
   case 's': {
     if (scanner.current - scanner.start > 1) {

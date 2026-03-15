@@ -60,6 +60,20 @@ static Value clockNative(int argCount, Value *args) {
   return NUMBER_VAL((double)clock() / CLOCKS_PER_SEC);
 }
 
+static Value addToListNative(int argCount, Value *args) {
+  (void)argCount; // We know it's 2 because of the signature!
+
+  Value item = args[0];
+  Value listVal = args[1];
+
+  if (IS_LIST(listVal)) {
+    appendList(AS_LIST(listVal), item);
+  } else {
+    runtimeError("Cannot add item to a non-list.");
+  }
+  return listVal;
+}
+
 void initVM() {
   resetStack();
   vm.objects = NULL;
@@ -75,6 +89,9 @@ void initVM() {
 
   // Define native function
   defineNative("clock", clockNative);
+
+  // Register the Phrasal Native Function
+  defineNative("add$1_to$1", addToListNative);
 }
 
 void freeVM() {
@@ -211,6 +228,23 @@ static InterpretResult run() {
       // 2. Fast Path: Two Strings
       else if (IS_STRING(peek(0)) && IS_STRING(peek(1))) {
         concatenate(); // Takes care of popping and pushing result
+      }
+
+      // 2.5 Fast Path: Two Lists (Concatenation)
+      else if (IS_LIST(peek(0)) && IS_LIST(peek(1))) {
+        ObjList *b = AS_LIST(pop());
+        ObjList *a = AS_LIST(pop());
+
+        ObjList *result = newList();
+        push(OBJ_VAL(result)); // GC Protection
+
+        for (int i = 0; i < a->count; i++)
+          appendList(result, a->items[i]);
+        for (int i = 0; i < b->count; i++)
+          appendList(result, b->items[i]);
+
+        pop();                 // Clean the GC protected result
+        push(OBJ_VAL(result)); // Push the final result to the stack
       }
 
       // 3. Mixed Types: Convert both to strings

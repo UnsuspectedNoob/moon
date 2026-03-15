@@ -13,6 +13,10 @@ typedef struct {
   Token previous;
   bool hadError;
   bool panicMode;
+
+  // --- PHASE 3: SPECULATIVE PARSING FLAGS ---
+  bool isSpeculating;     // Are we currently guessing an overload path?
+  bool speculationFailed; // Did the guess hit a syntax error?
 } Parser;
 
 // The global parser state

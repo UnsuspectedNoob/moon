@@ -17,6 +17,16 @@ void errorAt(Token *token, const char *message) {
   if (parser.panicMode)
     return;
 
+  // ========================================================
+  // PHASE 3: THE SILENT TRAPDOOR
+  // If we are just guessing, do NOT print the error to the user!
+  // Just raise the failure flag so the interceptor can catch it.
+  // ========================================================
+  if (parser.isSpeculating) {
+    parser.speculationFailed = true;
+    return;
+  }
+
   parser.panicMode = true;
   fprintf(stderr, "[line %d] Error", token->line);
 
@@ -110,20 +120,12 @@ void ignoreNewlines() {
 }
 
 void consumeEnd() {
-  // 1. If we hit a newline, eat it and we are good.
   if (match(TOKEN_NEWLINE))
     return;
-
-  // 2. If we hit EOF, we are good.
   if (check(TOKEN_EOF))
     return;
-
-  // 3. Soft Terminators: These tokens imply the current statement is over,
-  //    so we STOP parsing here, but we do NOT consume them.
-  //    (The parent syntax, like 'if', will consume the 'else')
   if (check(TOKEN_ELSE) || check(TOKEN_END) || check(TOKEN_RIGHT_BRACE))
     return;
 
-  // 4. If none of the above, THEN we complain.
   errorAtCurrent("Expect newline or end of statement.");
 }

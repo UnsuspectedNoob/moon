@@ -7,7 +7,7 @@
 #include "value.h"
 
 #define STACK_MAX 256
-#define FRAMES_MAX 64
+#define FRAMES_MAX 128
 
 // Represents one running function call
 typedef struct {

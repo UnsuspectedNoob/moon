@@ -1,55 +1,61 @@
+// scout.h
 #ifndef MOON_SCOUT_H
 #define MOON_SCOUT_H
 
 #include "common.h"
 #include "scanner.h"
 
+// Forward declaration so paths can hold children
+struct SignatureNode;
+
 // ==========================================
-// PHRASAL FUNCTION TRIE
+// THE OVERLOAD FOREST
 // ==========================================
 
-typedef struct TrieNode {
-  uint32_t hash;      // The hashed token label (e.g., hash("from"))
-  int segmentArity;   // Args immediately following this word
-  int totalArity;     // Total args for the final VM call
-  bool isTerminal;    // True if this ends a valid phrase
-  char *stitchedName; // The name the VM sees: "move_from_to"
+// 1. THE GUESS: Represents a specific path we can take based on arity
+typedef struct OverloadPath {
+  int segmentArity;  // How many args to parse right now? (e.g., 0 or 1)
+  bool isTerminal;   // Does the function end here?
+  char *mangledName; // The VM name: "move$1_to$1"
 
-  // Dynamic array of child nodes
+  // What words can come NEXT if we take this path?
   int childCount;
   int childCapacity;
-  struct TrieNode **children;
-} TrieNode;
+  struct SignatureNode **children;
+} OverloadPath;
+
+// 2. THE WORD: The physical label in the code (e.g., "greet")
+typedef struct SignatureNode {
+  uint32_t hash; // Hash of the token label
+
+  // The list of all valid guesses (arities) for this word
+  int pathCount;
+  int pathCapacity;
+  OverloadPath *paths;
+} SignatureNode;
 
 // ==========================================
 // GLOBALS EXPOSED TO THE COMPILER
 // ==========================================
 
-// The Token Cache
 extern Token *tokenStream;
 extern int tokenCount;
 extern int tokenCapacity;
 extern int currentTokenIndex;
 
-// The Trie States
-extern TrieNode *signatureTrieRoot;
-extern TrieNode *activePhraseNode;
+// The root of the Overload Forest
+extern SignatureNode *signatureTrieRoot;
 
 // ==========================================
 // PUBLIC API
 // ==========================================
 
-// Initializes the scanner, fills the Token Cache, and prepares the Root Trie
-// Node
 void initScout(const char *source);
-
-// Cleans up the Token Cache and frees the entire Trie from memory
 void freeScout();
-
-// The core Pass 0 function that maps out the signatures
 void hoistSignatures();
-
-// Helper to check if a token is a valid phrasal label (Identifier or Keyword)
 bool isLabelToken(Token *token);
+
+// --- NEW NATIVE INJECTOR ---
+void injectNativeSignature(const char *mangled);
 
 #endif

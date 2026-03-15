@@ -1,4 +1,3 @@
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -7,6 +6,7 @@
 #include "memory.h"
 #include "object.h"
 #include "parser.h"
+#include "scanner.h"
 #include "scout.h"
 
 // ==========================================
@@ -37,6 +37,9 @@ typedef struct {
   Precedence precedence;
 } ParseRule;
 
+// The global context tracker to stop the math parser from eating labels!
+OverloadPath *activePhrasePath = NULL;
+
 // Forward declarations
 static void expression();
 static void statement();
@@ -65,88 +68,208 @@ static uint8_t parseVariable(const char *errorMessage) {
   return identifierConstant(&parser.previous);
 }
 
+// =========================================================================
+// PHASE 4: THE SPECULATIVE PARSER ALGORITHM
+// =========================================================================
+
+typedef struct {
+  bool success;
+  char *mangledName;
+  int totalArgs;
+} SpeculationResult;
+
+static SpeculationResult trySignature(SignatureNode *node) {
+  SpeculationResult bestResult = {false, NULL, 0};
+  int maxTokensConsumed = -1;
+
+  // We need a chunk to store the bytecode of the WINNING path!
+  Chunk bestChunk;
+  initChunk(&bestChunk);
+
+  int bestTokenIndex = currentTokenIndex;
+  Token bestCurrent = parser.current;
+  Token bestPrevious = parser.previous;
+
+  int originalTokenIndex = currentTokenIndex;
+  Token originalCurrent = parser.current;
+  Token originalPrevious = parser.previous;
+
+  for (int p = 0; p < node->pathCount; p++) {
+    OverloadPath *path = &node->paths[p];
+
+    // 1. Reset state for this attempt
+    currentTokenIndex = originalTokenIndex;
+    parser.current = originalCurrent;
+    parser.previous = originalPrevious;
+
+    parser.isSpeculating = true;
+    parser.speculationFailed = false;
+
+    // 2. Draft the Bytecode
+    ScopedChunk draft;
+    beginScopeChunk(&draft);
+
+    OverloadPath *prevActive = activePhrasePath;
+    activePhrasePath = path;
+
+    int argsParsed = 0;
+    for (int i = 0; i < path->segmentArity; i++) {
+      expression();
+      if (parser.speculationFailed)
+        break;
+      argsParsed++;
+
+      if (i < path->segmentArity - 1) {
+        consume(TOKEN_COMMA, "Expect ',' between arguments.");
+        if (parser.speculationFailed)
+          break;
+      }
+    }
+
+    activePhrasePath = prevActive;
+
+    if (parser.speculationFailed) {
+      endScopeChunk(&draft);
+      freeChunk(&draft.tempChunk); // Discard failed guess!
+      continue;
+    }
+
+    // 3. Check for deeper chains
+    bool childMatched = false;
+    SpeculationResult childRes = {false, NULL, 0};
+
+    if (isLabelToken(&parser.current)) {
+      uint32_t nextHash =
+          hashString(parser.current.start, parser.current.length);
+      for (int c = 0; c < path->childCount; c++) {
+        if (path->children[c]->hash == nextHash) {
+
+          int beforeChildIndex = currentTokenIndex;
+          Token beforeChildCur = parser.current;
+          Token beforeChildPrev = parser.previous;
+
+          advance(); // Eat the deeper label
+
+          childRes = trySignature(path->children[c]);
+
+          if (childRes.success) {
+            childMatched = true;
+            break; // We found a valid child path!
+          }
+
+          // Child failed. Rewind to try other children/fallback.
+          currentTokenIndex = beforeChildIndex;
+          parser.current = beforeChildCur;
+          parser.previous = beforeChildPrev;
+          parser.isSpeculating = true;
+          parser.speculationFailed = false;
+        }
+      }
+    }
+
+    endScopeChunk(&draft);
+
+    // 4. Evaluate Success & Maximal Munch Check
+    if (childMatched || path->isTerminal) {
+      int tokensConsumed = currentTokenIndex - originalTokenIndex;
+
+      // Is this the longest valid path we've found so far?
+      if (tokensConsumed > maxTokensConsumed) {
+        maxTokensConsumed = tokensConsumed;
+        bestResult.success = true;
+        bestResult.mangledName =
+            childMatched ? childRes.mangledName : path->mangledName;
+        bestResult.totalArgs =
+            argsParsed + (childMatched ? childRes.totalArgs : 0);
+
+        // Swap out the best drafted bytecode
+        freeChunk(&bestChunk);
+        bestChunk = draft.tempChunk;
+
+        // Save the parser state where this best path ended!
+        bestTokenIndex = currentTokenIndex;
+        bestCurrent = parser.current;
+        bestPrevious = parser.previous;
+      } else {
+        freeChunk(
+            &draft.tempChunk); // It succeeded, but it's shorter. Throw it away.
+      }
+    } else {
+      freeChunk(&draft.tempChunk); // Not terminal and no children matched.
+    }
+  }
+
+  // 5. Commit the absolute BEST match!
+  if (bestResult.success) {
+    // Write the winning bytecode into the main chunk
+    for (int i = 0; i < bestChunk.count; i++) {
+      writeChunk(currentChunk(), bestChunk.code[i], bestChunk.lines[i]);
+    }
+    freeChunk(&bestChunk);
+
+    // Restore the token cursor to where the winning path ended
+    currentTokenIndex = bestTokenIndex;
+    parser.current = bestCurrent;
+    parser.previous = bestPrevious;
+
+    return bestResult;
+  }
+
+  // No match found across any paths
+  freeChunk(&bestChunk);
+  return bestResult;
+}
+
 static void variable() {
   Token name = parser.previous;
   uint32_t hash = hashString(name.start, name.length);
 
-  TrieNode *phrasalRoot = NULL;
-  if (signatureTrieRoot != NULL) {
-    for (int i = 0; i < signatureTrieRoot->childCount; i++) {
-      if (signatureTrieRoot->children[i]->hash == hash) {
-        phrasalRoot = signatureTrieRoot->children[i];
+  // 1. Check if this is a Phrasal Root Word!
+  SignatureNode *rootNode = NULL;
+  if (signatureTrieRoot != NULL && signatureTrieRoot->pathCount > 0) {
+    OverloadPath *rootPath =
+        &signatureTrieRoot->paths[0]; // Get the starting path!
+    for (int i = 0; i < rootPath->childCount; i++) {
+      if (rootPath->children[i]->hash == hash) {
+        rootNode = rootPath->children[i];
         break;
       }
     }
   }
 
-  if (phrasalRoot != NULL) {
-    int totalArgCount = 0;
-    TrieNode *currentPhrase = phrasalRoot;
+  // 2. THE SPECULATIVE INTERCEPT
+  if (rootNode != NULL) {
+    int savedIndex = currentTokenIndex;
+    Token savedCurrent = parser.current;
+    Token savedPrevious = parser.previous;
 
-    for (;;) {
-      activePhraseNode = currentPhrase;
+    SpeculationResult res = trySignature(rootNode);
 
-      for (int i = 0; i < currentPhrase->segmentArity; i++) {
-        expression();
-        totalArgCount++;
+    if (res.success) {
+      Token syntheticName;
+      syntheticName.start = res.mangledName;
+      syntheticName.length = (int)strlen(res.mangledName);
+      uint8_t globalName = identifierConstant(&syntheticName);
 
-        if (i < currentPhrase->segmentArity - 1) {
-          consume(TOKEN_COMMA, "Expect ',' between arguments in segment.");
-        }
-      }
+      emitBytes(OP_GET_GLOBAL, globalName);
+      emitBytes(OP_CALL_PHRASAL, (uint8_t)res.totalArgs);
 
-      activePhraseNode = NULL;
-
-      if (currentPhrase->isTerminal) {
-        bool matchedChild = false;
-        if (isLabelToken(&parser.current)) {
-          uint32_t nextHash =
-              hashString(parser.current.start, parser.current.length);
-          for (int c = 0; c < currentPhrase->childCount; c++) {
-            if (currentPhrase->children[c]->hash == nextHash) {
-              matchedChild = true;
-              break;
-            }
-          }
-        }
-        if (!matchedChild)
-          break;
-      }
-
-      if (!isLabelToken(&parser.current)) {
-        error("Expect next label in phrasal function.");
-        return;
-      }
-      advance();
-
-      uint32_t nextHash =
-          hashString(parser.previous.start, parser.previous.length);
-      TrieNode *nextNode = NULL;
-      for (int c = 0; c < currentPhrase->childCount; c++) {
-        if (currentPhrase->children[c]->hash == nextHash) {
-          nextNode = currentPhrase->children[c];
-          break;
-        }
-      }
-
-      if (nextNode == NULL) {
-        error("Invalid phrasing for function call. Label doesn't match "
-              "signature.");
-        return;
-      }
-      currentPhrase = nextNode;
+      parser.isSpeculating = false; // Safety reset
+      parser.speculationFailed = false;
+      return;
+    } else {
+      // 3. FAILED REWIND: If no phrasing matched, revert entirely!
+      currentTokenIndex = savedIndex;
+      parser.current = savedCurrent;
+      parser.previous = savedPrevious;
+      parser.isSpeculating = false;
+      parser.speculationFailed = false;
+      error("Invalid phrasing for function call. No matching overload found.");
+      return;
     }
-
-    Token syntheticName;
-    syntheticName.start = currentPhrase->stitchedName;
-    syntheticName.length = (int)strlen(currentPhrase->stitchedName);
-    uint8_t globalName = identifierConstant(&syntheticName);
-
-    emitBytes(OP_GET_GLOBAL, globalName);
-    emitBytes(OP_CALL_PHRASAL, (uint8_t)totalArgCount);
-    return;
   }
 
+  // 4. Standard Variable Logic
   uint8_t getOp;
   int arg = resolveLocal(current, &name);
 
@@ -182,20 +305,16 @@ static void string() {
   while (parser.previous.type == TOKEN_STRING_OPEN ||
          parser.previous.type == TOKEN_STRING_MIDDLE) {
 
-    // BLINDFOLD
-    TrieNode *enclosingPhrase = activePhraseNode;
-    activePhraseNode = NULL;
+    OverloadPath *enclosingPhrase = activePhrasePath;
+    activePhrasePath = NULL;
 
     expression();
 
-    // REMOVE BLINDFOLD
-    activePhraseNode = enclosingPhrase;
-
+    activePhrasePath = enclosingPhrase;
     partCount++;
 
     if (partCount > 255)
       error("Too many parts in interpolated string.");
-
     advance();
 
     if (parser.previous.type == TOKEN_STRING_MIDDLE) {
@@ -238,14 +357,12 @@ static void literal() {
 static void grouping() {
   ignoreNewlines();
 
-  // THE BLINDFOLD
-  TrieNode *enclosingPhrase = activePhraseNode;
-  activePhraseNode = NULL;
+  OverloadPath *enclosingPhrase = activePhrasePath;
+  activePhrasePath = NULL;
 
   expression();
 
-  // REMOVE BLINDFOLD
-  activePhraseNode = enclosingPhrase;
+  activePhrasePath = enclosingPhrase;
 
   consume(TOKEN_RIGHT_PAREN, "Expect ')' after expression.");
 }
@@ -336,8 +453,8 @@ static void or_() {
 static uint8_t argumentList() {
   uint8_t argCount = 0;
 
-  TrieNode *enclosingPhrase = activePhraseNode;
-  activePhraseNode = NULL;
+  OverloadPath *enclosingPhrase = activePhrasePath;
+  activePhrasePath = NULL;
 
   if (!check(TOKEN_RIGHT_PAREN)) {
     do {
@@ -352,7 +469,7 @@ static uint8_t argumentList() {
   ignoreNewlines();
   consume(TOKEN_RIGHT_PAREN, "Expect ')' after arguments.");
 
-  activePhraseNode = enclosingPhrase;
+  activePhrasePath = enclosingPhrase;
   return argCount;
 }
 
@@ -365,8 +482,8 @@ static void list() {
   int itemCount = 0;
   ignoreNewlines();
 
-  TrieNode *enclosingPhrase = activePhraseNode;
-  activePhraseNode = NULL;
+  OverloadPath *enclosingPhrase = activePhrasePath;
+  activePhrasePath = NULL;
 
   if (!check(TOKEN_RIGHT_BRACKET)) {
     do {
@@ -384,19 +501,19 @@ static void list() {
   consume(TOKEN_RIGHT_BRACKET, "Expect ']' after list.");
   emitBytes(OP_BUILD_LIST, (uint8_t)itemCount);
 
-  activePhraseNode = enclosingPhrase;
+  activePhrasePath = enclosingPhrase;
 }
 
 static void subscript() {
   addLocal(syntheticToken(".target"));
-  markInitialized(); // Note: markInitialized checks depth inside emitter.c
+  markInitialized();
 
-  TrieNode *enclosingPhrase = activePhraseNode;
-  activePhraseNode = NULL;
+  OverloadPath *enclosingPhrase = activePhrasePath;
+  activePhrasePath = NULL;
 
   expression();
 
-  activePhraseNode = enclosingPhrase;
+  activePhrasePath = enclosingPhrase;
 
   consume(TOKEN_RIGHT_BRACKET, "Expect ']' after index.");
   current->localCount--;
@@ -497,12 +614,14 @@ static void parsePrecedence(Precedence precedence) {
   prefixRule();
 
   while (precedence <= getRule(parser.current.type)->precedence) {
-    if (activePhraseNode != NULL && isLabelToken(&parser.current)) {
+
+    // Stop expressions from eating Phrasal Labels!
+    if (activePhrasePath != NULL && isLabelToken(&parser.current)) {
       uint32_t currentHash =
           hashString(parser.current.start, parser.current.length);
       bool isNextLabel = false;
-      for (int c = 0; c < activePhraseNode->childCount; c++) {
-        if (activePhraseNode->children[c]->hash == currentHash) {
+      for (int c = 0; c < activePhrasePath->childCount; c++) {
+        if (activePhrasePath->children[c]->hash == currentHash) {
           isNextLabel = true;
           break;
         }
@@ -814,7 +933,12 @@ static void forStatement() {
 
   Token iteratorName = parser.current;
   consume(TOKEN_IDENTIFIER, "Expect variable name.");
-  consume(TOKEN_IN, "Expect 'in' after variable name.");
+
+  if (check(TOKEN_IN))
+    consume(TOKEN_IN, "Expect 'in' or 'from' after variable name.");
+
+  if (check(TOKEN_FROM))
+    consume(TOKEN_FROM, "Expect 'in' or 'from' after variable name.");
 
   expression();
   emitByte(OP_GET_ITER);
@@ -885,29 +1009,30 @@ static void statement() {
 // DECLARATIONS
 // ==========================================
 
-static TrieNode *function(FunctionType type, Token *rootToken) {
+static OverloadPath *function(FunctionType type, Token *rootToken) {
   Compiler compiler;
   initCompiler(&compiler, type);
   beginScope();
 
-  TrieNode *currentNode = signatureTrieRoot;
+  // Walk the new Signature Trie Structure!
+  SignatureNode *currentNode = NULL;
   uint32_t firstHash = hashString(rootToken->start, rootToken->length);
-  bool foundRoot = false;
 
-  if (currentNode != NULL) {
-    for (int i = 0; i < currentNode->childCount; i++) {
-      if (currentNode->children[i]->hash == firstHash) {
-        currentNode = currentNode->children[i];
-        foundRoot = true;
+  if (signatureTrieRoot != NULL && signatureTrieRoot->pathCount > 0) {
+    OverloadPath *rootPath =
+        &signatureTrieRoot->paths[0]; // Get the starting path!
+    for (int i = 0; i < rootPath->childCount; i++) {
+      if (rootPath->children[i]->hash == firstHash) {
+        currentNode = rootPath->children[i];
         break;
       }
     }
   }
 
-  if (!foundRoot)
-    currentNode = NULL;
+  OverloadPath *currentPath = NULL;
 
   for (;;) {
+    int arity = 0;
     if (match(TOKEN_LEFT_PAREN)) {
       if (!check(TOKEN_RIGHT_PAREN)) {
         do {
@@ -917,27 +1042,44 @@ static TrieNode *function(FunctionType type, Token *rootToken) {
           }
           uint8_t constant = parseVariable("Expect parameter name.");
           defineVariable(constant);
+          arity++;
         } while (match(TOKEN_COMMA));
       }
       consume(TOKEN_RIGHT_PAREN, "Expect ')' after parameters.");
     }
 
-    if (currentNode != NULL && !currentNode->isTerminal &&
-        isLabelToken(&parser.current)) {
-      advance();
-      uint32_t nextHash =
-          hashString(parser.previous.start, parser.previous.length);
-      TrieNode *nextNode = NULL;
-      for (int i = 0; i < currentNode->childCount; i++) {
-        if (currentNode->children[i]->hash == nextHash) {
-          nextNode = currentNode->children[i];
+    // Match the Arity path for this word
+    if (currentNode != NULL) {
+      for (int p = 0; p < currentNode->pathCount; p++) {
+        if (currentNode->paths[p].segmentArity == arity) {
+          currentPath = &currentNode->paths[p];
           break;
         }
       }
-      currentNode = nextNode;
-    } else {
-      break;
     }
+
+    // Keep walking the Trie if the next word is a valid child label!
+    if (currentPath != NULL && isLabelToken(&parser.current)) {
+      uint32_t nextHash =
+          hashString(parser.current.start, parser.current.length);
+      SignatureNode *nextNode = NULL;
+      for (int i = 0; i < currentPath->childCount; i++) {
+        if (currentPath->children[i]->hash == nextHash) {
+          nextNode = currentPath->children[i];
+          break;
+        }
+      }
+
+      if (nextNode != NULL) {
+        advance(); // Eat the label (e.g., 'in')
+        currentNode = nextNode;
+        continue; // Loop again to parse the next segment!
+      }
+    }
+
+    // If we didn't find a matching child label, the signature is officially
+    // done!
+    break;
   }
 
   consume(TOKEN_COLON, "Expect ':' before function body.");
@@ -948,18 +1090,18 @@ static TrieNode *function(FunctionType type, Token *rootToken) {
 
   consume(TOKEN_END, "Expect 'end' after function body.");
 
-  ObjFunction *function = endCompiler();
+  ObjFunction *functionObj = endCompiler();
 
-  if (currentNode != NULL && currentNode->isTerminal &&
-      currentNode->stitchedName != NULL) {
-    function->name = copyString(currentNode->stitchedName,
-                                strlen(currentNode->stitchedName));
+  if (currentPath != NULL && currentPath->isTerminal &&
+      currentPath->mangledName != NULL) {
+    functionObj->name =
+        copyString(currentPath->mangledName, strlen(currentPath->mangledName));
   } else {
-    function->name = copyString(rootToken->start, rootToken->length);
+    functionObj->name = copyString(rootToken->start, rootToken->length);
   }
 
-  emitBytes(OP_CONSTANT, makeConstant(OBJ_VAL(function)));
-  return currentNode;
+  emitBytes(OP_CONSTANT, makeConstant(OBJ_VAL(functionObj)));
+  return currentPath;
 }
 
 static void varDeclaration() {
@@ -967,7 +1109,7 @@ static void varDeclaration() {
   Token token3 = tokenStream[currentTokenIndex];
 
   if (token3.type == TOKEN_LEFT_PAREN || token3.type == TOKEN_COLON ||
-      isLabelToken(&token3)) {
+      (isLabelToken(&token3) && token3.type != TOKEN_BE)) {
     isFunction = true;
   }
 
@@ -980,14 +1122,14 @@ static void varDeclaration() {
       markInitialized();
     }
 
-    TrieNode *terminalNode = function(TYPE_FUNCTION, &rootToken);
+    OverloadPath *terminalPath = function(TYPE_FUNCTION, &rootToken);
 
     if (current->scopeDepth == 0) {
       uint8_t globalName;
-      if (terminalNode != NULL && terminalNode->stitchedName != NULL) {
+      if (terminalPath != NULL && terminalPath->mangledName != NULL) {
         Token syntheticName;
-        syntheticName.start = terminalNode->stitchedName;
-        syntheticName.length = strlen(terminalNode->stitchedName);
+        syntheticName.start = terminalPath->mangledName;
+        syntheticName.length = strlen(terminalPath->mangledName);
         globalName = identifierConstant(&syntheticName);
       } else {
         globalName = identifierConstant(&rootToken);
@@ -1104,34 +1246,30 @@ static void declaration() {
 // ==========================================
 
 ObjFunction *compile(const char *source) {
-  // 1. Initialize our pre-processor (Lexes & caches all tokens)
   initScout(source);
-
-  // 2. Map out the English grammar Trie
   hoistSignatures();
 
-  // 3. Initialize Main Compiler
   Compiler compiler;
   initCompiler(&compiler, TYPE_SCRIPT);
   current = &compiler;
 
   parser.hadError = false;
   parser.panicMode = false;
+  parser.isSpeculating = false;
+  parser.speculationFailed = false;
 
-  advance(); // Pull first token from cache
+  advance();
 
-  // 4. The Main Pass
   while (!match(TOKEN_EOF)) {
     declaration();
   }
 
   emitReturn();
-  ObjFunction *function = compiler.function;
+  ObjFunction *functionObj = endCompiler();
 
-  // 5. Cleanup
   freeScout();
 
   if (parser.hadError)
     return NULL;
-  return function;
+  return functionObj;
 }

@@ -168,6 +168,7 @@ void appendList(ObjList *list, Value value) {
     list->capacity = GROW_CAPACITY(oldCapacity);
     list->items = GROW_ARRAY(Value, list->items, oldCapacity, list->capacity);
   }
+
   list->items[list->count] = value;
   list->count++;
 }
