@@ -3,8 +3,8 @@
 @@ ==========================================
 
 @@ Basic Definitions
-let name be "Munachi"
-let age  be 22
+let name       be "Munachi"
+let age        be 22
 let is_student be true
 
 @@ String Interpolation (The "Template" Feature)
@@ -48,14 +48,14 @@ add 5 to (x if x < 10 else y)
 
 @@ Post-Fix Guard Clauses (The "Clean" Style)
 @@ Replaces: if age > 100: quit end
-quit if age > 100
+quit() if age > 100
 give null unless is_student
 
 @@ Standard Loops
 let i be 0
 until i > 5:
-    show i
-    add 1 to i
+  show i
+  add 1 to i
 end
 
 @@ For-Each Loop
@@ -73,16 +73,16 @@ end
 @@ Type A: The "C-Style" (Single Segment)
 @@ Usage: max(10, 20)
 
-let max (a, b):
+let max(a, b):
   give a if a > b else b
 end
 
 @@ Type B: The "Phrasal" (Multi-Segment)
-@@ Usage: move("File.txt") from("Disk A") to("Disk B")
+@@ Usage: move "File.txt" from "Disk A" to "Disk B"
 
 let move (item) from (source) to (dest):
-    show "Moving {item}..."
-    @@ Logic to remove from source and add to dest would go here
+    show "Moving `item`..."
+    @@ Logic to remove from source and add to dest would also go here
 end
 
 @@ Type C: Expression Body (One-Liner)
@@ -92,11 +92,6 @@ let max (a, b) give a if a > b else b
 let add (a, b) give a + b
 
 
-
-let first name be "Miranda"
-show first name
-token_identifier('show', func) token_identifier('first', func) token_identifier('name', label)
-
 @@ ==========================================
 @@ 5. OBJECTS & PROPERTIES (Closures)
 @@ ==========================================
@@ -104,18 +99,16 @@ token_identifier('show', func) token_identifier('first', func) token_identifier(
 @@ Constructor Function (Defines a Type)
 type Person is (f, l, a):
   @@ 1. Stored Properties (Data)
-  first name is f @@ identifier identifier is function ?
-  last name is l
+  name is f @@ identifier identifier is function ?
+  lastName is l
   age is a
 
-  @@ 2. Computed Properties (The Arrow '=>')
-  @@ Calculated every time it is accessed.
-  is_adult is => age >= 18
+  @@ 2. Computed Properties (The Arrow '=>') ?
 
-  @@ 3. Methods (Closures)
+  @@ 2. Methods (Closures)
   greets (name) in (language):
     if language is "Spanish" 
-      show "Hola, soy Munachi, como te llamas"
+      show "Hola, soy Munachi, como te llamas ?"
     else
       show "`my name` greets `name`"
   end
@@ -125,7 +118,7 @@ end
 
 
 let numbers be [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-let a = numbers.map(n => n * 3) // JavaScript, how do we get something similar, Moon-style ?
+let a = numbers.map(n => n * 3) // this is JavaScript, how do we get something similar, Moon-style ?
 
 let result be []
 for each n in numbers
@@ -141,23 +134,6 @@ end
 
 reverse numbers
 
-// token-let token-( token-id token-) token-is token-even token-give
-// token-true token-if token-id[n] token-mod token-num[2] token-is
-// token-num[0] token-else token-false
-let (n) is even give true if n mod 2 is 0 else false
-let (user) is an admin give true if user's status is "admin" else false
-
-let x be 30
-if x is even show "`x` is even"
-let user be { status is "admin" }
-if user is not an admin show "access failed"
-
-show 5 is even // false
-
-token_identifier('show')
-token_number('5')
-token_is
-token_identifier('even')
 
 @@ Instantiation
 let user be Person("Munachi", 22)
@@ -167,27 +143,24 @@ show user's name        @@ "Munachi"
 show user's is_adult    @@ true (Computed on the fly)
 token_identifier('show') token_identifier('user') token_possessor token_identifier('is_adult')
 user greets "Munachi"   @@ Prints "Hi, I'm Munachi."
-TOKEN_IDENTIFIER('user')
-TOKEN_IDENTIFIER('greets')
 
 @@ Built-in Computed Properties
-let list be [1, 2, 3]
-let rev  be list's reverse  @@ Creates a new reversed copy
-show list's length          @@ 3
-show list                   @@ [3, 2, 1]
+let list be [1, 2, 3, 5]
+let rev  be list's reverse  @@ Creates a new reversed copy // [5, 3, 2, 1]
+show list's length          @@ 4
+show list                   @@ [1, 2, 3, 5]
 
-token_identifier token_type token_is
-
-Book type:
-  
+type Book:
+  name is "Harry Potter and the Philosopher's Stone"
+  author is "J. K. Rowling"
 end
 
-each <id> in <expr> <block>
+for each <id> in <expr> <block>
 
 let numbers be [1, 2, 3, 4]
 let squares = numbers.map(n => n * n)
 let squares be each i in numbers give n * n
-let tens be each n in 10 to 100 give n if n mod 10 is 0
+let tens be each n in 1 to 100 give n if n mod 10 is 0
 
 for each upper in each name in names give name's uppercase show upper
 

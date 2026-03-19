@@ -40,14 +40,13 @@
 @@ 2.3 Assignment (The 'Set' Command)
 @@     - 'set x to v'
 @@     - 'set x, y to y, x' (Parallel Swapping)
-@@     - 'set list.0 to v' (Index assignment, valid l-values)
+@@     - 'set list.1 to v' (Index assignment, valid l-values)
 
 @@ 2.4 Collections (Lists)
 @@     - Literal syntax: [1, 2, 3]
-@@     - Index Access: list.0 (First item)
+@@     - Index Access: list.1 (First item)
 @@     - Relative Access: list[-1] (Last item)
 @@     - Slicing: list[1 to end]
-@@     - Spread/Rest: [1, ...others] (Future)
 
 
 @@ ----------------------------------------------------------------------------

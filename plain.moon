@@ -15,26 +15,27 @@ let name be "Munachi"
 set name to "`name` Ukpai"
 add " Ukpai" to name
 set name, x to "both are changed to this"
-set a, b, c, d to "one", "after", "the", "other"
+set a, b, c, d to "a", "b", "c", "d"
 
 let i be 2
-let list be [1, 2, 3, 4]
-show list // [1, 2, 3, 4]
-show list.1 // 1
+let list be [10, 20, 30, 40]
+show list // [10, 20, 30, 40]
+show list.1 // 10
+show list.i // 20
 
-show list.(i + 1) // 3
-show list[1] // 1
-show list[-1] // 4
-show list[1 to 3] // [1, 2, 3]
-show list[1 to end] // [1, 2, 3, 4]
+show list.(i + 1) // 30
+show list[i + 1] // 30
+show list[1] // 10
+show list[-1] // 40
+show list[1 to 3] // [10, 20, 30]
+show list[1 to end] // [10, 20, 30, 40]
 show list's length // 4
-show list[end] // 4
+show list[end] // 40
 
-let type Stack:
+type Stack:
   items be []
-  length give items' length
+  length: give items' length end
   top give items[end]
+  push (item): add item to my items end
 end
-
-set stack's top to 5
 
