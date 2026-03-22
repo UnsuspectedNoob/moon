@@ -3,6 +3,7 @@
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -60,18 +61,12 @@ static Value clockNative(int argCount, Value *args) {
   return NUMBER_VAL((double)clock() / CLOCKS_PER_SEC);
 }
 
-static Value addToListNative(int argCount, Value *args) {
-  (void)argCount; // We know it's 2 because of the signature!
+static Value showNative(int argCount, Value *args) {
+  // Phrasal 'show' only expects 1 argument (the evaluated expression)
+  printValue(args[0]);
+  printf("\n"); // Always append the newline
 
-  Value item = args[0];
-  Value listVal = args[1];
-
-  if (IS_LIST(listVal)) {
-    appendList(AS_LIST(listVal), item);
-  } else {
-    runtimeError("Cannot add item to a non-list.");
-  }
-  return listVal;
+  return NIL_VAL; // Native functions must return something
 }
 
 void initVM() {
@@ -89,9 +84,7 @@ void initVM() {
 
   // Define native function
   defineNative("clock", clockNative);
-
-  // Register the Phrasal Native Function
-  defineNative("add$1_to$1", addToListNative);
+  defineNative("show$1", showNative);
 }
 
 void freeVM() {
@@ -172,8 +165,75 @@ static ObjString *valueToString(Value value) {
     return copyString("nil", 3);
   }
 
+  if (IS_DICT(value)) {
+    // For now, just print the type. We can write a full JSON stringifier later!
+    return copyString("<dict>", 6);
+  }
+  // --- LIST FORMATTING ---
+  if (IS_LIST(value)) {
+    ObjList *list = AS_LIST(value);
+
+    // Start with a reasonable buffer capacity
+    int capacity = 64;
+    int length = 0;
+    char *buffer = malloc(capacity);
+
+    buffer[length++] = '['; // Opening bracket
+
+    for (int i = 0; i < list->count; i++) {
+      // 1. Recursively convert the item into a string!
+      ObjString *itemStr = valueToString(list->items[i]);
+
+      // 2. Ensure the buffer is large enough for the item + ", ]\0"
+      while (length + itemStr->length + 4 > capacity) {
+        capacity *= 2;
+        buffer = realloc(buffer, capacity);
+      }
+
+      // 3. Copy the item's characters into our buffer
+      memcpy(buffer + length, itemStr->chars, itemStr->length);
+      length += itemStr->length;
+
+      // 4. Add the comma separator (if it's not the last item)
+      if (i < list->count - 1) {
+        buffer[length++] = ',';
+        buffer[length++] = ' ';
+      }
+    }
+
+    buffer[length++] = ']'; // Closing bracket
+    buffer[length] = '\0';  // Null terminator
+
+    // Transfer the raw C string into the VM's managed memory pool!
+    ObjString *result = copyString(buffer, length);
+    free(buffer);
+
+    return result;
+  }
+
   // Fallback for objects we haven't implemented yet
   return copyString("<object>", 8);
+}
+
+static bool getBuiltinProperty(Value object, ObjString *name, Value *result) {
+  // --- List Properties ---
+  if (IS_LIST(object)) {
+    if (strcmp(name->chars, "length") == 0 ||
+        strcmp(name->chars, "count") == 0) {
+      *result = NUMBER_VAL(AS_LIST(object)->count);
+      return true;
+    }
+  }
+  // --- String Properties ---
+  else if (IS_STRING(object)) {
+    if (strcmp(name->chars, "length") == 0 ||
+        strcmp(name->chars, "count") == 0) {
+      *result = NUMBER_VAL(AS_STRING(object)->length);
+      return true;
+    }
+  }
+
+  return false; // Not a recognized built-in property!
 }
 
 // Run()
@@ -218,56 +278,68 @@ static InterpretResult run() {
     }
 
     case OP_ADD: {
-      // 1. Fast Path: Two Numbers
-      if (IS_NUMBER(peek(0)) && IS_NUMBER(peek(1))) {
-        double b = AS_NUMBER(pop());
-        double a = AS_NUMBER(pop());
-        push(NUMBER_VAL(a + b));
+      Value b = peek(0); // Right operand
+      Value a = peek(1); // Left operand
+
+      // --- RULE 1: STRICT MATH (Number + Number) ---
+      if (IS_NUMBER(a) && IS_NUMBER(b)) {
+        double right = AS_NUMBER(pop());
+        double left = AS_NUMBER(pop());
+        push(NUMBER_VAL(left + right));
       }
 
-      // 2. Fast Path: Two Strings
-      else if (IS_STRING(peek(0)) && IS_STRING(peek(1))) {
-        concatenate(); // Takes care of popping and pushing result
-      }
-
-      // 2.5 Fast Path: Two Lists (Concatenation)
-      else if (IS_LIST(peek(0)) && IS_LIST(peek(1))) {
-        ObjList *b = AS_LIST(pop());
-        ObjList *a = AS_LIST(pop());
-
-        ObjList *result = newList();
-        push(OBJ_VAL(result)); // GC Protection
-
-        for (int i = 0; i < a->count; i++)
-          appendList(result, a->items[i]);
-        for (int i = 0; i < b->count; i++)
-          appendList(result, b->items[i]);
-
-        pop();                 // Clean the GC protected result
-        push(OBJ_VAL(result)); // Push the final result to the stack
-      }
-
-      // 3. Mixed Types: Convert both to strings
-      else if (IS_STRING(peek(0)) || IS_STRING(peek(1))) {
-        // Convert top two items to strings (even if they already are)
-        ObjString *b = valueToString(peek(0));
-        ObjString *a = valueToString(peek(1));
+      // --- RULE 2: THE COERCER (String + Any) ---
+      else if (IS_STRING(a)) {
+        ObjString *leftStr = AS_STRING(a);
+        ObjString *rightStr =
+            valueToString(b); // Dynamically stringify the right side!
 
         // Clean the stack
-        pop(); // Pop original b
-        pop(); // Pop original a
+        pop(); // Pop b
+        pop(); // Pop a
 
-        // Push the string versions
-        push(OBJ_VAL(a));
-        push(OBJ_VAL(b));
-
-        // Join them
+        // Push the string versions for the concatenate helper
+        push(OBJ_VAL(leftStr));
+        push(OBJ_VAL(rightStr));
         concatenate();
       }
 
-      // 4. Error
+      // --- RULE 3 & 4: LIST CLONING & MERGING (List + Any) ---
+      else if (IS_LIST(a)) {
+        ObjList *leftList = AS_LIST(a);
+
+        // 1. Allocate the brand new clone list
+        ObjList *newListObj = newList();
+
+        // Protect it from the Garbage Collector while we build it!
+        push(OBJ_VAL(newListObj));
+
+        // 2. Clone the original list into the new one (O(N) copy)
+        for (int i = 0; i < leftList->count; i++) {
+          appendList(newListObj, leftList->items[i]);
+        }
+
+        // 3. The Fork: Are we merging a list, or appending a single item?
+        if (IS_LIST(b)) {
+          ObjList *rightList = AS_LIST(b);
+          for (int i = 0; i < rightList->count; i++) {
+            appendList(newListObj, rightList->items[i]);
+          }
+        } else {
+          appendList(newListObj, b); // Just append the raw item
+        }
+
+        // 4. Clean up the stack
+        Value result = pop(); // Temporarily hold the finished newList
+        pop();                // Pop original b
+        pop();                // Pop original a
+        push(result);         // Push the brand new list back to the top!
+      }
+
+      // --- RULE 5: THE REJECTOR ---
       else {
-        runtimeError("Operands must be two numbers or two strings.");
+        runtimeError("Invalid '+' operation. Must be Number+Number, "
+                     "String+Any, or List+Any.");
         return INTERPRET_RUNTIME_ERROR;
       }
       break;
@@ -309,12 +381,6 @@ static InterpretResult run() {
     case OP_POP:
       pop();
       break;
-
-    case OP_PRINT: {
-      printValue(pop());
-      printf("\n");
-      break;
-    }
 
     case OP_DEFINE_GLOBAL: {
       ObjString *name = READ_STRING();
@@ -493,6 +559,39 @@ static InterpretResult run() {
       break;
     }
 
+    case OP_BUILD_DICT: {
+      uint8_t itemCount = READ_BYTE();
+
+      // 1. Create the dictionary and protect it from GC
+      ObjDict *dict = newDict();
+      push(OBJ_VAL(dict));
+
+      // 2. Locate the keys and values on the stack
+      // Layout: [k1] [v1] [k2] [v2] ... [kN] [vN] [dict] <--- Top
+      Value *itemsStart = vm.stackTop - 1 - (itemCount * 2);
+
+      // 3. Insert them into the Hash Table
+      for (int i = 0; i < itemCount; i++) {
+        Value key = itemsStart[i * 2];
+        Value val = itemsStart[(i * 2) + 1];
+
+        if (!IS_STRING(key)) {
+          runtimeError("Dictionary keys must be strings.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        // Drop it directly into the C struct's table!
+        tableSet(&dict->fields, AS_STRING(key), val);
+      }
+
+      // 4. Cleanup
+      pop();                          // Pop the dict temporarily
+      vm.stackTop -= (itemCount * 2); // Remove all keys and values
+      push(OBJ_VAL(dict));            // Push the finished dictionary back!
+
+      break;
+    }
+
     case OP_GET_SUBSCRIPT: {
       Value indexVal = peek(0);
       Value seqVal = peek(1);
@@ -500,8 +599,21 @@ static InterpretResult run() {
       if (IS_LIST(seqVal)) {
         ObjList *list = AS_LIST(seqVal);
 
-        // --- Normal Indexing (list[2]) ---
-        if (IS_NUMBER(indexVal)) {
+        // 1. Check for Built-in Properties (e.g., list's length)
+        if (IS_STRING(indexVal)) {
+          Value result;
+          if (getBuiltinProperty(seqVal, AS_STRING(indexVal), &result)) {
+            pop();        // pop the index
+            pop();        // pop the list
+            push(result); // push the length!
+            break;
+          } else {
+            runtimeError("Lists do not have a property named '%s'.",
+                         AS_STRING(indexVal)->chars);
+            return INTERPRET_RUNTIME_ERROR;
+          }
+        } else if (IS_NUMBER(indexVal)) {
+          // --- Normal Indexing (list[2]) ---
           int index = (int)AS_NUMBER(indexVal);
 
           if (index < 1 || index > list->count) {
@@ -512,48 +624,65 @@ static InterpretResult run() {
           pop();                        // Pop index
           pop();                        // Pop list
           push(list->items[index - 1]); // 1-based math!
-        }
-
-        // --- Slicing (list[2 to 4]) ---
-        else if (IS_RANGE(indexVal)) {
+        } else if (IS_RANGE(indexVal)) {
+          // 3. Slicing (list[2 to 4])
           ObjRange *range = AS_RANGE(indexVal);
+          int start = (int)range->start;
+          int end = (int)range->end;
 
-          // 1. Create the new list for the slice
-          ObjList *slice = newList();
+          // Adjust for 1-based indexing and negative indexing
+          if (start < 0)
+            start = list->count + start + 1;
+          if (end < 0)
+            end = list->count + end + 1;
 
-          // 2. GC Protection
-          push(OBJ_VAL(slice));
+          // Convert to 0-based C indexes
+          start--;
+          end--;
 
-          double start = range->start;
-          double end = range->end;
-          double step = range->step;
+          // Allocate the result list
+          ObjList *resultList = newList();
+          push(OBJ_VAL(resultList)); // GC Protection
 
-          // 3. Extract the items based on direction
-          if (start <= end) {
-            // Counting UP
-            for (double i = start; i <= end; i += step) {
-              int idx = (int)i;
-              if (idx >= 1 && idx <= list->count) {
-                appendList(slice, list->items[idx - 1]); // 1-based math!
-              }
-            }
-          } else {
-            // Counting DOWN (Reversing a slice!)
-            for (double i = start; i >= end; i -= step) {
-              int idx = (int)i;
-              if (idx >= 1 && idx <= list->count) {
-                appendList(slice, list->items[idx - 1]); // 1-based math!
-              }
+          // THE FIX: Only iterate if the range is mathematically valid!
+          if (start <= end && start < list->count && end >= 0) {
+
+            // Clamp out-of-bounds to safely grab "the rest" of the list
+            if (start < 0)
+              start = 0;
+            if (end >= list->count)
+              end = list->count - 1;
+
+            // Copy the slice
+            for (int i = start; i <= end; i++) {
+              appendList(resultList, list->items[i]);
             }
           }
 
-          // 4. Clean up the stack
-          pop();                // Pop the 'slice' temporarily
-          pop();                // Pop the 'range'
-          pop();                // Pop the original 'list'
-          push(OBJ_VAL(slice)); // Push the final slice back!
+          pop();                     // pop resultList
+          pop();                     // pop index
+          pop();                     // pop list
+          push(OBJ_VAL(resultList)); // push final slice
+          break;
         } else {
           runtimeError("List index must be a number or a range.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+      } else if (IS_DICT(seqVal)) {
+        ObjDict *dict = AS_DICT(seqVal);
+
+        if (!IS_STRING(indexVal)) {
+          runtimeError("Dictionary keys must be strings.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        Value result;
+        if (tableGet(&dict->fields, AS_STRING(indexVal), &result)) {
+          pop(); // index
+          pop(); // dict
+          push(result);
+        } else {
+          runtimeError("Undefined property '%s'.", AS_STRING(indexVal)->chars);
           return INTERPRET_RUNTIME_ERROR;
         }
       } else {
@@ -564,63 +693,100 @@ static InterpretResult run() {
     }
 
     case OP_SET_SUBSCRIPT: {
-      // Stack Layout: [List] [Index] [Value] <--- Top
+      // Stack Layout: [Collection] [Index] [Value] <--- Top
       Value value = peek(0);
       Value indexVal = peek(1);
-      Value listVal = peek(2);
+      Value collectionVal = peek(2); // We renamed this from listVal
 
-      // 1. Type Checks
-      if (!IS_LIST(listVal)) {
-        runtimeError("Can only subscript lists.");
+      // ==========================================
+      // PATH 1: DICTIONARY ASSIGNMENT
+      // ==========================================
+      if (IS_DICT(collectionVal)) {
+        ObjDict *dict = AS_DICT(collectionVal);
+
+        // Dictionary keys must be strings
+        if (!IS_STRING(indexVal)) {
+          runtimeError("Dictionary keys must be strings.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        // Set or Overwrite the value in the hash map (O(1) time!)
+        tableSet(&dict->fields, AS_STRING(indexVal), value);
+
+        // Cleanup: Leave the VALUE on the stack so chained assignments work
+        pop(); // value
+        pop(); // index
+        pop(); // dict
+        push(value);
+      }
+
+      // ==========================================
+      // PATH 2: LIST ASSIGNMENT (Your existing code!)
+      // ==========================================
+      else if (IS_LIST(collectionVal)) {
+        ObjList *list = AS_LIST(collectionVal);
+
+        if (!IS_NUMBER(indexVal)) {
+          runtimeError("List index must be a number.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        int index = (int)AS_NUMBER(indexVal);
+
+        // Adjust for 1-based indexing
+        if (index < 0) {
+          index = list->count + index + 1;
+        }
+
+        // Convert to 0-based C array index
+        index--;
+
+        // Bounds Check
+        if (index < 0 || index >= list->count) {
+          runtimeError("List index out of bounds.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        // Store the value
+        list->items[index] = value;
+
+        // Cleanup
+        pop(); // value
+        pop(); // index
+        pop(); // list
+        push(value);
+      }
+
+      // ==========================================
+      // PATH 3: ERROR
+      // ==========================================
+      else {
+        runtimeError("Can only subscript lists and dictionaries.");
         return INTERPRET_RUNTIME_ERROR;
       }
-      if (!IS_NUMBER(indexVal)) {
-        runtimeError("List index must be a number.");
-        return INTERPRET_RUNTIME_ERROR;
-      }
-
-      ObjList *list = AS_LIST(listVal);
-      int index = (int)AS_NUMBER(indexVal);
-
-      // Adjust for 1-based indexing
-      if (index < 0) {
-        index = list->count + index + 1;
-      }
-
-      // Convert to 0-based C array index
-      index--;
-
-      // Bounds Check (unchanged)
-      if (index < 0 || index >= list->count) {
-        runtimeError("List index out of bounds.");
-        return INTERPRET_RUNTIME_ERROR;
-      }
-
-      // 4. Store the value
-      list->items[index] = value;
-
-      // 5. Cleanup
-      // We leave the VALUE on the stack (so expressions like a = b[0] = 1
-      // work). Stack before: [List] [Index] [Value] Stack after:  [Value]
-      pop(); // value
-      pop(); // index
-      pop(); // list
-      push(value);
 
       break;
     }
 
     case OP_GET_END_INDEX: {
-      Value obj = pop(); // Pop the duplicated sequence off the stack
+      Value seq = NIL_VAL;
 
-      if (IS_LIST(obj)) {
+      // THE FIX: Scan backwards down the stack to find the collection!
+      for (Value *ptr = vm.stackTop - 1; ptr >= vm.stack; ptr--) {
+        if (IS_LIST(*ptr) || IS_STRING(*ptr)) {
+          seq = *ptr;
+          break;
+        }
+      }
+
+      if (IS_LIST(seq)) {
         // 1-BASED INDEXING: The last index is exactly the count!
-        push(NUMBER_VAL(AS_LIST(obj)->count));
-      } else if (IS_STRING(obj)) {
+        push(NUMBER_VAL(AS_LIST(seq)->count));
+      } else if (IS_STRING(seq)) {
         // 1-BASED INDEXING: The last index is exactly the length!
-        push(NUMBER_VAL(AS_STRING(obj)->length));
+        push(NUMBER_VAL(AS_STRING(seq)->length));
       } else {
-        runtimeError("'end' can only be used on lists and strings.");
+        runtimeError("Cannot use 'end' outside of a list or string subscript.");
         return INTERPRET_RUNTIME_ERROR;
       }
       break;

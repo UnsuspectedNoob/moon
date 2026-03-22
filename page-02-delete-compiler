@@ -1,0 +1,79 @@
+Here is the full scan of your current `compiler.c`. 
+
+Since we are moving to an AST-based architecture, the golden rule is: **If a function's primary job was to manipulate bytecode chunks, jump offsets, or local scope arrays during parsing, it is now obsolete.**
+
+Here is the breakdown of what to delete completely and what we will be rewriting.
+
+### 📜 Every Function Currently in `compiler.c`
+1. `identifierConstant`
+2. `parseVariableConstant`
+3. `parseVariable`
+4. `trySignature`
+5. `variable`
+6. `number`
+7. `parseStringFromToken`
+8. `string`
+9. `literal`
+10. `grouping`
+11. `unary`
+12. `binary`
+13. `and_`
+14. `or_`
+15. `argumentList`
+16. `call`
+17. `list`
+18. `subscript`
+19. `dot`
+20. `possessive`
+21. `range`
+22. `endKeyword`
+23. `getRule`
+24. `parsePrecedence`
+25. `expression`
+26. `showBody`
+27. `expressionBody`
+28. `returnBody`
+29. `setBody`
+30. `statementWithGuard`
+31. `block`
+32. `ifLogic`
+33. `ifStatement`
+34. `unlessStatement`
+35. `loopLogic`
+36. `whileStatement`
+37. `untilStatement`
+38. `forStatement`
+39. `statement`
+40. `function`
+41. `varDeclaration`
+42. `declaration`
+43. `compile`
+
+---
+
+### 🗑️ THE HIT LIST (Delete Completely)
+You can safely highlight and delete all of these functions and structs. They exist purely as hacks to survive a single-pass environment. 
+
+* **`trySignature(SignatureNode *node)`** and **`SpeculationResult`**: The speculative bytecode drafter. This was the biggest performance bottleneck. The AST handles this without guessing.
+* **`statementWithGuard(StatementFn bodyFn)`**: This was using `ScopedChunk` to buffer statement bytecode while it checked for trailing `if` conditions. We no longer need to buffer bytes.
+* **`setBody()`** and **`SetTarget`**: Your parallel assignment logic. This was snipping bytecode out of the main array for object property drills. Gone.
+* **`showBody()`, `expressionBody()`, `returnBody()`**: These were just wrapper callbacks passed into `statementWithGuard()` to emit single bytes. They are useless now.
+* **`ifLogic(bool invert)` & `loopLogic(bool invert)`**: These were emitting raw VM jump instructions (`emitJump(OP_JUMP_IF_FALSE)`). All jump logic will now be handled by the Code Generator in Phase 3.
+* **`identifierConstant`, `parseVariableConstant`, `parseVariable`**: These were directly injecting string names into the VM's constant table during parsing. This is now the Code Generator's job.
+* **The Global Tracker:** Delete `OverloadPath *activePhrasePath = NULL;`. We don't need global state to track phrasal functions anymore.
+
+---
+
+### 🛠️ THE TRANSFORMERS (Keep, but we will rewrite them)
+Do not delete these yet, but know that their signatures are going to change. They are currently `void` functions that call `emitByte()`. We will update them to return `Node*` pointers.
+
+* **The Engine:** `parsePrecedence` and `expression`.
+* **Prefix Parsers:** `number`, `string`, `literal`, `grouping`, `unary`, `variable`, `endKeyword`. *(They will return their respective AST nodes).*
+* **Infix Parsers:** `binary`, `and_`, `or_`, `call`, `list`, `subscript`, `dot`, `possessive`, `range`. *(We will add `Node* left` as an argument to all of these).*
+* **Statements & Control Flow:** `statement`, `block`, `ifStatement`, `unlessStatement`, `whileStatement`, `untilStatement`, `forStatement`. *(They will stop calling `emitJump` and start returning `IfNode`, `WhileNode`, etc.).*
+* **Declarations:** `declaration`, `varDeclaration`, `function`.
+* **Helpers:** `argumentList` *(will return an array of `Node*` pointers)*, `getRule`.
+* **The Entry Point:** `compile` *(will just initialize the scanner, call `declaration()` in a loop to build a tree, and pass the tree to the Code Generator).*
+
+**Your Move:**
+Go ahead and completely delete the functions under **"THE HIT LIST"**. Once you've cleaned house, let me know, and I will hand you the brand new, AST-powered Pratt Parser implementation for `compiler.c`.

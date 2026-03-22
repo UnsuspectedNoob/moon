@@ -1,9 +1,13 @@
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "common.h"
 #include "vm.h"
+
+// --- GLOBAL FLAGS ---
+bool printAstFlag = false;
 
 static void repl() {
   char line[2048];
@@ -62,22 +66,35 @@ static void runFile(const char *path) {
 int main(int argc, char *argv[]) {
   initVM();
 
-  if (argc == 1) {
-    repl();
-  } else if (argc == 2) {
-    runFile(argv[1]);
-  } else if (argc == 3) {
-    // Check for flags
-    if (strcmp(argv[1], "--debug") == 0) {
-      vm.debugMode = true; // Turn on the lights
-      runFile(argv[2]);
-    } else {
-      fprintf(stderr, "Usage: moon [--debug] [path]\n");
+  char *filePath = NULL;
+
+  // --- THE ROBUST CLI PARSER ---
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "--debug") == 0) {
+      vm.debugMode = true;
+    } else if (strcmp(argv[i], "--ast") == 0) {
+      printAstFlag = true;
+    } else if (argv[i][0] == '-') {
+      // Catch typos like '--debg' or '-a'
+      fprintf(stderr, "Unknown flag: %s\n", argv[i]);
+      fprintf(stderr, "Usage: moon [--debug] [--ast] [path]\n");
       exit(64);
+    } else {
+      // If it doesn't start with '-', it must be the file path!
+      if (filePath != NULL) {
+        fprintf(stderr, "Error: Multiple file paths provided.\n");
+        fprintf(stderr, "Usage: moon [--debug] [--ast] [path]\n");
+        exit(64);
+      }
+      filePath = argv[i];
     }
+  }
+
+  // --- EXECUTION ROUTING ---
+  if (filePath == NULL) {
+    repl();
   } else {
-    fprintf(stderr, "Usage: moon [path]\n");
-    exit(64);
+    runFile(filePath);
   }
 
   freeVM();

@@ -1,0 +1,65 @@
+Stepping back to map the architecture before writing the code is the hallmark of a senior compiler engineer. You are absolutely right to pause here, because what you are proposing touches the absolute deepest, most complex part of a Virtual Machine: **The Call Stack and Re-entrancy.**
+
+Let's break this down into two parts: how a standard `for` loop works in bytecode, and why your "Dynamic `by`" idea is brilliant but structurally challenging.
+
+---
+
+### Part 1: The Standard `for` Loop (The Iterator Protocol)
+To make `for each item in list` work, the VM needs to remember where it is in the list without the user having to manage an `i` variable. We do this using **Hidden Locals**.
+
+When the Code Generator sees a `for` loop, it sets up the stack like this:
+1.  **Evaluate the Sequence:** Pushes the `List` or `Range` onto the stack.
+2.  **Push a Hidden Iterator:** Pushes the number `0` (for lists) or the `start` value (for ranges). This is a hidden local variable that the user can't access.
+3.  **Emit `OP_ITER_NEXT`:** This is a brand new VM instruction we will write.
+    * It peeks at the Sequence and the Hidden Iterator.
+    * If the sequence is exhausted, it pushes `false` to the stack.
+    * If it's NOT exhausted, it pushes the next item, updates the Hidden Iterator, and pushes `true`.
+4.  **Emit `OP_JUMP_IF_FALSE`:** If it saw `false`, it jumps out of the loop.
+5.  **Assign the Item:** We bind that next item to the user's loop variable (e.g., `item`).
+6.  **Run the Body & Loop:** Run the statements, then `OP_JUMP` back to `OP_ITER_NEXT`.
+
+This is a clean, closed system. The C code inside `vm.c` just looks at the array, grabs an item, and moves on.
+
+---
+
+### Part 2: The "Dynamic `by`" Challenge (Re-entrancy)
+Your idea: `for i from 1 to 100 by fn:`
+Instead of adding a constant `2`, we call `fn(i)` to get the next step. I love this idea. It turns your `Range` object into a true **Generator**. 
+
+But here is the architectural trap: **How does a bytecode VM call a function?**
+
+In your `vm.c`, when you hit `OP_CALL`, the VM doesn't magically pause and execute the function in C. It pushes a new `CallFrame` onto the frame stack, updates the Instruction Pointer (`ip`), and lets the *main bytecode loop* start executing the function's bytecode. When the function hits `OP_RETURN`, it pops the frame and resumes where it left off.
+
+If we put your dynamic `by` inside `OP_ITER_NEXT`, the C code would try to evaluate `fn(i)`. To do that, the C code has to set up a new `CallFrame`. 
+But `OP_ITER_NEXT` isn't finished yet! It still needs to push `true` or `false` and update the stack. If it sets up a call frame, the VM will immediately jump into the user's function, completely corrupting the loop's setup phase.
+
+This problem is called **VM Re-entrancy**. You cannot easily invoke the bytecode execution loop from *inside* a C switch statement case.
+
+---
+
+### The Architecture Options
+To implement your dynamic generator idea, we have three architectural paths. We need to choose one before we write `codegen.c`:
+
+**Option A: The Desugaring Route (Safest & Fastest)**
+We don't use `OP_ITER_NEXT` for ranges. When the parser sees `for i from 1 to 100 by fn`, it doesn't build a `NODE_FOR`. It builds a `NODE_WHILE` that looks like this under the hood:
+```moon
+let i be 1
+while i <= 100:
+  // loop body
+  set i to fn(i)
+end
+```
+* **Pros:** Requires zero changes to the Virtual Machine. We just write a clever parser trick.
+* **Cons:** Ranges aren't true "objects" that can be passed around; they are just syntactic sugar for a while loop.
+
+**Option B: The Call-Stack Hack (The Intermediate Route)**
+We upgrade `ObjRange` to hold a `step` value that can be a closure. But instead of doing it in `OP_ITER_NEXT`, we create a specific bytecode sequence in `codegen.c` that manually emits an `OP_CALL` instruction *before* it evaluates the loop bounds, tricking the VM into evaluating the function naturally using the standard stack.
+* **Pros:** Clean bytecode, keeps Ranges as real objects.
+* **Cons:** Emitting the stack setup for an implicit `OP_CALL` inside a loop can be very tricky to get right.
+
+**Option C: The Re-entrant VM (The Hardcore Route)**
+We rewrite `vm.c` so that the `run()` function can be called recursively from C. When `OP_ITER_NEXT` needs the next value, it literally calls `run(fn, current_val)`, waits for the inner VM loop to finish, and takes the returned value.
+* **Pros:** You have achieved a truly advanced VM architecture. This unlocks powerful features later (like native map/filter functions).
+* **Cons:** It requires a very deep refactor of how your VM handles the stack and frame pointers to prevent memory corruption.
+
+Which of these architectural paths feels right for ORDEAL? Do you want to try the hardcore re-entrant VM, or do you want to play it smart and use compiler desugaring?

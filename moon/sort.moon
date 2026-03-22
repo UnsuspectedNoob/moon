@@ -3,7 +3,7 @@ let merge (left) with (right):
   let result be []
   let i, j be 1
 
-  until i > left's length or j > right's length:
+  until i > left's length or j > right's length
     if left.i < right.j:
       add left.i to result
       add 1 to i
@@ -11,7 +11,6 @@ let merge (left) with (right):
       add right.j to result
       add 1 to j
     end
-  end
 
   add left[i to end] to result
   add right[j to end] to result
@@ -20,16 +19,14 @@ let merge (left) with (right):
 end
 
 let sort (list):
-  if list's length < 2 give list
+  if list's length <= 1 give list
 
-  let mid be list's length / 2
-  let left be list[1 to mid]
-  let right be list[mid + 1 to end]
+  let left be list[1 to end / 2]
+  let right be list[end/2 + 1 to end]
 
   give merge (sort left) with (sort right)
 end
 
-let numbers be [38, 27, 43, 3, 9, 82, 10]
+let numbers be [1 to 100000]
 
-show "Unsorted: `numbers`"
-show "Sorted:   `sort (numbers)`"
+sort numbers

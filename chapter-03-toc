@@ -30,3 +30,9 @@
 3.8 System Interfaces
   3.8.1 Command-Line Interface (CLI) Architecture
   3.8.2 Interactive Mode (REPL) vs. File Execution Mode
+
+
+notes:
+my supervisor says a tip to writing Chapter 3, is referencing
+your Aims and Objectives in Chapter 1 and showing how you solved
+those objectives. Maybe we use those to guide us.

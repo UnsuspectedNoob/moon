@@ -1,39 +1,34 @@
 #ifndef MOON_PARSER_H
 #define MOON_PARSER_H
 
+#include "ast.h" // We need this so it knows what a Node is!
 #include "common.h"
 #include "scanner.h"
 
 // ==========================================
 // PARSER STATE
 // ==========================================
-
 typedef struct {
   Token current;
   Token previous;
   bool hadError;
   bool panicMode;
-
-  // --- PHASE 3: SPECULATIVE PARSING FLAGS ---
-  bool isSpeculating;     // Are we currently guessing an overload path?
-  bool speculationFailed; // Did the guess hit a syntax error?
 } Parser;
 
-// The global parser state
 extern Parser parser;
 
-// ==========================================
-// ERROR HANDLING
-// ==========================================
+// --- Expose the new AST Builder! ---
 
+void hoistPhrases(const char *source);
+Node *parseSource(const char *source);
+
+// ==========================================
+// ERROR HANDLING & TOKEN ADVANCEMENT
+// ==========================================
 void errorAt(Token *token, const char *message);
 void error(const char *message);
 void errorAtCurrent(const char *message);
 void synchronize();
-
-// ==========================================
-// TOKEN ADVANCEMENT & CHECKING
-// ==========================================
 
 void advance();
 void consume(TokenType type, const char *message);

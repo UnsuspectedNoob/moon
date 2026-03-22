@@ -4,6 +4,7 @@
 
 #include "chunk.h"
 #include "common.h"
+#include "table.h"
 #include "value.h"
 
 #define OBJ_TYPE(value) (AS_OBJ(value)->type)
@@ -22,6 +23,9 @@
 #define IS_LIST(value) isObjType(value, OBJ_LIST)
 #define AS_LIST(value) ((ObjList *)AS_OBJ(value))
 
+#define IS_DICT(value) isObjType(value, OBJ_DICT)
+#define AS_DICT(value) ((ObjDict *)AS_OBJ(value))
+
 #define IS_RANGE(value) isObjType(value, OBJ_RANGE)
 #define AS_RANGE(value) ((ObjRange *)AS_OBJ(value))
 
@@ -31,6 +35,7 @@ typedef enum {
   OBJ_NATIVE,
   OBJ_LIST,
   OBJ_RANGE,
+  OBJ_DICT,
 } ObjType;
 
 typedef struct Obj {
@@ -72,6 +77,11 @@ typedef struct {
 } ObjList;
 
 typedef struct {
+  Obj obj;
+  Table fields; // We literally just reuse your existing Hash Table!
+} ObjDict;
+
+typedef struct {
   Obj obj;      // Base class
   double start; // Starting number
   double end;   // Ending number
@@ -99,4 +109,6 @@ void deleteList(ObjList *list, int index);
 uint32_t hashString(const char *key, int length);
 
 ObjRange *newRange(double start, double end, double step);
+
+ObjDict *newDict();
 #endif

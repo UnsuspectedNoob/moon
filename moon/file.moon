@@ -1,4 +1,8 @@
+let person be {
+  name: "Munachi",
+  score: 100
+}
 
-let x be 0
-for each i in 1 to 10000000
-  set x to x + 1
+person["name"]
+person's name
+

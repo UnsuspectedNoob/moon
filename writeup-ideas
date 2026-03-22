@@ -19,3 +19,23 @@ is we can write polymorphic opcodes
 O(1) string interning
 single-pass parallel assignment
 dynamic array slicing
+
+make sure they know that we're not doing libraries.
+apart from the standard I/O functions and standard library functions
+to demonstrate native functions.
+add that to your scope and limitiations
+
+shock the panel, by showing them pseudocode
+and then psychee!! it actually runs
+this is MOON
+
++++ PLANS FOR THE FUTURE +++
+implement a true range generator by allowing functions as steps
+add the 'add' keyword, it's time for that
+add the anaphoric scope variable 'it'
+make it lists pass-by-reference, seems like they are not
+make ' for strings as well, by adding ' in the rules[]
+Pretty-Printing Dictionaries: Right now, we just print <dict>. We could write the recursive loop in valueToString so that show person prints a beautiful JSON-formatted string: { "name": "Munachi", "score": 5000 }.
+Native Methods (The "Length" Hack Fix): Remember how we hardcoded list's length? Now that we understand how properties work, we can build a true Native Method system. This would allow things like list.push(5) or string.upper().
+Dictionary Iteration: Upgrading your for loop so you can do for each key, value in person: to loop over the hash table dynamically.
+

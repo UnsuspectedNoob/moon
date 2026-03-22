@@ -28,8 +28,6 @@ typedef enum {
   OP_DIVIDE,
   OP_NEGATE,
 
-  OP_PRINT, // New: for 'show'
-
   OP_JUMP_IF_FALSE, // Conditional Jump forward
   OP_JUMP,          // Unconditional Jump forward
   OP_LOOP,          // Unconditional Jump BACKWARD
@@ -39,8 +37,9 @@ typedef enum {
   OP_NOT,           // New: not
 
   OP_BUILD_STRING,
-
   OP_BUILD_LIST,
+  OP_BUILD_DICT,
+
   OP_GET_SUBSCRIPT,
   OP_SET_SUBSCRIPT,
   OP_GET_END_INDEX,

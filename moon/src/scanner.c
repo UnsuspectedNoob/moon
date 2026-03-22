@@ -218,8 +218,6 @@ static TokenType identifierType() {
       switch (scanner.start[1]) {
       case 'e':
         return checkKeyword(2, 1, "t", TOKEN_SET); // set
-      case 'h':
-        return checkKeyword(2, 2, "ow", TOKEN_SHOW); // show
       case 'k':
         return checkKeyword(2, 2, "ip", TOKEN_SKIP); // skip
       }
@@ -230,6 +228,8 @@ static TokenType identifierType() {
   case 't': {
     if (scanner.current - scanner.start > 1) {
       switch (scanner.start[1]) {
+      case 'h':
+        return checkKeyword(2, 2, "en", TOKEN_THEN); // then
       case 'o':
         return checkKeyword(2, 0, "", TOKEN_TO); // to
       case 'r':
@@ -332,46 +332,6 @@ static Token string() {
   }
 }
 
-bool checkTernary() {
-  // 1. Save the current state of the scanner
-  const char *savedCurrent = scanner.current;
-  const char *savedStart = scanner.start;
-  int savedLine = scanner.line;
-
-  int depth = 0; // Tracks nested () and {}
-  bool found = false;
-
-  for (;;) {
-    Token token = scanToken();
-
-    // Safety: Stop at EOF, Error, or strict statement boundaries
-    if (token.type == TOKEN_EOF || token.type == TOKEN_ERROR ||
-        token.type == TOKEN_NEWLINE) {
-      break;
-    }
-
-    // Handle Nesting
-    if (token.type == TOKEN_LEFT_PAREN || token.type == TOKEN_LEFT_BRACE) {
-      depth++;
-    } else if (token.type == TOKEN_RIGHT_PAREN ||
-               token.type == TOKEN_RIGHT_BRACE) {
-      depth--;
-    }
-
-    // The Target: An 'else' at the current nesting level
-    if (depth == 0 && token.type == TOKEN_ELSE) {
-      found = true;
-      break;
-    }
-  }
-
-  // 2. Restore the state perfectly
-  scanner.current = savedCurrent;
-  scanner.start = savedStart;
-  scanner.line = savedLine;
-
-  return found;
-}
 // -- Main Scan Function --
 
 Token scanToken() {

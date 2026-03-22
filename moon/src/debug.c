@@ -1,5 +1,6 @@
 #include <stdio.h>
 
+#include "ast.h"
 #include "debug.h"
 #include "value.h"
 #include "vm.h"
@@ -101,8 +102,6 @@ int disassembleInstruction(Chunk *chunk, int offset) {
     return simpleInstruction("OP_NOT", offset);
   case OP_NEGATE:
     return simpleInstruction("OP_NEGATE", offset);
-  case OP_PRINT:
-    return simpleInstruction("OP_PRINT", offset);
 
   // NEW JUMP DEBUGGING:
   case OP_JUMP:
@@ -114,16 +113,21 @@ int disassembleInstruction(Chunk *chunk, int offset) {
 
   case OP_BUILD_STRING:
     return byteInstruction("OP_BUILD_STRING", chunk, offset);
-
   case OP_BUILD_LIST:
     return byteInstruction("OP_BUILD_LIST", chunk, offset);
+  case OP_BUILD_DICT:
+    return byteInstruction("OP_BUILD_DICT", chunk, offset);
+
+    // ...
   case OP_GET_SUBSCRIPT:
     return simpleInstruction("OP_GET_SUBSCRIPT", offset);
   case OP_SET_SUBSCRIPT:
     return simpleInstruction("OP_SET_SUBSCRIPT", offset);
-
+  case OP_GET_END_INDEX:
+    return simpleInstruction("OP_GET_END_INDEX", offset);
   case OP_RANGE:
     return simpleInstruction("OP_RANGE", offset);
+    // ...
 
   case OP_FOR_ITER:
     return jumpInstruction("OP_FOR_ITER", 1, chunk, offset);
@@ -140,5 +144,204 @@ int disassembleInstruction(Chunk *chunk, int offset) {
   default:
     printf("Unknown opcode %d\n", instruction);
     return offset + 1;
+  }
+}
+
+void printAST(Node *node, int indent) {
+  if (node == NULL)
+    return;
+
+  // 1. Print the indentation branches
+  for (int i = 0; i < indent; i++) {
+    printf((i == indent - 1) ? " ├─ " : " │  ");
+  }
+
+  // 2. Print the Node Type and its specific Data
+  switch (node->type) {
+  case NODE_LITERAL:
+    printf("[LITERAL: ");
+    printValue(node->as.literal.value); // Let the VM print the raw value!
+    printf("]\n");
+    break;
+
+  case NODE_VARIABLE:
+    printf("[VARIABLE: %.*s]\n", node->as.variable.name.length,
+           node->as.variable.name.start);
+    break;
+
+  case NODE_UNARY:
+    printf("[UNARY: %.*s]\n", node->as.unary.opToken.length,
+           node->as.unary.opToken.start);
+    printAST(node->as.unary.right, indent + 1);
+    break;
+
+  case NODE_BINARY:
+  case NODE_LOGICAL:
+    printf("[%s: %.*s]\n", node->type == NODE_BINARY ? "BINARY" : "LOGICAL",
+           node->as.binary.opToken.length, node->as.binary.opToken.start);
+    printAST(node->as.binary.left, indent + 1);
+    printAST(node->as.binary.right, indent + 1);
+    break;
+
+  case NODE_BLOCK:
+    printf("[BLOCK: %d statements]\n", node->as.block.count);
+    for (int i = 0; i < node->as.block.count; i++) {
+      printAST(node->as.block.statements[i], indent + 1);
+    }
+    break;
+
+  case NODE_IF:
+    printf("[IF STATEMENT]\n");
+    printAST(node->as.ifStmt.condition, indent + 1);
+    printf("%*s ├─ [THEN]\n", indent * 4, "");
+    printAST(node->as.ifStmt.thenBranch, indent + 2);
+    if (node->as.ifStmt.elseBranch) {
+      printf("%*s ├─ [ELSE]\n", indent * 4, "");
+      printAST(node->as.ifStmt.elseBranch, indent + 2);
+    }
+    break;
+
+  case NODE_LET:
+    printf("[LET DECLARATION: %d variables]\n", node->as.let.nameCount);
+    for (int i = 0; i < node->as.let.nameCount; i++) {
+      printf("%*s ├─ Var: %.*s\n", indent * 4, "", node->as.let.names[i].length,
+             node->as.let.names[i].start);
+    }
+    for (int i = 0; i < node->as.let.exprCount; i++) {
+      printAST(node->as.let.exprs[i], indent + 1);
+    }
+    break;
+
+  case NODE_SET:
+    printf("[SET ASSIGNMENT]\n");
+    for (int i = 0; i < node->as.set.targetCount; i++) {
+      printAST(node->as.set.targets[i], indent + 1);
+    }
+    printf("%*s ├─ [TO]\n", indent * 4, "");
+    for (int i = 0; i < node->as.set.valueCount; i++) {
+      printAST(node->as.set.values[i], indent + 2);
+    }
+    break;
+
+  case NODE_PHRASAL_CALL:
+    printf("[PHRASAL CALL: %s]\n", node->as.phrasalCall.mangledName.start);
+    for (int i = 0; i < node->as.phrasalCall.argCount; i++) {
+      printAST(node->as.phrasalCall.arguments[i], indent + 1);
+    }
+    break;
+
+  case NODE_RETURN:
+    printf("[GIVE (RETURN)]\n");
+    printAST(node->as.singleExpr.expression, indent + 1);
+    break;
+
+  case NODE_EXPRESSION_STMT:
+    printf("[EXPR STMT]\n");
+    printAST(node->as.singleExpr.expression, indent + 1);
+    break;
+
+  case NODE_LIST:
+    printf("[LIST: %d items]\n", node->as.list.count);
+    for (int i = 0; i < node->as.list.count; i++) {
+      printAST(node->as.list.items[i], indent + 1);
+    }
+    break;
+
+  case NODE_DICT:
+    printf("[DICTIONARY: %d pairs]\n", node->as.dictExpr.count);
+    for (int i = 0; i < node->as.dictExpr.count; i++) {
+
+      // 1. Print the artificial [PAIR] grouping
+      for (int j = 0; j < indent + 1; j++) {
+        printf(" |  "); // Match your specific tree branch spacing here!
+      }
+      printf("├─ [PAIR]\n");
+
+      // 2. Print the actual nodes nested one level deeper
+      printAST(node->as.dictExpr.keys[i], indent + 2);
+      printAST(node->as.dictExpr.values[i], indent + 2);
+    }
+    break;
+
+  case NODE_SUBSCRIPT:
+    printf("[SUBSCRIPT]\n");
+    printAST(node->as.subscript.left, indent + 1);
+    printf("%*s ├─ [INDEX]\n", indent * 4, "");
+    printAST(node->as.subscript.index, indent + 2);
+    break;
+
+  case NODE_RANGE:
+    printf("[RANGE]\n");
+    printAST(node->as.range.start, indent + 1);
+    printf("%*s ├─ [TO]\n", indent * 4, "");
+    printAST(node->as.range.end, indent + 2);
+    printf("%*s ├─ [BY]\n", indent * 4, "");
+    printAST(node->as.range.step, indent + 2);
+    break;
+
+  case NODE_END:
+    printf("[KEYWORD: end]\n");
+    break;
+
+  case NODE_FUNCTION:
+    printf("[FUNCTION: %.*s]\n", node->as.function.name.length,
+           node->as.function.name.start);
+    // Print the parameters
+    for (int i = 0; i < node->as.function.paramCount; i++) {
+      printf("%*s ├─ Param: %.*s\n", indent * 4, "",
+             node->as.function.parameters[i].length,
+             node->as.function.parameters[i].start);
+    }
+    // Print the body
+    printf("%*s ├─ [BODY]\n", indent * 4, "");
+    printAST(node->as.function.body, indent + 2);
+    break;
+
+  case NODE_CALL:
+    printf("[CALL]\n");
+    printAST(node->as.call.callee, indent + 1);
+    for (int i = 0; i < node->as.call.argCount; i++) {
+      printAST(node->as.call.arguments[i], indent + 2);
+    }
+    break;
+
+  case NODE_PROPERTY:
+    printf("[PROPERTY ACCESS: %.*s]\n", node->as.property.name.length,
+           node->as.property.name.start);
+    printAST(node->as.property.target, indent + 1);
+    break;
+
+  case NODE_WHILE:
+    printf("[WHILE LOOP]\n");
+    printAST(node->as.whileStmt.condition, indent + 1);
+    printf("%*s ├─ [BODY]\n", indent * 4, "");
+    printAST(node->as.whileStmt.body, indent + 2);
+    break;
+
+  case NODE_FOR:
+    printf("[FOR LOOP: iterator %.*s]\n", node->as.forStmt.iterator.length,
+           node->as.forStmt.iterator.start);
+    printAST(node->as.forStmt.sequence, indent + 1);
+    printf("%*s ├─ [BODY]\n", indent * 4, "");
+    printAST(node->as.forStmt.body, indent + 2);
+    break;
+
+  case NODE_BREAK:
+    printf("[BREAK]\n");
+    break;
+
+  case NODE_SKIP:
+    printf("[SKIP (CONTINUE)]\n");
+    break;
+
+  case NODE_INTERPOLATION:
+    printf("[INTERPOLATION: %d parts]\n", node->as.interpolation.partCount);
+    for (int i = 0; i < node->as.interpolation.partCount; i++) {
+      printAST(node->as.interpolation.parts[i], indent + 1);
+    }
+    break;
+  default:
+    printf("[UNKNOWN NODE TYPE: %d]\n", node->type);
+    break;
   }
 }

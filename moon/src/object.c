@@ -98,6 +98,10 @@ ObjString *copyStringUnescaped(const char *chars, int length) {
 
 void printObject(Value value) {
   switch (OBJ_TYPE(value)) {
+  case OBJ_DICT:
+    printf("<dict>");
+    break;
+
   case OBJ_RANGE: {
     ObjRange *range = AS_RANGE(value);
     // We print using %.14g to strip trailing zeros (1.0 -> 1)
@@ -119,7 +123,7 @@ void printObject(Value value) {
   }
 
   case OBJ_STRING:
-    printf("%s", AS_CSTRING(value));
+    printf("\"%s\"", AS_CSTRING(value));
     break;
 
   case OBJ_FUNCTION: {
@@ -160,6 +164,12 @@ ObjList *newList() {
   list->count = 0;
   list->capacity = 0;
   return list;
+}
+
+ObjDict *newDict() {
+  ObjDict *dict = ALLOCATE_OBJ(ObjDict, OBJ_DICT);
+  initTable(&dict->fields);
+  return dict;
 }
 
 void appendList(ObjList *list, Value value) {

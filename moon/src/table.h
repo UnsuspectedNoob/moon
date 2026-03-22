@@ -2,9 +2,9 @@
 #define MOON_TABLE_H
 
 #include "common.h"
-#include "object.h"
 #include "value.h"
 
+typedef struct ObjString ObjString;
 typedef struct {
   ObjString *key;
   Value value;

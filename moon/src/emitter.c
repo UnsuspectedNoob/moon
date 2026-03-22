@@ -2,7 +2,6 @@
 #include <string.h>
 
 #include "emitter.h"
-#include "memory.h"
 #include "parser.h" // We will create this next!
 
 #ifdef DEBUG_PRINT_CODE

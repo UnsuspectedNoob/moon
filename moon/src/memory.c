@@ -47,6 +47,13 @@ void freeObject(Obj *object) {
     break;
   }
 
+  case OBJ_DICT: {
+    ObjDict *dict = (ObjDict *)object;
+    freeTable(&dict->fields); // Free the hash table array
+    FREE(ObjDict, object);    // Free the object wrapper itself
+    break;
+  }
+
   case OBJ_NATIVE: {
     FREE(ObjNative, object);
     break;

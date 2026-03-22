@@ -59,8 +59,8 @@ typedef enum {
   TOKEN_OR,
   TOKEN_QUIT,
   TOKEN_SET,
-  TOKEN_SHOW,
   TOKEN_SKIP,
+  TOKEN_THEN,
   TOKEN_TO,
   TOKEN_TRUE,
   TOKEN_TYPE,
@@ -84,7 +84,6 @@ typedef struct {
 void initScanner(const char *source);
 
 #include <stdbool.h>
-bool checkTernary();
 
 // Scan the next token from the source
 Token scanToken();
