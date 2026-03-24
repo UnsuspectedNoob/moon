@@ -103,6 +103,7 @@ static void walkNode(Node *node) {
       emitByte(OP_DIVIDE);
       break;
     case TOKEN_EQUAL_EQUAL:
+    case TOKEN_EQUAL:
       emitByte(OP_EQUAL);
       break;
     case TOKEN_IS:

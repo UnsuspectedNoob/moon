@@ -296,31 +296,6 @@ static Node *parsePrecedence(Precedence precedence) {
     leftNode = infixRule(leftNode);
   }
 
-  // Postfix Statement Guard / Ternary
-  // if ((parser.current.type == TOKEN_IF ||
-  //      parser.current.type == TOKEN_UNLESS) &&
-  //     !isExpectedLabel()) {
-  //   bool isUnless = (parser.current.type == TOKEN_UNLESS);
-  //   advance();
-  //
-  //   int line = parser.previous.line;
-  //   Node *condition = expression();
-  //
-  //   if (isUnless) {
-  //     Token notToken = {TOKEN_NOT, "not", 3, line};
-  //     condition = newUnaryNode(notToken, condition, line);
-  //   }
-  //
-  //   // Swaps expected keyword dynamically
-  //   TokenType altToken = isUnless ? TOKEN_THEN : TOKEN_ELSE;
-  //
-  //   if (match(altToken)) {
-  //     Node *elseBranch = expression();
-  //     return newIfNode(condition, leftNode, elseBranch, line);
-  //   }
-  //   return newIfNode(condition, leftNode, NULL, line);
-  // }
-
   return leftNode;
 }
 
@@ -1264,6 +1239,7 @@ ParseRule rules[] = {
     [TOKEN_IS] = {stickyPrefix, binary, PREC_EQUALITY},   // <--- CHANGED!
     [TOKEN_EQUAL_EQUAL] = {stickyPrefix, binary,
                            PREC_EQUALITY},                     // <--- CHANGED!
+    [TOKEN_EQUAL] = {stickyPrefix, binary, PREC_EQUALITY},     // <--- CHANGED!
     [TOKEN_GREATER] = {stickyPrefix, binary, PREC_COMPARISON}, // <--- CHANGED!
     [TOKEN_GREATER_EQUAL] = {stickyPrefix, binary,
                              PREC_COMPARISON},              // <--- CHANGED!

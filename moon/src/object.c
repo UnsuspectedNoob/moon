@@ -206,3 +206,76 @@ ObjRange *newRange(double start, double end, double step) {
   range->step = step;
   return range;
 }
+
+ObjString *valueToString(Value value) {
+  // If it's already a string, just cast and return
+  if (IS_STRING(value))
+    return AS_STRING(value);
+
+  // If it's a number, format it
+  if (IS_NUMBER(value)) {
+    double number = AS_NUMBER(value);
+    char buffer[32];
+    int length = sprintf(buffer, "%.14g", number);
+    return copyString(buffer, length);
+  }
+
+  // If it's boolean
+  if (IS_BOOL(value)) {
+    return AS_BOOL(value) ? copyString("true", 4) : copyString("false", 5);
+  }
+
+  // If it's nil
+  if (IS_NIL(value)) {
+    return copyString("nil", 3);
+  }
+
+  if (IS_DICT(value)) {
+    // For now, just print the type. We can write a full JSON stringifier later!
+    return copyString("<dict>", 6);
+  }
+  // --- LIST FORMATTING ---
+  if (IS_LIST(value)) {
+    ObjList *list = AS_LIST(value);
+
+    // Start with a reasonable buffer capacity
+    int capacity = 64;
+    int length = 0;
+    char *buffer = malloc(capacity);
+
+    buffer[length++] = '['; // Opening bracket
+
+    for (int i = 0; i < list->count; i++) {
+      // 1. Recursively convert the item into a string!
+      ObjString *itemStr = valueToString(list->items[i]);
+
+      // 2. Ensure the buffer is large enough for the item + ", ]\0"
+      while (length + itemStr->length + 4 > capacity) {
+        capacity *= 2;
+        buffer = realloc(buffer, capacity);
+      }
+
+      // 3. Copy the item's characters into our buffer
+      memcpy(buffer + length, itemStr->chars, itemStr->length);
+      length += itemStr->length;
+
+      // 4. Add the comma separator (if it's not the last item)
+      if (i < list->count - 1) {
+        buffer[length++] = ',';
+        buffer[length++] = ' ';
+      }
+    }
+
+    buffer[length++] = ']'; // Closing bracket
+    buffer[length] = '\0';  // Null terminator
+
+    // Transfer the raw C string into the VM's managed memory pool!
+    ObjString *result = copyString(buffer, length);
+    free(buffer);
+
+    return result;
+  }
+
+  // Fallback for objects we haven't implemented yet
+  return copyString("<object>", 8);
+}

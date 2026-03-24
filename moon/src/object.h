@@ -110,5 +110,7 @@ uint32_t hashString(const char *key, int length);
 
 ObjRange *newRange(double start, double end, double step);
 
+ObjString *valueToString(Value value);
+
 ObjDict *newDict();
 #endif
