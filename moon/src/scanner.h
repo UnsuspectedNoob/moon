@@ -17,6 +17,7 @@ typedef enum {
   TOKEN_PLUS,
   TOKEN_SLASH,
   TOKEN_STAR,
+  TOKEN_ADD_INPLACE,
 
   // One or two character tokens
   TOKEN_BANG,

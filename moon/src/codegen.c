@@ -93,6 +93,9 @@ static void walkNode(Node *node) {
     case TOKEN_PLUS:
       emitByte(OP_ADD);
       break;
+    case TOKEN_ADD_INPLACE:
+      emitByte(OP_ADD_INPLACE);
+      break;
     case TOKEN_MINUS:
       emitByte(OP_SUBTRACT);
       break;

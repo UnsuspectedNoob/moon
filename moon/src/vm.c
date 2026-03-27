@@ -277,6 +277,53 @@ static InterpretResult run() {
       break;
     }
 
+    case OP_ADD_INPLACE: {
+      Value b = peek(0); // Right operand
+      Value a = peek(1); // Left operand (The Accumulator)
+
+      // RULE 1: Numbers (Just do normal math)
+      if (IS_NUMBER(a) && IS_NUMBER(b)) {
+        double right = AS_NUMBER(pop());
+        double left = AS_NUMBER(pop());
+        push(NUMBER_VAL(left + right));
+      }
+
+      // RULE 2: Lists (THE O(1) MUTATION FIX)
+      else if (IS_LIST(a)) {
+        ObjList *list = AS_LIST(a); // We mutate this directly!
+
+        if (IS_LIST(b)) {
+          ObjList *rightList = AS_LIST(b);
+          for (int i = 0; i < rightList->count; i++) {
+            appendList(list, rightList->items[i]);
+          }
+        } else {
+          appendList(list, b);
+        }
+
+        // Cleanup: We pop 'b', but leave 'a' (the mutated list) right where it
+        // is so that the upcoming OP_SET_LOCAL can re-assign it cleanly!
+        pop();
+      }
+
+      // RULE 3: Strings (Strings are immutable in C, so we still must clone)
+      else if (IS_STRING(a)) {
+        ObjString *leftStr = AS_STRING(a);
+        ObjString *rightStr = valueToString(b);
+        pop();
+        pop();
+        push(OBJ_VAL(leftStr));
+        push(OBJ_VAL(rightStr));
+        concatenate();
+      }
+
+      else {
+        runtimeError("Invalid 'add' operation.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      break;
+    }
+
     case OP_SUBTRACT:
       BINARY_OP(NUMBER_VAL, -);
       break;

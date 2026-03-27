@@ -23,19 +23,20 @@ typedef enum {
   OP_SET_GLOBAL,    // New: Set var
 
   OP_ADD,
+  OP_ADD_INPLACE,
   OP_SUBTRACT,
   OP_MULTIPLY,
   OP_DIVIDE,
   OP_MOD,
-  OP_NEGATE,
 
   OP_JUMP_IF_FALSE, // Conditional Jump forward
-  OP_JUMP,          // Unconditional Jump forward
-  OP_LOOP,          // Unconditional Jump BACKWARD
-  OP_EQUAL,         // New: == (is)
-  OP_GREATER,       // New: >
-  OP_LESS,          // New: <
-  OP_NOT,           // New: not
+  OP_NEGATE,
+  OP_JUMP,    // Unconditional Jump forward
+  OP_LOOP,    // Unconditional Jump BACKWARD
+  OP_EQUAL,   // New: == (is)
+  OP_GREATER, // New: >
+  OP_LESS,    // New: <
+  OP_NOT,     // New: not
 
   OP_BUILD_STRING,
   OP_BUILD_LIST,

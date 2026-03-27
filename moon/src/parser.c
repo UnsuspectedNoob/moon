@@ -964,7 +964,7 @@ static Node *addStatement() {
   }
 
   Token plusToken = {
-      .type = TOKEN_PLUS, .start = "+", .length = 1, .line = line};
+      .type = TOKEN_ADD_INPLACE, .start = "add", .length = 3, .line = line};
 
   for (int i = 0; i < valueCount; i++) {
     accumulator = newBinaryNode(accumulator, plusToken, values[i], line);

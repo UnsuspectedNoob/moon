@@ -4,6 +4,9 @@ let get odds up to (limit):
 
   for each i from 1 to limit
     add i to odds if i mod 2 is not 0
+
+  give odds
 end
 
-get odds up to 50000
+show get odds up to 5000000
+
