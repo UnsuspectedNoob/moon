@@ -1,13 +1,9 @@
 
-let first (n) fibonacci numbers:
-  let a be [1, 1]
+let get odds up to (limit):
+  let odds be []
 
-  give a if n < 3
-
-  for i from 1 to n - 2
-    add a[end] + a[end - 1] to a
-
-  give a
+  for each i from 1 to limit
+    add i to odds if i mod 2 is not 0
 end
 
-show first 10 fibonacci numbers
+get odds up to 50000

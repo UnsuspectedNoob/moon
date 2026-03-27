@@ -7,17 +7,30 @@
 #include "table.h"
 #include "value.h"
 
+typedef enum {
+  OBJ_STRING,
+  OBJ_RANGE,
+  OBJ_LIST,
+  OBJ_DICT,
+  OBJ_FUNCTION,
+  OBJ_NATIVE,
+} ObjType;
+
+typedef struct Obj {
+  ObjType type;
+  struct Obj *next; // Intrusion pointer for GC (we'll use this later)
+} Obj;
+
 #define OBJ_TYPE(value) (AS_OBJ(value)->type)
 
 #define IS_STRING(value) isObjType(value, OBJ_STRING)
-
 #define AS_STRING(value) ((ObjString *)AS_OBJ(value))
 #define AS_CSTRING(value) (((ObjString *)AS_OBJ(value))->chars)
 
 #define IS_FUNCTION(value) isObjType(value, OBJ_FUNCTION)
-#define IS_NATIVE(value) isObjType(value, OBJ_NATIVE)
-
 #define AS_FUNCTION(value) ((ObjFunction *)AS_OBJ(value))
+
+#define IS_NATIVE(value) isObjType(value, OBJ_NATIVE)
 #define AS_NATIVE(value) (((ObjNative *)AS_OBJ(value))->function)
 
 #define IS_LIST(value) isObjType(value, OBJ_LIST)
@@ -28,20 +41,6 @@
 
 #define IS_RANGE(value) isObjType(value, OBJ_RANGE)
 #define AS_RANGE(value) ((ObjRange *)AS_OBJ(value))
-
-typedef enum {
-  OBJ_STRING,
-  OBJ_FUNCTION,
-  OBJ_NATIVE,
-  OBJ_LIST,
-  OBJ_RANGE,
-  OBJ_DICT,
-} ObjType;
-
-typedef struct Obj {
-  ObjType type;
-  struct Obj *next; // Intrusion pointer for GC (we'll use this later)
-} Obj;
 
 // The String Object
 typedef struct ObjString {
@@ -93,10 +92,12 @@ static inline bool isObjType(Value value, ObjType type) {
   return IS_OBJ(value) && AS_OBJ(value)->type == type;
 }
 
+void printObject(Value value);
+
 ObjString *copyString(const char *chars, int length);
 ObjString *copyStringUnescaped(const char *chars, int length);
 ObjString *takeString(char *chars, int length);
-void printObject(Value value);
+
 ObjFunction *newFunction();
 ObjNative *newNative(NativeFn function);
 

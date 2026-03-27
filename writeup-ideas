@@ -10,7 +10,7 @@ inclined grammar
 at conclusion, mention that, it is not enough to create a
 language with a helpful syntax, when teaching concepts, 
 endeavour to make sure students understand the concepts at
-a conceptual level, let them be thought to think about the
+a conceptual level, let them be taught to think about the
 concepts.
 
 an advantage of writing an emulated virtual machine
@@ -39,3 +39,6 @@ Pretty-Printing Dictionaries: Right now, we just print <dict>. We could write th
 Native Methods (The "Length" Hack Fix): Remember how we hardcoded list's length? Now that we understand how properties work, we can build a true Native Method system. This would allow things like list.push(5) or string.upper().
 Dictionary Iteration: Upgrading your for loop so you can do for each key, value in person: to loop over the hash table dynamically.
 
+
+++ some downsides that may exist ++
+novices might ask why we can't use some variable names

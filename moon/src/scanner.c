@@ -188,8 +188,13 @@ static TokenType identifierType() {
     break;
   }
 
-  case 'l':
+  case 'l': {
     return checkKeyword(1, 2, "et", TOKEN_LET);
+  }
+
+  case 'm': {
+    return checkKeyword(1, 2, "od", TOKEN_MOD);
+  }
 
   case 'n': {
     if (scanner.current - scanner.start > 1) {
@@ -204,14 +209,17 @@ static TokenType identifierType() {
     break;
   }
 
-  case 'o':
+  case 'o': {
     return checkKeyword(1, 1, "r", TOKEN_OR);
+  }
 
-  case 'q':
+  case 'q': {
     return checkKeyword(1, 3, "uit", TOKEN_QUIT);
+  }
 
-  case 'r':
+  case 'r': {
     return checkKeyword(1, 5, "eturn", TOKEN_GIVE);
+  }
 
   case 's': {
     if (scanner.current - scanner.start > 1) {
@@ -255,8 +263,9 @@ static TokenType identifierType() {
     break;
   }
 
-  case 'w':
+  case 'w': {
     return checkKeyword(1, 4, "hile", TOKEN_WHILE);
+  }
   }
 
   return TOKEN_IDENTIFIER;

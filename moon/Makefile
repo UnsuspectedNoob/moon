@@ -15,7 +15,7 @@ all: $(TARGET)
 
 # 3. Linking the final executable
 $(TARGET): $(OBJ)
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) -o $@ $^ -lm
 	@echo "Build complete! Run ./$(TARGET) to start Moon."
 
 # 4. Compiling individual .c files into .o files

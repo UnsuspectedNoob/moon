@@ -1,5 +1,6 @@
 // vm.c
 
+#include <math.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -7,12 +8,14 @@
 #include <string.h>
 #include <time.h>
 
+#include "chunk.h"
 #include "common.h"
 #include "compiler.h"
 #include "debug.h"
 #include "memory.h"
 #include "object.h"
 #include "table.h"
+#include "value.h"
 #include "vm.h"
 
 VM vm; // Define the global VM instance here
@@ -62,6 +65,8 @@ static Value clockNative(int argCount, Value *args) {
 }
 
 static Value showNative(int argCount, Value *args) {
+  (void)argCount;
+
   // Phrasal 'show' only expects 1 argument (the evaluated expression)
   printValue(args[0]);
   printf("\n"); // Always append the newline
@@ -283,6 +288,25 @@ static InterpretResult run() {
     case OP_DIVIDE:
       BINARY_OP(NUMBER_VAL, /);
       break;
+
+    case OP_MOD: {
+      if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) {
+        runtimeError("Operands must be numbers.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+
+      double b = AS_NUMBER(pop());
+      double a = AS_NUMBER(pop());
+
+      // GUARD AGAINST THE HARD CRASH
+      if (b == 0.0) {
+        runtimeError("Modulo by zero.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+
+      push(NUMBER_VAL(fmod(a, b))); // True floating-point modulo
+      break;
+    }
 
     case OP_NEGATE: {
       if (!IS_NUMBER(peek(0))) {

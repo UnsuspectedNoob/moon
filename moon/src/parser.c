@@ -127,7 +127,7 @@ void hoistPhrases(const char *source) {
                   if (arity > 1)
                     scanToken();
                 }
-                char buf[10];
+                char buf[16];
                 sprintf(buf, "$%d", arity);
                 strcat(mangled, buf);
               } else {
@@ -561,27 +561,70 @@ static Node *stickyPrefix() {
   }
 
   Token opToken = parser.previous;
+
+  // --- THE "IS NOT" FIX ---
+  bool invert = false;
+  if ((opToken.type == TOKEN_IS) && match(TOKEN_NOT)) {
+    invert = true;
+  }
+
   ParseRule *rule = getRule(opToken.type);
   Node *right = parsePrecedence((Precedence)(rule->precedence + 1));
 
   // Build the binary node using the cloned subject!
-  return newBinaryNode(cloneNode(currentStickySubject), opToken, right,
-                       opToken.line);
+  Node *stickyNode = newBinaryNode(cloneNode(currentStickySubject), opToken,
+                                   right, opToken.line);
+
+  if (invert) {
+    Token notToken = {TOKEN_NOT, "not", 3, opToken.line};
+    return newUnaryNode(notToken, stickyNode, opToken.line);
+  }
+
+  return stickyNode;
+}
+
+static bool isComparison(Token opToken) {
+
+  switch (opToken.type) {
+  case TOKEN_IS:
+  case TOKEN_EQUAL_EQUAL:
+  case TOKEN_LESS_EQUAL:
+  case TOKEN_LESS:
+  case TOKEN_GREATER_EQUAL:
+  case TOKEN_GREATER:
+  case TOKEN_EQUAL:
+    return true;
+
+  default:
+    return false;
+  }
 }
 
 static Node *binary(Node *left) {
   Token opToken = parser.previous;
 
   // --- STICKY SUBJECT CAPTURE ---
-  if (opToken.type == TOKEN_IS || opToken.type == TOKEN_EQUAL_EQUAL ||
-      opToken.type == TOKEN_LESS || opToken.type == TOKEN_GREATER ||
-      opToken.type == TOKEN_LESS_EQUAL || opToken.type == TOKEN_GREATER_EQUAL) {
+  if (isComparison(opToken)) {
     currentStickySubject = left;
+  }
+
+  // --- THE "IS NOT" FIX ---
+  bool invert = false;
+  if ((opToken.type == TOKEN_IS) && match(TOKEN_NOT)) {
+    invert = true;
   }
 
   ParseRule *rule = getRule(opToken.type);
   Node *right = parsePrecedence((Precedence)(rule->precedence + 1));
-  return newBinaryNode(left, opToken, right, opToken.line);
+  Node *binNode = newBinaryNode(left, opToken, right, opToken.line);
+
+  // If we caught a 'not', wrap the whole binary expression!
+  if (invert) {
+    Token notToken = {TOKEN_NOT, "not", 3, opToken.line};
+    return newUnaryNode(notToken, binNode, opToken.line);
+  }
+
+  return binNode;
 }
 
 static Node *and_(Node *left) {
@@ -1138,7 +1181,7 @@ static Node *letDeclaration() {
             } while (match(TOKEN_COMMA));
           }
           consume(TOKEN_RIGHT_PAREN, "Expect ')'.");
-          char buf[10];
+          char buf[16];
           sprintf(buf, "$%d", segmentArity);
           strcat(mangled, buf);
         } else {
@@ -1236,7 +1279,8 @@ ParseRule rules[] = {
     [TOKEN_PLUS] = {NULL, binary, PREC_TERM},
     [TOKEN_SLASH] = {NULL, binary, PREC_FACTOR},
     [TOKEN_STAR] = {explicitSticky, binary, PREC_FACTOR}, // <--- CHANGED!
-    [TOKEN_IS] = {stickyPrefix, binary, PREC_EQUALITY},   // <--- CHANGED!
+    [TOKEN_MOD] = {NULL, binary, PREC_FACTOR},
+    [TOKEN_IS] = {stickyPrefix, binary, PREC_EQUALITY}, // <--- CHANGED!
     [TOKEN_EQUAL_EQUAL] = {stickyPrefix, binary,
                            PREC_EQUALITY},                     // <--- CHANGED!
     [TOKEN_EQUAL] = {stickyPrefix, binary, PREC_EQUALITY},     // <--- CHANGED!
@@ -1269,8 +1313,7 @@ ParseRule rules[] = {
 static ParseRule *getRule(TokenType type) { return &rules[type]; }
 
 Node *parseSource(const char *source) {
-  hoistPhrases(source); // <--- Build the Trie before parsing!
-
+  hoistPhrases(source);
   // Native Functions
   insertSignature("show", "show$1");
 
