@@ -345,13 +345,23 @@ static InterpretResult run() {
       double b = AS_NUMBER(pop());
       double a = AS_NUMBER(pop());
 
-      // GUARD AGAINST THE HARD CRASH
       if (b == 0.0) {
         runtimeError("Modulo by zero.");
         return INTERPRET_RUNTIME_ERROR;
       }
 
-      push(NUMBER_VAL(fmod(a, b))); // True floating-point modulo
+      // --- THE FAST PATH ---
+      int intA = (int)a;
+      int intB = (int)b;
+
+      // If casting them to ints didn't lose any decimal data, use the CPU
+      // hardware!
+      if (a == intA && b == intB) {
+        push(NUMBER_VAL(intA % intB));
+      } else {
+        // Otherwise, fall back to the safe, slower C library
+        push(NUMBER_VAL(fmod(a, b)));
+      }
       break;
     }
 

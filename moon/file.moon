@@ -8,5 +8,5 @@ let get odds up to (limit):
   give odds
 end
 
-show get odds up to 5000000
+get odds up to 50000000
 
