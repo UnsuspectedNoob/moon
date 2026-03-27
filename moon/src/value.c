@@ -29,18 +29,13 @@ void freeValueArray(ValueArray *array) {
 }
 
 void printValue(Value value) {
-  switch (value.type) {
-  case VAL_BOOL:
+  if (IS_BOOL(value)) {
     printf(AS_BOOL(value) ? "true" : "false");
-    break;
-  case VAL_NIL:
+  } else if (IS_NIL(value)) {
     printf("nil");
-    break;
-  case VAL_NUMBER:
-    printf("%g", AS_NUMBER(value));
-    break;
-  case VAL_OBJ:
+  } else if (IS_NUMBER(value)) {
+    printf("%.14g", AS_NUMBER(value));
+  } else if (IS_OBJ(value)) {
     printObject(value);
-    break;
   }
 }
