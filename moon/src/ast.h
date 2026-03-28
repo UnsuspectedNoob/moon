@@ -1,6 +1,7 @@
 #ifndef moon_ast_h
 #define moon_ast_h
 
+#include "memory.h"
 #include "scanner.h"
 #include "value.h"
 
@@ -35,6 +36,10 @@ typedef enum {
 
 // Forward declaration
 typedef struct sNode Node;
+
+// Dynamic Array Generators
+DECLARE_ARRAY(Node *, NodeArray) // Generates NodeArray struct and functions!
+DECLARE_ARRAY(Token, TokenArray) // Generates TokenArray struct and functions!
 
 // --- Payload Structs ---
 typedef struct {

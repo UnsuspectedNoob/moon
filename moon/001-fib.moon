@@ -1,7 +1,7 @@
 
 
 let first (n) fibonacci numbers:
-  let a be [1, 1]
+  let a be [0, 1]
 
   give a if n < 3
 

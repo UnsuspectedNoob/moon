@@ -33,7 +33,18 @@ void writeChunk(Chunk *chunk, uint8_t byte, int line) {
   chunk->count++;
 }
 
+extern bool valuesEqual(Value a, Value b);
+
 int addConstant(Chunk *chunk, Value value) {
+  // --- THE DEDUPLICATION LOOP ---
+  // If we already have this exact number or string in the chunk, reuse it!
+  for (int i = 0; i < chunk->constants.count; i++) {
+    if (valuesEqual(chunk->constants.values[i], value)) {
+      return i;
+    }
+  }
+
+  // Otherwise, add it as a brand new constant
   writeValueArray(&chunk->constants, value);
-  return chunk->constants.count - 1; // Return index of the new constant
+  return chunk->constants.count - 1;
 }

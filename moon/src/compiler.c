@@ -35,5 +35,10 @@ ObjFunction *compile(const char *source) {
   // Phase 3: Cleanup
   freeNode(ast);
 
+  // --- ADD THIS SAFETY CATCH ---
+  // If emitting bytecode threw an error (like "too many constants"), abort!
+  if (parser.hadError)
+    return NULL;
+
   return function;
 }

@@ -91,7 +91,7 @@ static bool canStartExpression(TokenType type) {
   case TOKEN_IF:
   case TOKEN_UNLESS:
   case TOKEN_THEN:
-  case TOKEN_BY: // <--- ADDED: Stop the DFA from eating 'by'
+  case TOKEN_BY:
     // REMOVED: TOKEN_END is gone! We've allowed it to start an expression!
     return false;
   default:
@@ -100,7 +100,7 @@ static bool canStartExpression(TokenType type) {
 }
 
 void hoistPhrases(const char *source) {
-  initSignatureTable(); // <--- Initialize the Hash Table!
+  initSignatureTable();
   initScanner(source);
 
   Token token = scanToken();
@@ -312,9 +312,8 @@ static Node *expression() {
       Node *elseBranch = expression();
       return newIfNode(cond, expr, elseBranch, line);
     } else {
-      // No 'else'! It's a Statement Modifier.
-      // We return it with a NULL elseBranch so the parent statement can invert
-      // it.
+      // No 'else'! It's a Statement Modifier. We return it with a NULL
+      // elseBranch so the parent statement can invert it.
       return newIfNode(cond, expr, NULL, line);
     }
   } else if (match(TOKEN_UNLESS)) {
@@ -355,22 +354,22 @@ static Node *extractInterpolationString(Token token) {
 // The Interpolation Parser
 static Node *interpolation() {
   int line = parser.previous.line;
-  Node *parts[255];
-  int count = 0;
+  NodeArray parts;
+  initNodeArray(&parts);
 
   // 1. The Opening String ("hello `)
-  parts[count++] = extractInterpolationString(parser.previous);
+  writeNodeArray(&parts, extractInterpolationString(parser.previous));
 
   // 2. The Loop
   while (true) {
     // Parse the expression inside the backticks ( x + y )
-    parts[count++] = expression();
+    writeNodeArray(&parts, expression());
 
     // It MUST be followed by a MIDDLE or a CLOSE token
     if (match(TOKEN_STRING_MIDDLE)) {
-      parts[count++] = extractInterpolationString(parser.previous);
+      writeNodeArray(&parts, extractInterpolationString(parser.previous));
     } else if (match(TOKEN_STRING_CLOSE)) {
-      parts[count++] = extractInterpolationString(parser.previous);
+      writeNodeArray(&parts, extractInterpolationString(parser.previous));
       break;
     } else {
       errorAtCurrent("Expect end of string interpolation (` or \").");
@@ -378,7 +377,9 @@ static Node *interpolation() {
     }
   }
 
-  return newInterpolationNode(parts, count, line);
+  Node *node = newInterpolationNode(parts.items, parts.count, line);
+  freeNodeArray(&parts);
+  return node;
 }
 
 static Node *number() {
@@ -403,21 +404,19 @@ static Node *literal() {
 static Node *variable() {
   Token rootToken = parser.previous;
 
-  // 1. Check the Hash Table for a Signature Trie
   char rootWord[256] = {0};
   snprintf(rootWord, rootToken.length + 1, "%.*s", rootToken.length,
            rootToken.start);
 
   TrieNode *currentNode = getSignatureTrie(rootWord);
 
-  // If it's not in the table, it's just a normal variable!
   if (currentNode == NULL) {
     return newVariableNode(rootToken, rootToken.line);
   }
 
-  // 2. Walk the DFA
-  Node *args[255];
-  int argCount = 0;
+  // Use dynamic array for accumulated arguments
+  NodeArray args;
+  initNodeArray(&args);
 
   TrieNode *startNode = currentNode;
   TrieNode *lastGoodState = currentNode->isTerminal ? currentNode : NULL;
@@ -427,7 +426,6 @@ static Node *variable() {
     TrieNode *matchedLabel = NULL;
     bool expectsArgument = false;
 
-    // Look at all available children paths from this state
     for (int i = 0; i < currentNode->childCount; i++) {
       TrieNode *child = currentNode->children[i];
       if (child->type == NODE_LABEL && child->labelHash == nextHash) {
@@ -437,19 +435,15 @@ static Node *variable() {
       }
     }
 
-    // Path A: We found a matching label word!
     if (matchedLabel != NULL) {
-      advance(); // Consume the label
+      advance();
       currentNode = matchedLabel;
       if (currentNode->isTerminal)
         lastGoodState = currentNode;
       continue;
     }
 
-    // Path B: We need to parse an argument!
     if (expectsArgument && canStartExpression(parser.current.type)) {
-
-      // --- 1. PUSH BLINDFOLDS FOR ALL POSSIBLE ARGUMENT PATHS ---
       int labelsPushed = 0;
       for (int i = 0; i < currentNode->childCount; i++) {
         if (currentNode->children[i]->type == NODE_ARGUMENT) {
@@ -466,79 +460,77 @@ static Node *variable() {
         }
       }
 
-      // --- 2. PARSE THE ARGUMENTS ---
-      Node *tempArgs[255];
-      int tempCount = 0;
+      // Initialize temp array INSIDE the loop
+      NodeArray tempArgs;
+      initNodeArray(&tempArgs);
 
       if (check(TOKEN_LEFT_PAREN)) {
-        advance();       // consume '('
-        groupingDepth++; // Protect from blindfolds!
+        advance();
+        groupingDepth++;
 
         if (!check(TOKEN_RIGHT_PAREN)) {
           do {
-            tempArgs[tempCount++] = expression();
+            writeNodeArray(&tempArgs, expression());
           } while (match(TOKEN_COMMA));
         }
         consume(TOKEN_RIGHT_PAREN, "Expect ')' after arguments.");
         groupingDepth--;
       } else {
-        tempArgs[tempCount++] = expression();
+        writeNodeArray(&tempArgs, expression());
       }
 
-      // --- 3. POP BLINDFOLDS ---
       expectedLabelCount -= labelsPushed;
 
-      // --- 4. FIND THE MATCHING ARITY BRANCH ---
       TrieNode *matchedArgChild = NULL;
       for (int i = 0; i < currentNode->childCount; i++) {
         if (currentNode->children[i]->type == NODE_ARGUMENT &&
-            currentNode->children[i]->arity == tempCount) {
+            currentNode->children[i]->arity == tempArgs.count) {
           matchedArgChild = currentNode->children[i];
           break;
         }
       }
 
       if (matchedArgChild != NULL) {
-        // We found the correct branch! Transfer temps and step down.
-        for (int i = 0; i < tempCount; i++)
-          args[argCount++] = tempArgs[i];
+        // Transfer contents
+        for (int i = 0; i < tempArgs.count; i++)
+          writeNodeArray(&args, tempArgs.items[i]);
+
+        freeNodeArray(&tempArgs); // Free the temp buffer before looping!
+
         currentNode = matchedArgChild;
         if (currentNode->isTerminal)
           lastGoodState = currentNode;
         continue;
       } else {
-        break; // Dead end! We parsed N args, but no branch accepts N args.
+        freeNodeArray(&tempArgs); // Free on dead end!
+        break;
       }
     }
-
-    // Path C: Dead End in the token stream. Break the loop.
     break;
   }
 
-  // 3. The Resolution
   if (lastGoodState != NULL) {
-    // Zero-Backtracking Safety Check: Did they leave the phrase half-finished?
     if (currentNode != lastGoodState) {
       error("Incomplete phrasal function. Missing expected labels.");
+      freeNodeArray(&args);
       return newVariableNode(rootToken, rootToken.line);
     }
 
-    // It's a perfect match! Package it for the Code Generator.
     Token mangledToken = rootToken;
-
-    // --- THE FIX: Duplicate the string so it survives freeSignatureTable! ---
     mangledToken.start = my_strdup(lastGoodState->mangledName);
     mangledToken.length = strlen(lastGoodState->mangledName);
 
-    return newPhrasalCallNode(mangledToken, args, argCount, rootToken.line);
+    Node *node = newPhrasalCallNode(mangledToken, args.items, args.count,
+                                    rootToken.line);
+    freeNodeArray(&args);
+    return node;
   }
 
-  // If we get here, the root word was in the table, but they didn't type a
-  // valid phrase. E.g., they typed `max 5` when only `max of (a)` exists.
   if (currentNode != startNode) {
     error("Invalid phrasing. Did not match any known function signature.");
   }
 
+  freeNodeArray(&args);
   return newVariableNode(rootToken, rootToken.line);
 }
 
@@ -641,8 +633,8 @@ static Node *or_(Node *left) {
 
 static Node *list() {
   int line = parser.previous.line;
-  Node *items[255];
-  int count = 0;
+  NodeArray itemsArr, *items = &itemsArr;
+  initNodeArray(items);
 
   groupingDepth++; // Protect the list items!
   if (!check(TOKEN_RIGHT_BRACKET)) {
@@ -650,25 +642,26 @@ static Node *list() {
       ignoreNewlines();
       if (check(TOKEN_RIGHT_BRACKET))
         break;
-      items[count++] = expression();
-      if (count >= 255) {
-        error("Can't have more than 255 items in a list.");
-        break;
-      }
+      writeNodeArray(items, expression());
     } while (match(TOKEN_COMMA));
   }
   groupingDepth--; // Coming back out!
 
   ignoreNewlines();
-  consume(TOKEN_RIGHT_BRACKET, "Expect ']' after list.");
-  return newListNode(items, count, line);
+  consume(TOKEN_RIGHT_BRACKET, "Expect a ']' after list.");
+
+  Node *node = newListNode(items->items, items->count, line);
+  freeNodeArray(items);
+  return node;
 }
 
 static Node *dict() {
   int line = parser.previous.line;
-  Node *keys[255];
-  Node *values[255];
-  int count = 0;
+  NodeArray keys;
+  initNodeArray(&keys);
+
+  NodeArray values;
+  initNodeArray(&values);
 
   groupingDepth++; // Protect from blindfolds!
 
@@ -702,14 +695,8 @@ static Node *dict() {
       // 3. The Value
       Node *valueNode = expression();
 
-      keys[count] = keyNode;
-      values[count] = valueNode;
-      count++;
-
-      if (count >= 255) {
-        error("Can't have more than 255 properties in a dictionary.");
-        break;
-      }
+      writeNodeArray(&keys, keyNode);
+      writeNodeArray(&values, valueNode);
     } while (match(TOKEN_COMMA));
   }
 
@@ -718,7 +705,10 @@ static Node *dict() {
   ignoreNewlines();
   consume(TOKEN_RIGHT_BRACE, "Expect '}' after dictionary properties.");
 
-  return newDictNode(keys, values, count, line);
+  Node *node = newDictNode(keys.items, values.items, keys.count, line);
+  freeNodeArray(&keys);
+  freeNodeArray(&values);
+  return node;
 }
 
 static Node *subscript(Node *left) {
@@ -780,25 +770,23 @@ static Node *endKeyword() { return newEndNode(parser.previous.line); }
 // ==========================================
 
 static Node *declaration();
-static Node *statement(); // <--- ADD THIS LINE HERE
+static Node *statement();
 
 static Node *block(TokenType *terminators, int count) {
   int line = parser.previous.line;
-  Node *statements[255];
-  int stmtCount = 0;
+  NodeArray statements;
+  initNodeArray(&statements);
 
   while (true) {
     ignoreNewlines();
     if (checkTerminator(terminators, count) || check(TOKEN_EOF))
       break;
 
-    statements[stmtCount++] = declaration();
-    if (stmtCount >= 255) {
-      error("Too many statements in block.");
-      break;
-    }
+    writeNodeArray(&statements, declaration());
   }
-  return newBlockNode(statements, stmtCount, line);
+  Node *node = newBlockNode(statements.items, statements.count, line);
+  freeNodeArray(&statements);
+  return node;
 }
 
 static Node *ifStatement(bool invert) {
@@ -931,8 +919,8 @@ static Node *parseLValue() {
 
 static Node *addStatement() {
   int line = parser.previous.line;
-  Node *values[255];
-  int valueCount = 0;
+  NodeArray values;
+  initNodeArray(&values);
 
   // --- THE BLINDFOLD FIX ---
   // We manually push "to" onto the expected label stack so the Pratt parser
@@ -943,7 +931,7 @@ static Node *addStatement() {
 
   // 1. Gather all the expressions to add
   do {
-    values[valueCount++] = expression();
+    writeNodeArray(&values, expression());
   } while (match(TOKEN_COMMA));
 
   // Pop the blindfold!
@@ -966,9 +954,11 @@ static Node *addStatement() {
   Token plusToken = {
       .type = TOKEN_ADD_INPLACE, .start = "add", .length = 3, .line = line};
 
-  for (int i = 0; i < valueCount; i++) {
-    accumulator = newBinaryNode(accumulator, plusToken, values[i], line);
+  for (int i = 0; i < values.count; i++) {
+    accumulator = newBinaryNode(accumulator, plusToken, values.items[i], line);
   }
+
+  freeNodeArray(&values);
 
   // 5. Wrap it all in a SET node
   Node *targets[1] = {target};
@@ -992,37 +982,43 @@ static Node *addStatement() {
 
 static Node *setStatement() {
   int line = parser.previous.line;
-  Node *targets[255], *values[255];
-  int targetCount = 0, valueCount = 0;
+  NodeArray targets;
+  initNodeArray(&targets);
+  NodeArray values;
+  initNodeArray(&values);
 
-  // 1. Gather the strict L-Values
   do {
-    targets[targetCount++] = parseLValue();
+    writeNodeArray(&targets, parseLValue());
   } while (match(TOKEN_COMMA));
 
   consume(TOKEN_TO, "Expect 'to' after target(s).");
 
-  // 2. Gather the standard expressions
   do {
-    values[valueCount++] = expression();
+    writeNodeArray(&values, expression());
   } while (match(TOKEN_COMMA));
 
-  Node *lastVal = values[valueCount - 1];
+  Node *lastVal = values.items[values.count - 1];
   if (lastVal->type == NODE_IF && lastVal->as.ifStmt.elseBranch == NULL) {
     Node *cond = lastVal->as.ifStmt.condition;
-    values[valueCount - 1] =
-        lastVal->as.ifStmt.thenBranch; // Swap the value out!
-    Node *setNode = newSetNode(targets, targetCount, values, valueCount, line);
-    return newIfNode(cond, setNode, NULL, line); // Wrap the entire set!
+    values.items[values.count - 1] = lastVal->as.ifStmt.thenBranch;
+
+    Node *setNode = newSetNode(targets.items, targets.count, values.items,
+                               values.count, line);
+
+    freeNodeArray(&targets);
+    freeNodeArray(&values); // FREE BEFORE RETURN!
+    return newIfNode(cond, setNode, NULL, line);
   }
 
-  // 3. Enforce the Cardinality Rules
-  if (valueCount > 1 && valueCount != targetCount) {
-    error("Mismatch in assignment counts. Expression count must be 1, or "
-          "exactly match the number of variables.");
+  if (values.count > 1 && values.count != targets.count) {
+    error("Mismatch in assignment counts.");
   }
 
-  return newSetNode(targets, targetCount, values, valueCount, line);
+  Node *node = newSetNode(targets.items, targets.count, values.items,
+                          values.count, line);
+  freeNodeArray(&targets);
+  freeNodeArray(&values);
+  return node;
 }
 
 static Node *giveStatement() {
@@ -1112,61 +1108,54 @@ static Node *statement() {
 }
 
 static Node *letDeclaration() {
-  Token names[255];
-  int nameCount = 0;
+  TokenArray names;
+  initTokenArray(&names);
 
-  // 1. Gather all the variable names (or the root function name)
   do {
     consume(TOKEN_IDENTIFIER, "Expect variable name.");
-    names[nameCount++] = parser.previous;
+    writeTokenArray(&names, parser.previous);
   } while (match(TOKEN_COMMA));
 
-  // --- STANDARD VARIABLE DECLARATION ---
   if (match(TOKEN_BE)) {
-    Node *exprs[255];
-    int exprCount = 0;
+    NodeArray exprs;
+    initNodeArray(&exprs);
 
-    // 2. Gather all the expressions
     do {
-      exprs[exprCount++] = expression();
+      writeNodeArray(&exprs, expression());
     } while (match(TOKEN_COMMA));
 
-    Node *lastVal = exprs[exprCount - 1];
+    Node *lastVal = exprs.items[exprs.count - 1];
     if (lastVal->type == NODE_IF && lastVal->as.ifStmt.elseBranch == NULL) {
       error("Cannot use statement modifiers on 'let' declarations.");
     }
-    // 3. ENFORCE YOUR RULES (The Audit)
-    if (exprCount != 1 && exprCount != nameCount) {
-      error("Expression count must be 1, or exactly match the number of "
-            "variables.");
+    if (exprs.count != 1 && exprs.count != names.count) {
+      error("Expression count must be 1, or exactly match variables.");
     }
 
-    return newLetNode(names, nameCount, exprs, exprCount, names[0].line);
+    Node *node = newLetNode(names.items, names.count, exprs.items, exprs.count,
+                            names.items[0].line);
+    freeNodeArray(&exprs);
+    freeTokenArray(&names);
+    return node;
   }
 
-  // --- PHRASAL FUNCTION DECLARATION ---
+  Token rootName = names.items[0];
 
-  // FIX: Explicitly set rootName to the first identifier we grabbed!
-  Token rootName = names[0];
-
-  // THE FORK: Is it a Function?
   if (check(TOKEN_LEFT_PAREN) || check(TOKEN_COLON) ||
       (!check(TOKEN_BE) && !check(TOKEN_COMMA))) {
-
-    // Quick safety check: Functions can't have multiple root names (let a, b:)
-    if (nameCount > 1) {
+    if (names.count > 1) {
       error("Cannot declare multiple functions on the same line.");
+      freeTokenArray(&names);
       return NULL;
     }
 
     int line = rootName.line;
-    Token parameters[255];
-    int paramCount = 0;
+    TokenArray parameters;
+    initTokenArray(&parameters);
 
     char mangled[1024] = {0};
     strncat(mangled, rootName.start, rootName.length);
 
-    // THE 0-ARITY FIX
     if (check(TOKEN_COLON)) {
       strcat(mangled, "$0");
     } else {
@@ -1176,7 +1165,7 @@ static Node *letDeclaration() {
           if (!check(TOKEN_RIGHT_PAREN)) {
             do {
               consume(TOKEN_IDENTIFIER, "Expect parameter name.");
-              parameters[paramCount++] = parser.previous;
+              writeTokenArray(&parameters, parser.previous);
               segmentArity++;
             } while (match(TOKEN_COMMA));
           }
@@ -1185,7 +1174,7 @@ static Node *letDeclaration() {
           sprintf(buf, "$%d", segmentArity);
           strcat(mangled, buf);
         } else {
-          advance(); // Consume label
+          advance();
           strcat(mangled, "_");
           strncat(mangled, parser.previous.start, parser.previous.length);
         }
@@ -1203,13 +1192,15 @@ static Node *letDeclaration() {
       finalName.length = strlen(mangled);
     }
 
-    return newFunctionNode(finalName, parameters, paramCount, body, line);
+    Node *node = newFunctionNode(finalName, parameters.items, parameters.count,
+                                 body, line);
+    freeTokenArray(&parameters);
+    freeTokenArray(&names);
+    return node;
   }
 
-  // --- THE CLANG FIX (Catch-all for invalid syntax) ---
-  // If it's not a 'be' declaration, and not a valid function, it's a syntax
-  // error.
   error("Expect 'be' for variables or a valid function signature.");
+  freeTokenArray(&names);
   return NULL;
 }
 
@@ -1234,19 +1225,22 @@ static Node *grouping() {
 
 static Node *call(Node *callee) {
   int line = parser.previous.line;
-  Node *args[255];
-  int argCount = 0;
+  NodeArray args;
+  initNodeArray(&args);
 
   groupingDepth++; // Protect the arguments!
   if (!check(TOKEN_RIGHT_PAREN)) {
     do {
-      args[argCount++] = expression();
+      writeNodeArray(&args, expression());
     } while (match(TOKEN_COMMA));
   }
   groupingDepth--; // Coming back out!
 
   consume(TOKEN_RIGHT_PAREN, "Expect ')' after arguments.");
-  return newCallNode(callee, args, argCount, line);
+
+  Node *node = newCallNode(callee, args.items, args.count, line);
+  freeNodeArray(&args);
+  return node;
 }
 
 static Node *declaration() {
@@ -1278,18 +1272,15 @@ ParseRule rules[] = {
     [TOKEN_MINUS] = {unary, binary, PREC_TERM},
     [TOKEN_PLUS] = {NULL, binary, PREC_TERM},
     [TOKEN_SLASH] = {NULL, binary, PREC_FACTOR},
-    [TOKEN_STAR] = {explicitSticky, binary, PREC_FACTOR}, // <--- CHANGED!
+    [TOKEN_STAR] = {explicitSticky, binary, PREC_FACTOR},
     [TOKEN_MOD] = {NULL, binary, PREC_FACTOR},
-    [TOKEN_IS] = {stickyPrefix, binary, PREC_EQUALITY}, // <--- CHANGED!
-    [TOKEN_EQUAL_EQUAL] = {stickyPrefix, binary,
-                           PREC_EQUALITY},                     // <--- CHANGED!
-    [TOKEN_EQUAL] = {stickyPrefix, binary, PREC_EQUALITY},     // <--- CHANGED!
-    [TOKEN_GREATER] = {stickyPrefix, binary, PREC_COMPARISON}, // <--- CHANGED!
-    [TOKEN_GREATER_EQUAL] = {stickyPrefix, binary,
-                             PREC_COMPARISON},              // <--- CHANGED!
-    [TOKEN_LESS] = {stickyPrefix, binary, PREC_COMPARISON}, // <--- CHANGED!
-    [TOKEN_LESS_EQUAL] = {stickyPrefix, binary,
-                          PREC_COMPARISON}, // <--- CHANGED!
+    [TOKEN_IS] = {stickyPrefix, binary, PREC_EQUALITY},
+    [TOKEN_EQUAL_EQUAL] = {stickyPrefix, binary, PREC_EQUALITY},
+    [TOKEN_EQUAL] = {stickyPrefix, binary, PREC_EQUALITY},
+    [TOKEN_GREATER] = {stickyPrefix, binary, PREC_COMPARISON},
+    [TOKEN_GREATER_EQUAL] = {stickyPrefix, binary, PREC_COMPARISON},
+    [TOKEN_LESS] = {stickyPrefix, binary, PREC_COMPARISON},
+    [TOKEN_LESS_EQUAL] = {stickyPrefix, binary, PREC_COMPARISON},
     [TOKEN_STRING] = {string, NULL, PREC_NONE},
     [TOKEN_STRING_OPEN] = {interpolation, NULL, PREC_NONE},
     [TOKEN_NUMBER] = {number, NULL, PREC_NONE},
@@ -1297,8 +1288,8 @@ ParseRule rules[] = {
     [TOKEN_TRUE] = {literal, NULL, PREC_NONE},
     [TOKEN_FALSE] = {literal, NULL, PREC_NONE},
     [TOKEN_IDENTIFIER] = {variable, NULL, PREC_NONE},
-    [TOKEN_IF] = {NULL, NULL, PREC_NONE},     // <--- CHANGED!
-    [TOKEN_UNLESS] = {NULL, NULL, PREC_NONE}, // <--- CHANGED!
+    [TOKEN_IF] = {NULL, NULL, PREC_NONE},
+    [TOKEN_UNLESS] = {NULL, NULL, PREC_NONE},
     [TOKEN_NOT] = {unary, NULL, PREC_NONE},
     [TOKEN_AND] = {NULL, and_, PREC_AND},
     [TOKEN_OR] = {NULL, or_, PREC_OR},
@@ -1314,19 +1305,23 @@ static ParseRule *getRule(TokenType type) { return &rules[type]; }
 
 Node *parseSource(const char *source) {
   hoistPhrases(source);
-  // Native Functions
   insertSignature("show", "show$1");
 
   parser.hadError = false;
   parser.panicMode = false;
   advance();
 
-  Node *statements[2048];
-  int count = 0;
+  NodeArray statements;
+  initNodeArray(&statements);
+
   while (!match(TOKEN_EOF)) {
-    statements[count++] = declaration();
+    writeNodeArray(&statements, declaration());
   }
 
-  freeSignatureTable(); // <--- Clean up memory when done!
-  return (parser.hadError) ? NULL : newBlockNode(statements, count, 0);
+  freeSignatureTable();
+  Node *node = (parser.hadError)
+                   ? NULL
+                   : newBlockNode(statements.items, statements.count, 0);
+  freeNodeArray(&statements);
+  return node;
 }

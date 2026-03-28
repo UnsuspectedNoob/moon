@@ -1,5 +1,6 @@
 #include "codegen.h"
 #include "ast.h"
+#include <stdint.h>
 #include <stdlib.h>
 
 #include "chunk.h"
@@ -10,7 +11,7 @@
 // CODEGEN STATE (Scope & Locals)
 // ==========================================
 
-static uint8_t identifierConstant(Token *name) {
+static uint16_t identifierConstant(Token *name) { // <--- Change to uint16_t
   return makeConstant(OBJ_VAL(copyString(name->start, name->length)));
 }
 
@@ -349,9 +350,11 @@ static void walkNode(Node *node) {
       // Yes: It lives on the VM stack at a specific offset
       emitBytes(OP_GET_LOCAL, (uint8_t)arg);
     } else {
-      // No: It must be a global. Find its name in the string table.
-      uint8_t globalName = identifierConstant(&node->as.variable.name);
-      emitBytes(OP_GET_GLOBAL, globalName);
+      uint16_t globalName = identifierConstant(&node->as.variable.name);
+
+      emitByte(OP_GET_GLOBAL);
+      emitByte((globalName >> 8) & 0xff); // High byte
+      emitByte(globalName & 0xff);        // Low byte
     }
     break;
   }
@@ -373,34 +376,38 @@ static void walkNode(Node *node) {
         addLocal(node->as.let.names[i]);
         markInitialized();
       } else {
-        uint8_t globalName = identifierConstant(&node->as.let.names[i]);
-        emitBytes(OP_DEFINE_GLOBAL, globalName);
-        emitByte(OP_POP); // Clear the evaluated value off the stack
+        uint16_t globalName = identifierConstant(&node->as.let.names[i]);
+        emitByte(OP_DEFINE_GLOBAL);
+        emitByte((globalName >> 8) & 0xff);
+        emitByte(globalName & 0xff);
+        emitByte(OP_POP);
       }
     }
     break;
   }
 
   case NODE_LIST: {
-    // 1. Evaluate every item and push it to the stack
     for (int i = 0; i < node->as.list.count; i++) {
       walkNode(node->as.list.items[i]);
     }
-    // 2. Tell the VM to scoop them all up into a single List object!
-    emitBytes(OP_BUILD_LIST, (uint8_t)node->as.list.count);
+    emitByte(OP_BUILD_LIST);
+
+    uint16_t count = (uint16_t)node->as.list.count;
+    emitByte((count >> 8) & 0xff); // High byte
+    emitByte(count & 0xff);        // Low byte
     break;
   }
 
   case NODE_DICT: {
-    // 1. Walk every key and value and push them to the stack
     for (int i = 0; i < node->as.dictExpr.count; i++) {
       walkNode(node->as.dictExpr.keys[i]);
       walkNode(node->as.dictExpr.values[i]);
     }
-
-    // 2. Emit the instruction and the number of pairs!
     emitByte(OP_BUILD_DICT);
-    emitByte(node->as.dictExpr.count);
+    uint16_t count = (uint16_t)node->as.dictExpr.count;
+    emitByte((count >> 8) & 0xff); // High byte
+    emitByte(count & 0xff);        // Low byte
+    break;
     break;
   }
 
@@ -433,17 +440,13 @@ static void walkNode(Node *node) {
   }
 
   case NODE_PROPERTY: {
-    // Looking at your old compiler, properties were accessed by
-    // pushing the string key as a constant and calling OP_GET_SUBSCRIPT.
-
-    // 1. Walk the target (e.g., pushes `player` to stack)
     walkNode(node->as.property.target);
 
-    // 2. Push the property name as a string constant (e.g., pushes "health")
-    uint8_t nameConst = identifierConstant(&node->as.property.name);
-    emitBytes(OP_CONSTANT, nameConst);
+    // THE FIX: Directly emit the constant value dynamically!
+    Value nameVal = OBJ_VAL(copyString(node->as.property.name.start,
+                                       node->as.property.name.length));
+    emitConstant(nameVal);
 
-    // 3. Look it up!
     emitByte(OP_GET_SUBSCRIPT);
     break;
   }
@@ -460,8 +463,11 @@ static void walkNode(Node *node) {
         walkNode(target->as.subscript.index);
       } else if (target->type == NODE_PROPERTY) {
         walkNode(target->as.property.target);
-        uint8_t nameConst = identifierConstant(&target->as.property.name);
-        emitBytes(OP_CONSTANT, nameConst);
+
+        // THE FIX: Directly emit the constant value dynamically!
+        Value nameVal = OBJ_VAL(copyString(target->as.property.name.start,
+                                           target->as.property.name.length));
+        emitConstant(nameVal);
       }
       // Variables don't have an address to evaluate on the stack.
     }
@@ -483,10 +489,12 @@ static void walkNode(Node *node) {
         if (localArg != -1) {
           emitBytes(OP_SET_LOCAL, (uint8_t)localArg);
         } else {
-          uint8_t globalName = identifierConstant(&target->as.variable.name);
-          emitBytes(OP_SET_GLOBAL, globalName);
+          uint16_t globalName = identifierConstant(&target->as.variable.name);
+          emitByte(OP_SET_GLOBAL);
+          emitByte((globalName >> 8) & 0xff);
+          emitByte(globalName & 0xff);
         }
-        emitByte(OP_POP); // Remove the value from the stack
+        emitByte(OP_POP);
       } else if (target->type == NODE_SUBSCRIPT ||
                  target->type == NODE_PROPERTY) {
         emitByte(OP_SET_SUBSCRIPT);
@@ -498,13 +506,13 @@ static void walkNode(Node *node) {
   }
 
   case NODE_INTERPOLATION: {
-    // 1. Push every single part (strings and expressions) onto the stack
     for (int i = 0; i < node->as.interpolation.partCount; i++) {
       walkNode(node->as.interpolation.parts[i]);
     }
-
-    // 2. Fire your optimized VM instruction!
-    emitBytes(OP_BUILD_STRING, (uint8_t)node->as.interpolation.partCount);
+    emitByte(OP_BUILD_STRING);
+    uint16_t count = (uint16_t)node->as.interpolation.partCount;
+    emitByte((count >> 8) & 0xff); // High byte
+    emitByte(count & 0xff);        // Low byte
     break;
   }
 
@@ -513,7 +521,33 @@ static void walkNode(Node *node) {
     for (int i = 0; i < node->as.call.argCount; i++) {
       walkNode(node->as.call.arguments[i]);
     }
-    emitBytes(OP_CALL, (uint8_t)node->as.call.argCount);
+    emitByte(OP_CALL);
+
+    uint16_t count = (uint16_t)node->as.call.argCount;
+    emitByte((count >> 8) & 0xff);
+    emitByte(count & 0xff);
+    break;
+  }
+
+  case NODE_PHRASAL_CALL: {
+    int arg = resolveLocal(current, &node->as.phrasalCall.mangledName);
+    if (arg != -1) {
+      emitBytes(OP_GET_LOCAL, (uint8_t)arg);
+    } else {
+      uint16_t nameConstant =
+          identifierConstant(&node->as.phrasalCall.mangledName);
+      emitByte(OP_GET_GLOBAL);
+      emitByte((nameConstant >> 8) & 0xff);
+      emitByte(nameConstant & 0xff);
+    }
+    for (int i = 0; i < node->as.phrasalCall.argCount; i++) {
+      walkNode(node->as.phrasalCall.arguments[i]);
+    }
+    emitByte(OP_CALL);
+
+    uint16_t count = (uint16_t)node->as.phrasalCall.argCount;
+    emitByte((count >> 8) & 0xff);
+    emitByte(count & 0xff);
     break;
   }
 
@@ -557,32 +591,12 @@ static void walkNode(Node *node) {
       addLocal(node->as.function.name);
       markInitialized();
     } else {
-      uint8_t globalName = identifierConstant(&node->as.function.name);
-      emitBytes(OP_DEFINE_GLOBAL, globalName);
+      uint16_t globalName = identifierConstant(&node->as.function.name);
+      emitByte(OP_DEFINE_GLOBAL);
+      emitByte((globalName >> 8) & 0xff);
+      emitByte(globalName & 0xff);
       emitByte(OP_POP);
     }
-    break;
-  }
-
-  case NODE_PHRASAL_CALL: {
-    // 1. Resolve and push the function onto the stack FIRST
-    int arg = resolveLocal(current, &node->as.phrasalCall.mangledName);
-
-    if (arg != -1) {
-      emitBytes(OP_GET_LOCAL, (uint8_t)arg);
-    } else {
-      uint8_t nameConstant =
-          identifierConstant(&node->as.phrasalCall.mangledName);
-      emitBytes(OP_GET_GLOBAL, nameConstant);
-    }
-
-    // 2. Walk arguments SECOND (pushes them to the stack above the function)
-    for (int i = 0; i < node->as.phrasalCall.argCount; i++) {
-      walkNode(node->as.phrasalCall.arguments[i]);
-    }
-
-    // 3. Call it!
-    emitBytes(OP_CALL, (uint8_t)node->as.phrasalCall.argCount);
     break;
   }
 

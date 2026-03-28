@@ -1,22 +1,31 @@
-@@ Our global cache dictionary
-let memo be {}
 
-let fibonacci of (n):
-  @@ Base cases
-  if n < 2 give n
-
-  @@ Cache hit! Return immediately.
-  if memo.n is not nil:
-    give memo.n
-  end
-
-  @@ Cache miss. Calculate recursively.
-  let result be (fibonacci of n - 1) + (fibonacci of n - 2)
-
-  @@ Save to the dictionary for next time
-  set memo.n to result
-  
-  give result
+type Person:
+  name,
+  age: 20
+  health: 100,
 end
 
-show "The 60th Fibonacci number is `fibonacci of 60`"
+let person be new Person with:
+  name: "Munachi"
+end
+
+let User type:
+  name, age, balance
+end
+
+const user =  {
+  name: "Munachi",
+  age: 50,
+  balance: 0
+}
+
+User {
+  name: "Munachi",
+  age: 30
+}
+
+type Book:
+  name, author,
+  ISBN = "1023-3443-5332-3418",
+  borrowed = false
+end

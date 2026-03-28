@@ -9,6 +9,7 @@
 // The Instruction Set Architecture (ISA)
 typedef enum {
   OP_CONSTANT,
+  OP_CONSTANT_LONG,
 
   OP_NIL,   // New: for 'nil'
   OP_TRUE,  // New: for 'true'

@@ -170,16 +170,28 @@ void emitBytes(uint8_t byte1, uint8_t byte2) {
 
 void emitReturn() { emitBytes(OP_NIL, OP_RETURN); }
 
-uint8_t makeConstant(Value value) {
-  int constant = addConstant(&current->function->chunk, value);
-  if (constant > 255) {
+uint16_t makeConstant(Value value) {
+  int constant = addConstant(currentChunk(), value);
+  if (constant > 65535) { // <--- Upgrade from 255
     error("Too many constants in one chunk.");
     return 0;
   }
-  return (uint8_t)constant;
+  return (uint16_t)constant;
 }
 
-void emitConstant(Value value) { emitBytes(OP_CONSTANT, makeConstant(value)); }
+void emitConstant(Value value) {
+  int constant = addConstant(currentChunk(), value);
+
+  if (constant <= 255) {
+    emitBytes(OP_CONSTANT, (uint8_t)constant);
+  } else if (constant <= 65535) {
+    emitByte(OP_CONSTANT_LONG);
+    emitByte((constant >> 8) & 0xff);
+    emitByte(constant & 0xff);
+  } else {
+    error("Too many constants in one chunk.");
+  }
+}
 
 // ==========================================
 // CONTROL FLOW EMISSION

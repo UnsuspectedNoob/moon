@@ -28,6 +28,28 @@ void freeValueArray(ValueArray *array) {
   initValueArray(array);
 }
 
+uint32_t hashValue(Value value) {
+  // 1. If it's an object (like a string), use the string's cached FNV-1a hash!
+  if (IS_OBJ(value)) {
+    if (IS_STRING(value))
+      return AS_STRING(value)->hash;
+
+    // For other objects (lists/dicts), we hash their memory pointer
+    return (uint32_t)(uintptr_t)AS_OBJ(value);
+  }
+
+  // 2. If it's a number, boolean, or nil, use a fast integer hash
+  uint64_t hash = value;
+  hash = (~hash) + (hash << 18);
+  hash = hash ^ (hash >> 31);
+  hash = hash * 21;
+  hash = hash ^ (hash >> 11);
+  hash = hash + (hash << 6);
+  hash = hash ^ (hash >> 22);
+
+  return (uint32_t)hash;
+}
+
 void printValue(Value value) {
   if (IS_BOOL(value)) {
     printf(AS_BOOL(value) ? "true" : "false");

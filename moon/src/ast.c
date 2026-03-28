@@ -2,6 +2,10 @@
 #include "memory.h"
 #include <stdlib.h>
 
+// -- Compiling the dynamic arrays
+DEFINE_ARRAY(Node *, NodeArray)
+DEFINE_ARRAY(Token, TokenArray)
+
 // Helper to allocate a raw node
 static Node *allocateNode(NodeType type, int line) {
   Node *node = ALLOCATE(Node, 1);
@@ -325,42 +329,47 @@ void freeNode(Node *node) {
 
   // We must recursively free all children before freeing the parent!
   switch (node->type) {
-  case NODE_BINARY: {
+  case NODE_BINARY:
+  case NODE_LOGICAL: { // Reuses binary payload
     freeNode(node->as.binary.left);
     freeNode(node->as.binary.right);
     break;
   }
-
+  case NODE_UNARY: {
+    freeNode(node->as.unary.right);
+    break;
+  }
   case NODE_IF: {
     freeNode(node->as.ifStmt.condition);
     freeNode(node->as.ifStmt.thenBranch);
     freeNode(node->as.ifStmt.elseBranch);
     break;
   }
-
+  case NODE_WHILE: {
+    freeNode(node->as.whileStmt.condition);
+    freeNode(node->as.whileStmt.body);
+    break;
+  }
+  case NODE_FOR: {
+    freeNode(node->as.forStmt.sequence);
+    freeNode(node->as.forStmt.body);
+    break;
+  }
   case NODE_BLOCK: {
     for (int i = 0; i < node->as.block.count; i++) {
       freeNode(node->as.block.statements[i]);
     }
-
     FREE_ARRAY(Node *, node->as.block.statements, node->as.block.count);
     break;
   }
-
   case NODE_LET: {
-    // Free the names array
     FREE_ARRAY(Token, node->as.let.names, node->as.let.nameCount);
-
-    // Walk and free the expressions based on exprCount
     for (int i = 0; i < node->as.let.exprCount; i++) {
       freeNode(node->as.let.exprs[i]);
     }
-
-    // Free the expressions array
     FREE_ARRAY(Node *, node->as.let.exprs, node->as.let.exprCount);
     break;
   }
-
   case NODE_SET: {
     for (int i = 0; i < node->as.set.targetCount; i++)
       freeNode(node->as.set.targets[i]);
@@ -371,12 +380,73 @@ void freeNode(Node *node) {
     FREE_ARRAY(Node *, node->as.set.values, node->as.set.valueCount);
     break;
   }
-
-  // ... (We will expand this switch as we build out the other node types) ...
+  case NODE_LIST: {
+    for (int i = 0; i < node->as.list.count; i++)
+      freeNode(node->as.list.items[i]);
+    FREE_ARRAY(Node *, node->as.list.items, node->as.list.count);
+    break;
+  }
+  case NODE_DICT: {
+    for (int i = 0; i < node->as.dictExpr.count; i++) {
+      freeNode(node->as.dictExpr.keys[i]);
+      freeNode(node->as.dictExpr.values[i]);
+    }
+    free(node->as.dictExpr.keys); // You used standard malloc here originally
+    free(node->as.dictExpr.values);
+    break;
+  }
+  case NODE_INTERPOLATION: {
+    for (int i = 0; i < node->as.interpolation.partCount; i++)
+      freeNode(node->as.interpolation.parts[i]);
+    FREE_ARRAY(Node *, node->as.interpolation.parts,
+               node->as.interpolation.partCount);
+    break;
+  }
+  case NODE_CALL: {
+    freeNode(node->as.call.callee);
+    for (int i = 0; i < node->as.call.argCount; i++)
+      freeNode(node->as.call.arguments[i]);
+    FREE_ARRAY(Node *, node->as.call.arguments, node->as.call.argCount);
+    break;
+  }
+  case NODE_PHRASAL_CALL: {
+    for (int i = 0; i < node->as.phrasalCall.argCount; i++)
+      freeNode(node->as.phrasalCall.arguments[i]);
+    FREE_ARRAY(Node *, node->as.phrasalCall.arguments,
+               node->as.phrasalCall.argCount);
+    break;
+  }
+  case NODE_FUNCTION: {
+    FREE_ARRAY(Token, node->as.function.parameters,
+               node->as.function.paramCount);
+    freeNode(node->as.function.body);
+    break;
+  }
+  case NODE_SUBSCRIPT: {
+    freeNode(node->as.subscript.left);
+    freeNode(node->as.subscript.index);
+    break;
+  }
+  case NODE_PROPERTY: {
+    freeNode(node->as.property.target);
+    break;
+  }
+  case NODE_RANGE: {
+    freeNode(node->as.range.start);
+    freeNode(node->as.range.end);
+    freeNode(node->as.range.step);
+    break;
+  }
+  case NODE_EXPRESSION_STMT:
+  case NODE_RETURN: {
+    freeNode(node->as.singleExpr.expression);
+    break;
+  }
   default:
-    break; // Some nodes (like Literal or Variable) have no children to free
+    break; // Nodes like Literal, Variable, Break, Skip have no children/heap
+           // arrays
   }
 
-  // Finally, free the node itself
+  // Finally, free the parent node itself
   FREE(Node, node);
 }

@@ -58,7 +58,7 @@ Chunk *currentChunk();
 void emitByte(uint8_t byte);
 void emitBytes(uint8_t byte1, uint8_t byte2);
 void emitReturn();
-uint8_t makeConstant(Value value);
+uint16_t makeConstant(Value value);
 void emitConstant(Value value);
 
 // Control Flow Emission

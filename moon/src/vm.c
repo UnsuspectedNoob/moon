@@ -12,6 +12,7 @@
 #include "debug.h"
 #include "memory.h"
 #include "object.h"
+#include "value.h"
 
 VM vm; // Define the global VM instance here
 
@@ -48,7 +49,7 @@ static void runtimeError(const char *format, ...) {
 static void defineNative(const char *name, NativeFn function) {
   push(OBJ_VAL(copyString(name, (int)strlen(name))));
   push(OBJ_VAL(newNative(function)));
-  tableSet(&vm.globals, AS_STRING(vm.stack[0]), vm.stack[1]);
+  tableSet(&vm.globals, vm.stack[0], vm.stack[1]);
   pop();
   pop();
 }
@@ -159,7 +160,8 @@ static InterpretResult run() {
 #define READ_BYTE() (*ip++)
 #define READ_CONSTANT() (frame->function->chunk.constants.values[READ_BYTE()])
 #define READ_SHORT() (ip += 2, (uint16_t)((ip[-2] << 8) | ip[-1]))
-#define READ_STRING() AS_STRING(READ_CONSTANT())
+#define READ_STRING()                                                          \
+  AS_STRING(frame->function->chunk.constants.values[READ_SHORT()])
 
 #define BINARY_OP(valueType, op)                                               \
   do {                                                                         \
@@ -185,6 +187,13 @@ static InterpretResult run() {
     switch (instruction = READ_BYTE()) {
     case OP_CONSTANT: {
       Value constant = READ_CONSTANT();
+      push(constant);
+      break;
+    }
+
+    case OP_CONSTANT_LONG: {
+      uint16_t index = READ_SHORT();
+      Value constant = frame->function->chunk.constants.values[index];
       push(constant);
       break;
     }
@@ -372,14 +381,14 @@ static InterpretResult run() {
 
     case OP_DEFINE_GLOBAL: {
       ObjString *name = READ_STRING();
-      tableSet(&vm.globals, name, peek(0));
+      tableSet(&vm.globals, OBJ_VAL(name), peek(0));
       break;
     }
 
     case OP_GET_GLOBAL: {
       ObjString *name = READ_STRING();
       Value value;
-      if (!tableGet(&vm.globals, name, &value)) {
+      if (!tableGet(&vm.globals, OBJ_VAL(name), &value)) {
         runtimeError("Undefined variable '%s'.", name->chars);
         return INTERPRET_RUNTIME_ERROR;
       }
@@ -390,10 +399,10 @@ static InterpretResult run() {
 
     case OP_SET_GLOBAL: {
       ObjString *name = READ_STRING();
-      if (tableSet(&vm.globals, name, peek(0))) {
+      if (tableSet(&vm.globals, OBJ_VAL(name), peek(0))) {
         // tableSet returns true if it's a NEW key.
         // 'set' is only for EXISTING keys. Delete it and error.
-        tableDelete(&vm.globals, name);
+        tableDelete(&vm.globals, OBJ_VAL(name));
         runtimeError("Undefined variable '%s'.", name->chars);
         return INTERPRET_RUNTIME_ERROR;
       }
@@ -451,7 +460,7 @@ static InterpretResult run() {
       break;
 
     case OP_BUILD_STRING: {
-      uint8_t count = READ_BYTE();
+      uint16_t count = READ_SHORT();
 
       // Point to the first item in the sequence
       // (Stack grows up, so stackTop is past the end. We back up 'count' slots)
@@ -496,7 +505,7 @@ static InterpretResult run() {
     }
 
     case OP_BUILD_LIST: {
-      uint8_t itemCount = READ_BYTE();
+      uint16_t itemCount = READ_SHORT();
 
       // 1. Create the new list object
       ObjList *list = newList();
@@ -548,7 +557,7 @@ static InterpretResult run() {
     }
 
     case OP_BUILD_DICT: {
-      uint8_t itemCount = READ_BYTE();
+      uint16_t itemCount = READ_SHORT();
 
       // 1. Create the dictionary and protect it from GC
       ObjDict *dict = newDict();
@@ -563,13 +572,8 @@ static InterpretResult run() {
         Value key = itemsStart[i * 2];
         Value val = itemsStart[(i * 2) + 1];
 
-        if (!IS_STRING(key)) {
-          runtimeError("Dictionary keys must be strings.");
-          return INTERPRET_RUNTIME_ERROR;
-        }
-
         // Drop it directly into the C struct's table!
-        tableSet(&dict->fields, AS_STRING(key), val);
+        tableSet(&dict->fields, key, val);
       }
 
       // 4. Cleanup
@@ -659,22 +663,19 @@ static InterpretResult run() {
       } else if (IS_DICT(seqVal)) {
         ObjDict *dict = AS_DICT(seqVal);
 
-        if (!IS_STRING(indexVal)) {
-          runtimeError("Dictionary keys must be strings.");
-          return INTERPRET_RUNTIME_ERROR;
-        }
-
         Value result;
-        if (tableGet(&dict->fields, AS_STRING(indexVal), &result)) {
+        if (tableGet(&dict->fields, indexVal, &result)) {
           pop(); // index
           pop(); // dict
           push(result);
         } else {
-          runtimeError("Undefined property '%s'.", AS_STRING(indexVal)->chars);
-          return INTERPRET_RUNTIME_ERROR;
+          // Safely convert the unknown key to a string for the error message!
+          pop();
+          pop();
+          push(NIL_VAL);
         }
       } else {
-        runtimeError("Can only subscript lists (and strings).");
+        runtimeError("Type is not subscriptable.");
         return INTERPRET_RUNTIME_ERROR;
       }
       break;
@@ -692,14 +693,8 @@ static InterpretResult run() {
       if (IS_DICT(collectionVal)) {
         ObjDict *dict = AS_DICT(collectionVal);
 
-        // Dictionary keys must be strings
-        if (!IS_STRING(indexVal)) {
-          runtimeError("Dictionary keys must be strings.");
-          return INTERPRET_RUNTIME_ERROR;
-        }
-
         // Set or Overwrite the value in the hash map (O(1) time!)
-        tableSet(&dict->fields, AS_STRING(indexVal), value);
+        tableSet(&dict->fields, indexVal, value);
 
         // Cleanup: Leave the VALUE on the stack so chained assignments work
         pop(); // value
@@ -900,7 +895,7 @@ static InterpretResult run() {
     }
 
     case OP_CALL: {
-      int argCount = READ_BYTE();
+      int argCount = READ_SHORT();
 
       Value callee = peek(argCount);
 

@@ -18,6 +18,8 @@ typedef uint64_t Value;
 #define TAG_NIL 1   // 01
 #define TAG_FALSE 2 // 10
 #define TAG_TRUE 3  // 11
+#define TAG_EMPTY 4 // 100
+#define TAG_TOMB 5  // 101
 
 // 4. Type Punning (Tricking the C Compiler)
 static inline double valueToNum(Value value) {
@@ -43,6 +45,8 @@ static inline Value numToValue(double num) {
 #define NIL_VAL ((Value)(uint64_t)(QNAN | TAG_NIL))
 #define FALSE_VAL ((Value)(uint64_t)(QNAN | TAG_FALSE))
 #define TRUE_VAL ((Value)(uint64_t)(QNAN | TAG_TRUE))
+#define EMPTY_VAL ((Value)(uint64_t)(QNAN | TAG_EMPTY))    // <-- NEW
+#define TOMBSTONE_VAL ((Value)(uint64_t)(QNAN | TAG_TOMB)) // <-- NEW
 #define BOOL_VAL(b) ((b) ? TRUE_VAL : FALSE_VAL)
 
 // Object pointers get the SIGN_BIT + QNAN mask + their actual memory address
@@ -52,8 +56,10 @@ static inline Value numToValue(double num) {
 // If the bits do NOT equal the QNAN mask, it's a valid math decimal!
 #define IS_NUMBER(value) (((value) & QNAN) != QNAN)
 #define IS_NIL(value) ((value) == NIL_VAL)
-#define IS_BOOL(value)                                                         \
-  (((value) | 1) == TRUE_VAL) // Checks for both TAG_FALSE (2) and TAG_TRUE (3)
+#define IS_EMPTY(value) ((value) == EMPTY_VAL)    // <-- NEW
+#define IS_TOMB(value) ((value) == TOMBSTONE_VAL) // <-- NEW
+// Checks for both TAG_FALSE (2) and TAG_TRUE (3)
+#define IS_BOOL(value) (((value) | 1) == TRUE_VAL)
 #define IS_OBJ(value) (((value) & (SIGN_BIT | QNAN)) == (SIGN_BIT | QNAN))
 
 // 7. Value Extractors (AS_*)
@@ -71,6 +77,7 @@ typedef struct {
 void initValueArray(ValueArray *array);
 void writeValueArray(ValueArray *array, Value value);
 void freeValueArray(ValueArray *array);
+uint32_t hashValue(Value value);
 void printValue(Value value);
 
 #endif
