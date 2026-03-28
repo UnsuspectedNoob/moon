@@ -31,23 +31,6 @@ typedef struct Compiler {
 extern Compiler *current;
 
 // ==========================================
-// TEMPORARY CHUNKS (SNIP & REWIND)
-// ==========================================
-
-// Helper struct to manage temporary compilation buffers
-typedef struct {
-  Chunk *previousChunk; // The "Real" chunk we paused
-  Chunk tempChunk;      // The "Draft" chunk we are writing to
-} ScopedChunk;
-
-// A temporary container for snatched bytecode
-typedef struct {
-  uint8_t *code;
-  int *lines;
-  int count;
-} CodeBuffer;
-
-// ==========================================
 // PUBLIC API
 // ==========================================
 
@@ -70,10 +53,6 @@ void defineVariable(uint8_t global);
 
 // Chunk Management
 Chunk *currentChunk();
-void beginScopeChunk(ScopedChunk *scope);
-void endScopeChunk(ScopedChunk *scope);
-void snipCode(CodeBuffer *buffer, int startOffset);
-void pasteCode(CodeBuffer *buffer);
 
 // Bytecode Emission
 void emitByte(uint8_t byte);

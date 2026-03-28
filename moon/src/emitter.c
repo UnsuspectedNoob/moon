@@ -1,4 +1,3 @@
-#include <stdlib.h>
 #include <string.h>
 
 #include "emitter.h"
@@ -155,45 +154,6 @@ void defineVariable(uint8_t global) {
 // ==========================================
 
 Chunk *currentChunk() { return current->chunk; }
-
-void beginScopeChunk(ScopedChunk *scope) {
-  scope->previousChunk = current->chunk;
-  initChunk(&scope->tempChunk);
-  current->chunk = &scope->tempChunk;
-}
-
-void endScopeChunk(ScopedChunk *scope) {
-  current->chunk = scope->previousChunk;
-}
-
-void snipCode(CodeBuffer *buffer, int startOffset) {
-  Chunk *chunk = currentChunk();
-  buffer->count = chunk->count - startOffset;
-
-  if (buffer->count == 0)
-    return;
-
-  buffer->code = (uint8_t *)malloc(buffer->count * sizeof(uint8_t));
-  buffer->lines = (int *)malloc(buffer->count * sizeof(int));
-
-  memcpy(buffer->code, chunk->code + startOffset, buffer->count);
-  memcpy(buffer->lines, chunk->lines + startOffset,
-         buffer->count * sizeof(int));
-
-  chunk->count = startOffset; // Rewind!
-}
-
-void pasteCode(CodeBuffer *buffer) {
-  if (buffer->count == 0)
-    return;
-
-  for (int i = 0; i < buffer->count; i++) {
-    writeChunk(currentChunk(), buffer->code[i], buffer->lines[i]);
-  }
-
-  free(buffer->code);
-  free(buffer->lines);
-}
 
 // ==========================================
 // BYTECODE EMISSION

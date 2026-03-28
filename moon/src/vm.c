@@ -8,15 +8,10 @@
 #include <string.h>
 #include <time.h>
 
-#include "chunk.h"
-#include "common.h"
 #include "compiler.h"
 #include "debug.h"
 #include "memory.h"
 #include "object.h"
-#include "table.h"
-#include "value.h"
-#include "vm.h"
 
 VM vm; // Define the global VM instance here
 

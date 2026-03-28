@@ -138,8 +138,6 @@ int disassembleInstruction(Chunk *chunk, int offset) {
 
   case OP_CALL:
     return byteInstruction("OP_CALL", chunk, offset);
-  case OP_CALL_PHRASAL:
-    return byteInstruction("OP_CALL_PHRASAL", chunk, offset);
   case OP_RETURN:
     return simpleInstruction("OP_RETURN", offset);
 

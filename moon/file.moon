@@ -1,12 +1,22 @@
+@@ Our global cache dictionary
+let memo be {}
 
-let get odds up to (limit):
-  let odds be []
+let fibonacci of (n):
+  @@ Base cases
+  if n < 2 give n
 
-  for each i from 1 to limit
-    add i to odds if i mod 2 is not 0
+  @@ Cache hit! Return immediately.
+  if memo.n is not nil:
+    give memo.n
+  end
 
-  give odds
+  @@ Cache miss. Calculate recursively.
+  let result be (fibonacci of n - 1) + (fibonacci of n - 2)
+
+  @@ Save to the dictionary for next time
+  set memo.n to result
+  
+  give result
 end
 
-get odds up to 50000000
-
+show "The 60th Fibonacci number is `fibonacci of 60`"

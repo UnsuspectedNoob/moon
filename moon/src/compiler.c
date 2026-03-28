@@ -6,8 +6,6 @@
 
 // The Master Compilation Pipeline
 ObjFunction *compile(const char *source) {
-  // NEW: Phase 0 - Hoisting
-  hoistPhrases(source);
 
   // Phase 1: Front-End (Source Code -> Abstract Syntax Tree)
   Node *ast = parseSource(source);
