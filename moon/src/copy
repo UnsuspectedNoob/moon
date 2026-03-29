@@ -1,23 +1,3937 @@
-#include "sigtrie.h"
+#ifndef moon_ast_h
+#define moon_ast_h
+#include "memory.h"
+#include "scanner.h"
+#include "value.h"
+// The absolute type of the node
+typedef enum {
+  NODE_LITERAL,  NODE_VARIABLE,  NODE_BINARY,  NODE_UNARY,  NODE_SUBSCRIPT,  NODE_PROPERTY,  NODE_CALL,  NODE_PHRASAL_CALL,  NODE_INTERPOLATION,  NODE_EXPRESSION_STMT,  NODE_LOGICAL,  NODE_RETURN,  NODE_SET,  NODE_IF,  NODE_WHILE,  NODE_FOR,  NODE_BREAK,  NODE_SKIP,  NODE_BLOCK,  NODE_RANGE,  NODE_LIST,  NODE_DICT,  NODE_LET,  NODE_FUNCTION,  NODE_END,} NodeType;
+// Forward declaration
+typedef struct sNode Node;
+// Dynamic Array Generators
+DECLARE_ARRAY(Node *, NodeArray) // Generates NodeArray struct and functions!
+DECLARE_ARRAY(Token, TokenArray) // Generates TokenArray struct and functions!
+// --- Payload Structs ---
+typedef struct { Value value; } LiteralPayload;
+typedef struct { Token name; } VariablePayload;
+typedef struct { Node *left; Token opToken; Node *right; } BinaryPayload; // Changed operator to opToken
+typedef struct { Token opToken; Node *right; } UnaryPayload; // Changed operator to opToken
+typedef struct { Node *start; Node *end; Node *step; } RangePayload;
+typedef struct { Node **items; int count; } ListPayload;
+typedef struct { Node **keys; Node **values; int count; } DictPayload;
+typedef struct { Node *left; Node *index; } SubscriptPayload;
+typedef struct { Node *target; Token name; } PropertyPayload;
+typedef struct { Node *callee; Node **arguments; int argCount; } CallPayload;
+typedef struct { Token mangledName; Node **arguments; int argCount; } PhrasalCallPayload;
+typedef struct { Node **parts; int partCount; } InterpolationPayload;
+typedef struct { Node *expression; } SingleExprPayload;
+typedef struct { Node **targets; int targetCount; Node **values; int valueCount; } SetPayload;
+typedef struct { Node *condition; Node *thenBranch; Node *elseBranch; } IfPayload;
+typedef struct { Node *condition; Node *body; } WhilePayload;
+typedef struct { Token iterator; Node *sequence; Node *body; } ForPayload;
+typedef struct { Node **statements; int count; } BlockPayload;
+typedef struct { Token *names; int nameCount; Node **exprs; int exprCount; } LetPayload;
+typedef struct { Token name; Token *parameters; Token *paramTypes; int paramCount; Node *body; } FunctionPayload;
+// --- The Master Node ---
+struct sNode {
+  NodeType type;
+  Node *parent;
+  int line;
+  union {
+    LiteralPayload literal;
+    VariablePayload variable;
+    BinaryPayload binary;
+    UnaryPayload unary;
+    PropertyPayload property;
+    CallPayload call;
+    PhrasalCallPayload phrasalCall;
+    InterpolationPayload interpolation;
+    SingleExprPayload singleExpr;
+    SetPayload set;
+    IfPayload ifStmt;
+    WhilePayload whileStmt;
+    ForPayload forStmt;
+    BlockPayload block;
+    LetPayload let;
+    FunctionPayload function;
+    RangePayload range;
+    ListPayload list;
+    DictPayload dictExpr;
+    SubscriptPayload subscript;
+  } as;
+};
+// --- Constructors & Destructors ---
+Node *newLiteralNode(Value value, int line);
+Node *newVariableNode(Token name, int line);
+Node *newUnaryNode(Token opToken, Node *right, int line);
+Node *newBinaryNode(Node *left, Token opToken, Node *right, int line);
+Node *newSubscriptNode(Node *target, Node *index, int line);
+Node *newEndNode(int line);
+Node *newBlockNode(Node **statements, int count, int line);
+Node *newLetNode(Token *names, int nameCount, Node **exprs, int exprCount,                 int line);
+Node *newSetNode(Node **targets, int targetCount, Node **values, int valueCount,                 int line);
+Node *newIfNode(Node *condition, Node *thenBranch, Node *elseBranch, int line);
+Node *newSetNode(Node **targets, int targetCount, Node **values, int valueCount,                 int line);
+Node *newSingleExprNode(NodeType type, Node *expression, int line);
+Node *newInterpolationNode(Node **parts, int partCount, int line);
+Node *newLogicalNode(Node *left, Token opToken, Node *right, int line);
+Node *newWhileNode(Node *condition, Node *body, int line);
+Node *newForNode(Token iterator, Node *sequence, Node *body, int line);
+Node *newBreakNode(int line);
+Node *newSkipNode(int line);
+Node *newPhrasalCallNode(Token mangledName, Node **args, int argCount,                         int line);
+Node *newListNode(Node **items, int count, int line);
+Node *newDictNode(Node **keys, Node **values, int count, int line);
+Node *newRangeNode(Node *start, Node *end, Node *step, int line);
+Node *newPropertyNode(Node *target, Token name, int line);
+Node *newCallNode(Node *callee, Node **arguments, int argCount, int line);
+Node *newFunctionNode(Token name, Token *parameters, Token *paramTypes,                      int paramCount, Node *body, int line);
+void freeNode(Node *node);
+#endif
+// chunk.h
+#ifndef MOON_CHUNK_H
+#define MOON_CHUNK_H
+#include "common.h"
+#include "value.h"
+// The Instruction Set Architecture (ISA)
+typedef enum {
+  OP_CONSTANT,  OP_CONSTANT_LONG,  OP_NIL,   // New: for 'nil'
+  OP_TRUE,  // New: for 'true'
+  OP_FALSE, // New: for 'false'
+  OP_POP, // New: to clean up stack after statements
+  OP_GET_LOCAL,     // New: Access stack at index
+  OP_SET_LOCAL,     // New: Write to stack at index
+  OP_GET_GLOBAL,    // New: Get var
+  OP_DEFINE_GLOBAL, // New: Let var
+  OP_SET_GLOBAL,    // New: Set var
+  OP_ADD,  OP_ADD_INPLACE,  OP_SUBTRACT,  OP_MULTIPLY,  OP_DIVIDE,  OP_MOD,  OP_JUMP_IF_FALSE, // Conditional Jump forward
+  OP_NEGATE,  OP_JUMP,    // Unconditional Jump forward
+  OP_LOOP,    // Unconditional Jump BACKWARD
+  OP_EQUAL,   // New: == (is)
+  OP_GREATER, // New: >
+  OP_LESS,    // New: <
+  OP_NOT,     // New: not
+  OP_BUILD_STRING,  OP_BUILD_LIST,  OP_BUILD_DICT,  OP_GET_PROPERTY,  OP_SET_PROPERTY,  OP_GET_SUBSCRIPT,  OP_SET_SUBSCRIPT,  OP_GET_END_INDEX,  OP_RANGE, // Creates a range object (1 to 10)
+  OP_FOR_ITER,  OP_GET_ITER, // <--- Add this
+  OP_CALL,  OP_CLOSURE,  OP_RETURN,} OpCode;
+typedef struct {
+  int count;
+  int capacity;
+  uint8_t *code;        // The actual bytecode bytes
+  int *lines;           // Line number for each byte (for debugging)
+  ValueArray constants; // The pool of numbers/strings
+} Chunk;
+void initChunk(Chunk *chunk);
+void freeChunk(Chunk *chunk);
+void writeChunk(Chunk *chunk, uint8_t byte, int line);
+int addConstant(Chunk *chunk, Value value);
+#endif
+#ifndef moon_codegen_h
+#define moon_codegen_h
+#include "ast.h"
 #include "object.h"
+// The Master Entry Point for the Back-End.
+// Takes the root of our AST, walks it, and returns the compiled
+// bytecode function ready for the Virtual Machine to execute.
+ObjFunction *generateCode(Node *rootAST);
+#endif
+#ifndef MOON_COMMON_H
+#define MOON_COMMON_H
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdint.h> // Ensure this is here
+#include <stdio.h>
+#define UINT8_COUNT (UINT8_MAX + 1)
+// toggle for printing debug info during execution
+// #define DEBUG_PRINT_CODE
+// #define DEBUG_TRACE_EXECUTION
+#endif
+#ifndef MOON_COMPILER_H
+#define MOON_COMPILER_H
+#include "object.h"
+// Compiles the source string into a top-level function (the "main" script).
+// Returns NULL if any syntax or compilation errors occurred.
+ObjFunction *compile(const char *source);
+#endif
+#ifndef MOON_DEBUG_H
+#define MOON_DEBUG_H
+#include "ast.h"
+#include "chunk.h"
+#include "vm.h"
+void disassembleChunk(Chunk *chunk, const char *name);
+int disassembleInstruction(Chunk *chunk, int offset);
+void debugStack(VM *vm);
+extern bool printAstFlag;
+// Add this near your disassembleChunk prototype
+void printAST(Node *node, int indent);
+#endif
+#ifndef MOON_EMITTER_H
+#define MOON_EMITTER_H
+#include "chunk.h"
+#include "common.h"
+#include "object.h"
+#include "scanner.h"
+// ==========================================
+// COMPILER STATE & SCOPE
+// ==========================================
+typedef enum { TYPE_FUNCTION, TYPE_SCRIPT } FunctionType;
+typedef struct {
+  Token name;
+  int depth;
+  bool isCaptured;
+} Local;
+typedef struct Compiler {
+  struct Compiler *enclosing; // Parent compiler (e.g., script -> function)
+  ObjFunction *function;      // The function being compiled
+  FunctionType type;          // Is this the main script or a user function?
+  Chunk *chunk;
+  Local locals[UINT8_COUNT];
+  int localCount;
+  int scopeDepth;
+} Compiler;
+extern Compiler *current;
+// ==========================================
+// PUBLIC API
+// ==========================================
+// Compiler State
+void initCompiler(Compiler *compiler, FunctionType type);
+ObjFunction *endCompiler();
+// Scopes
+void beginScope();
+void endScope();
+// Local Variables
+Token syntheticToken(const char *text);
+bool identifiersEqual(Token *a, Token *b);
+void addLocal(Token name);
+int resolveLocal(Compiler *compiler, Token *name);
+void declareVariable();
+void markInitialized();
+void defineVariable(uint8_t global);
+// Chunk Management
+Chunk *currentChunk();
+// Bytecode Emission
+void emitByte(uint8_t byte);
+void emitBytes(uint8_t byte1, uint8_t byte2);
+void emitReturn();
+uint16_t makeConstant(Value value);
+void emitConstant(Value value);
+// Control Flow Emission
+int emitJump(uint8_t instruction);
+void patchJump(int offset);
+void emitLoop(int loopStart);
+#endif
+// memory.h
+#ifndef MOON_MEMORY_H
+#define MOON_MEMORY_H
+#include "common.h"
+#include "object.h"
+#define ALLOCATE(type, count)                                                  \
+  (type *)reallocate(NULL, 0, sizeof(type) * (count))
+#define FREE(type, pointer) reallocate(pointer, sizeof(type), 0)
+#define GROW_CAPACITY(capacity) ((capacity) < 8 ? 8 : (capacity) * 2)
+#define GROW_ARRAY(type, pointer, oldCount, newCount)                          \
+  (type *)reallocate(pointer, sizeof(type) * (oldCount),                       \
+                     sizeof(type) * (newCount))
+#define FREE_ARRAY(type, pointer, oldCount)                                    \
+  reallocate(pointer, sizeof(type) * (oldCount), 0)
+void *reallocate(void *pointer, size_t oldSize, size_t newSize);
+void freeObjects();
+// --- DYNAMIC ARRAY GENERATORS ---
+// 1. The Struct Blueprint Generator
+#define DECLARE_ARRAY(Type, Name)                                              \
+  typedef struct {                                                             \
+    int capacity;                                                              \
+    int count;                                                                 \
+    Type *items;                                                               \
+  } Name;                                                                      \
+  void init##Name(Name *array);                                                \
+  void write##Name(Name *array, Type item);                                    \
+  void free##Name(Name *array);
+// 2. The Logic Generator
+#define DEFINE_ARRAY(Type, Name)                                               \
+  void init##Name(Name *array) {                                               \
+    array->items = NULL;                                                       \
+    array->capacity = 0;                                                       \
+    array->count = 0;                                                          \
+  }                                                                            \
+  void write##Name(Name *array, Type item) {                                   \
+    if (array->capacity < array->count + 1) {                                  \
+      int oldCapacity = array->capacity;                                       \
+      array->capacity = GROW_CAPACITY(oldCapacity);                            \
+      array->items =                                                           \
+          GROW_ARRAY(Type, array->items, oldCapacity, array->capacity);        \
+    }                                                                          \
+    array->items[array->count] = item;                                         \
+    array->count++;                                                            \
+  }                                                                            \
+  void free##Name(Name *array) {                                               \
+    FREE_ARRAY(Type, array->items, array->capacity);                           \
+    init##Name(array);                                                         \
+  }
+#endif
+// object.h
+#ifndef MOON_OBJECT_H
+#define MOON_OBJECT_H
+#include "chunk.h"
+#include "common.h"
+#include "table.h"
+#include "value.h"
+typedef enum {
+  OBJ_STRING,  OBJ_RANGE,  OBJ_LIST,  OBJ_DICT,  OBJ_FUNCTION,  OBJ_NATIVE,  OBJ_TYPE_BLUEPRINT,  OBJ_INSTANCE,  OBJ_MULTI_FUNCTION,} ObjKind;
+typedef struct Obj {
+  ObjKind type;
+  struct Obj *next; // Intrusion pointer for GC (we'll use this later)
+} Obj;
+#define OBJ_TYPE(value) (AS_OBJ(value)->type)
+#define IS_STRING(value) isObjType(value, OBJ_STRING)
+#define AS_STRING(value) ((ObjString *)AS_OBJ(value))
+#define AS_CSTRING(value) (((ObjString *)AS_OBJ(value))->chars)
+#define IS_FUNCTION(value) isObjType(value, OBJ_FUNCTION)
+#define AS_FUNCTION(value) ((ObjFunction *)AS_OBJ(value))
+#define IS_NATIVE(value) isObjType(value, OBJ_NATIVE)
+#define AS_NATIVE(value) (((ObjNative *)AS_OBJ(value))->function)
+#define IS_LIST(value) isObjType(value, OBJ_LIST)
+#define AS_LIST(value) ((ObjList *)AS_OBJ(value))
+#define IS_DICT(value) isObjType(value, OBJ_DICT)
+#define AS_DICT(value) ((ObjDict *)AS_OBJ(value))
+#define IS_RANGE(value) isObjType(value, OBJ_RANGE)
+#define AS_RANGE(value) ((ObjRange *)AS_OBJ(value))
+// The String Object
+typedef struct ObjString {
+  Obj obj;
+  int length;
+  char *chars;
+  uint32_t hash; // Cached hash for fast map lookups
+} ObjString;
+typedef struct ObjFunction ObjFunction; // Forward declaration
+typedef Value (*NativeFn)(int argCount, Value *args); // C Function pointer
+// The "Blueprint" for a user function
+struct ObjFunction {
+  Obj obj;
+  int arity;       // Number of arguments it expects
+  Chunk chunk;     // The bytecode
+  ObjString *name; // Function name (for debugging)
+};
+// The wrapper for a C function
+typedef struct {
+  Obj obj;
+  NativeFn function;
+} ObjNative;
+typedef struct {
+  Obj obj;      // The base class (header)
+  int count;    // How many items are currently in the list
+  int capacity; // How much memory we have allocated
+  Value *items; // The pointer to the heap array
+} ObjList;
+typedef struct {
+  Obj obj;
+  Table fields; // We literally just reuse your existing Hash Table!
+} ObjDict;
+typedef struct {
+  Obj obj;      // Base class
+  double start; // Starting number
+  double end;   // Ending number
+  double step;
+} ObjRange;
+// --- THE BLUEPRINT (e.g., "Player", "Stack") ---
+typedef struct ObjType {
+  Obj obj;
+  ObjString *name;
+  // Later: We will add a hash table here for Computed Properties (Getters)
+} ObjType;
+// --- THE CLONE (The physical object in memory) ---
+typedef struct {
+  Obj obj;
+  ObjType *type; // The invisible pointer back to its Blueprint!
+  Table fields;  // The dictionary holding its actual data (health, name)
+} ObjInstance;
+// --- THE DISPATCHER (The container for overloaded methods) ---
+typedef struct {
+  Obj obj;
+  ObjString *name; // The mangled name: "push$1_to$1"
+  int arity;       // How many arguments this phrase takes
+  int methodCount;
+  int methodCapacity;
+  ObjFunction **methods; // Array of actual compiled bytecode chunks
+  ObjType ***signatures; // 2D Array! [Method Index][Argument Index] -> Points
+                         // to ObjType
+} ObjMultiFunction;
+// Helper to check type
+static inline bool isObjType(Value value, ObjKind type) {
+  return IS_OBJ(value) && AS_OBJ(value)->type == type;
+}
+void printObject(Value value);
+ObjString *copyString(const char *chars, int length);
+ObjString *copyStringUnescaped(const char *chars, int length);
+ObjString *takeString(char *chars, int length);
+ObjFunction *newFunction();
+ObjNative *newNative(NativeFn function);
+ObjList *newList();
+void appendList(ObjList *list, Value value);
+void storeList(ObjList *list, int index, Value value);
+Value indexList(ObjList *list, int index);
+void deleteList(ObjList *list, int index);
+uint32_t hashString(const char *key, int length);
+ObjRange *newRange(double start, double end, double step);
+ObjType *newType(ObjString *name);
+ObjInstance *newInstance(ObjType *type);
+ObjMultiFunction *newMultiFunction(ObjString *name, int arity);
+ObjString *valueToString(Value value);
+ObjDict *newDict();
+#endif
+#ifndef MOON_PARSER_H
+#define MOON_PARSER_H
+#include "ast.h" // We need this so it knows what a Node is!
+#include "common.h"
+#include "scanner.h"
+// ==========================================
+// PARSER STATE
+// ==========================================
+typedef struct {
+  Token current;
+  Token previous;
+  bool hadError;
+  bool panicMode;
+} Parser;
+extern Parser parser;
+// --- Expose the new AST Builder! ---
+void hoistPhrases(const char *source);
+Node *parseSource(const char *source);
+// ==========================================
+// ERROR HANDLING & TOKEN ADVANCEMENT
+// ==========================================
+void errorAt(Token *token, const char *message);
+void error(const char *message);
+void errorAtCurrent(const char *message);
+void synchronize();
+void advance();
+void consume(TokenType type, const char *message);
+bool check(TokenType type);
+bool checkTerminator(TokenType *terminators, int count);
+bool match(TokenType type);
+void ignoreNewlines();
+void consumeEnd();
+#endif
+#ifndef MOON_SCANNER_H
+#define MOON_SCANNER_H
+typedef enum {
+  // Single-character tokens
+  TOKEN_LEFT_PAREN,  TOKEN_RIGHT_PAREN,  TOKEN_LEFT_BRACE,  TOKEN_RIGHT_BRACE,  TOKEN_LEFT_BRACKET,  TOKEN_RIGHT_BRACKET,  TOKEN_COMMA,  TOKEN_COLON,  TOKEN_DOT,  TOKEN_MINUS,  TOKEN_MOD,  TOKEN_PLUS,  TOKEN_SLASH,  TOKEN_STAR,  TOKEN_ADD_INPLACE,  // One or two character tokens
+  TOKEN_BANG,  TOKEN_BANG_EQUAL,  TOKEN_EQUAL,  TOKEN_EQUAL_EQUAL,  TOKEN_GREATER,  TOKEN_GREATER_EQUAL,  TOKEN_LESS,  TOKEN_LESS_EQUAL,  TOKEN_POSSESSIVE, // 's
+  // Literals
+  TOKEN_IDENTIFIER,  TOKEN_STRING,        // "Hello"
+  TOKEN_STRING_OPEN,   // "Hello `
+  TOKEN_STRING_MIDDLE, // ` world `
+  TOKEN_STRING_CLOSE,  // `!"
+  TOKEN_NUMBER,  // Keywords
+  TOKEN_ADD,  TOKEN_AND,  TOKEN_ASK,  TOKEN_BE,  TOKEN_BY,  TOKEN_BREAK,  TOKEN_EACH,  TOKEN_ELSE,  TOKEN_END,  TOKEN_FALSE,  TOKEN_FOR,  TOKEN_FROM,  TOKEN_GIVE,  TOKEN_IF,  TOKEN_IN,  TOKEN_IS,  TOKEN_LET,  TOKEN_NIL,  TOKEN_NOT,  TOKEN_OR,  TOKEN_QUIT,  TOKEN_SET,  TOKEN_SKIP,  TOKEN_THEN,  TOKEN_TO,  TOKEN_TRUE,  TOKEN_TYPE,  TOKEN_UNLESS,  TOKEN_UNTIL,  TOKEN_WHILE,  TOKEN_NEWLINE,  TOKEN_ERROR,  TOKEN_EOF
+} TokenType;
+typedef struct {
+  TokenType type;
+  const char *start; // Pointer to the start of the token in source
+  int length;        // Length of the token
+  int line;          // Line number for error reporting
+} Token;
+// Initialize the scanner with the source code string
+void initScanner(const char *source);
+#include <stdbool.h>
+// Scan the next token from the source
+Token scanToken();
+#endif
+#ifndef moon_sigtrie_h
+#define moon_sigtrie_h
+#include <stdbool.h>
+#include <stdint.h>
+// 1. Node Types
+typedef enum {
+  NODE_LABEL,   // e.g., "of", "and"
+  NODE_ARGUMENT // e.g., $1, $2
+} PhraseNodeType;
+// 2. The Trie Node (The DFA State)
+typedef struct TrieNode {
+  PhraseNodeType type;
+  // Payload
+  uint32_t labelHash; // Used if type == NODE_LABEL
+  int arity;          // Used if type == NODE_ARGUMENT
+  // Accept State
+  bool isTerminal;
+  char *mangledName;
+  // Branches
+  struct TrieNode **children;
+  int childCount;
+  int childCapacity;
+} TrieNode;
+// 3. The Public API
+void initSignatureTable();
+void freeSignatureTable();
+// Used by the Pre-Pass Skimmer to build the tree
+void insertSignature(const char *rootWord, const char *mangledName);
+// Used by the Parser to fetch the tree
+TrieNode *getSignatureTrie(const char *rootWord);
+#endif
+#ifndef MOON_TABLE_H
+#define MOON_TABLE_H
+#include "common.h"
+#include "value.h"
+// Forward declaration for tableFindString
+typedef struct ObjString ObjString;
+typedef struct {
+  Value key; // <--- CHANGED: Now accepts ANY Moon value!
+  Value value;
+} Entry;
+typedef struct {
+  int count;
+  int capacity;
+  Entry *entries;
+} Table;
+void initTable(Table *table);
+void freeTable(Table *table);
+// Notice these now take a 'Value key'
+bool tableGet(Table *table, Value key, Value *value);
+bool tableSet(Table *table, Value key, Value value);
+bool tableDelete(Table *table, Value key);
+void tableAddAll(Table *from, Table *to);
+// We keep this specific to strings for our intern pool!
+ObjString *tableFindString(Table *table, const char *chars, int length,                           uint32_t hash);
+#endif
+#ifndef MOON_VALUE_H
+#define MOON_VALUE_H
+#include "common.h"
+#include <stdint.h>
+// For now, all values are doubles.
+// Phase 5 will upgrade this to a Tagged Union (for Strings/Objects).
+// 1. the Core Definition
+typedef uint64_t Value;
+// 2. The Masks
+#define SIGN_BIT ((uint64_t)0x8000000000000000)
+#define QNAN ((uint64_t)0x7ffc000000000000)
+// 3. Our Custom Type Tags (Living in the low bits of the mantissa)
+#define TAG_NIL 1   // 01
+#define TAG_FALSE 2 // 10
+#define TAG_TRUE 3  // 11
+#define TAG_EMPTY 4 // 100
+#define TAG_TOMB 5  // 101
+// 4. Type Punning (Tricking the C Compiler)
+static inline double valueToNum(Value value) {
+  union {
+    uint64_t bits;
+    double num;
+  } data;
+  data.bits = value;
+  return data.num;
+}
+static inline Value numToValue(double num) {
+  union {
+    uint64_t bits;
+    double num;
+  } data;
+  data.num = num;
+  return data.bits;
+}
+// 5. Value Constructors (*_VAL)
+#define NUMBER_VAL(num) numToValue(num)
+#define NIL_VAL ((Value)(uint64_t)(QNAN | TAG_NIL))
+#define FALSE_VAL ((Value)(uint64_t)(QNAN | TAG_FALSE))
+#define TRUE_VAL ((Value)(uint64_t)(QNAN | TAG_TRUE))
+#define EMPTY_VAL ((Value)(uint64_t)(QNAN | TAG_EMPTY))    // <-- NEW
+#define TOMBSTONE_VAL ((Value)(uint64_t)(QNAN | TAG_TOMB)) // <-- NEW
+#define BOOL_VAL(b) ((b) ? TRUE_VAL : FALSE_VAL)
+// Object pointers get the SIGN_BIT + QNAN mask + their actual memory address
+#define OBJ_VAL(obj) ((Value)(SIGN_BIT | QNAN | (uint64_t)(uintptr_t)(obj)))
+// 6. Type Checkers (IS_*)
+// If the bits do NOT equal the QNAN mask, it's a valid math decimal!
+#define IS_NUMBER(value) (((value) & QNAN) != QNAN)
+#define IS_NIL(value) ((value) == NIL_VAL)
+#define IS_EMPTY(value) ((value) == EMPTY_VAL)    // <-- NEW
+#define IS_TOMB(value) ((value) == TOMBSTONE_VAL) // <-- NEW
+// Checks for both TAG_FALSE (2) and TAG_TRUE (3)
+#define IS_BOOL(value) (((value) | 1) == TRUE_VAL)
+#define IS_OBJ(value) (((value) & (SIGN_BIT | QNAN)) == (SIGN_BIT | QNAN))
+#define IS_TYPE(value) isObjType(value, OBJ_TYPE_BLUEPRINT)
+#define IS_INSTANCE(value) isObjType(value, OBJ_INSTANCE)
+#define IS_MULTI_FUNCTION(value) isObjType(value, OBJ_MULTI_FUNCTION)
+// 7. Value Extractors (AS_*)
+#define AS_NUMBER(value) valueToNum(value)
+#define AS_BOOL(value) ((value) == TRUE_VAL)
+#define AS_OBJ(value) ((Obj *)(uintptr_t)((value) & ~(SIGN_BIT | QNAN)))
+#define AS_TYPE(value) ((ObjType *)AS_OBJ(value))
+#define AS_INSTANCE(value) ((ObjInstance *)AS_OBJ(value))
+#define AS_MULTI_FUNCTION(value) ((ObjMultiFunction *)AS_OBJ(value))
+typedef struct {
+  int capacity;
+  int count;
+  Value *values;
+} ValueArray;
+void initValueArray(ValueArray *array);
+void writeValueArray(ValueArray *array, Value value);
+void freeValueArray(ValueArray *array);
+uint32_t hashValue(Value value);
+void printValue(Value value);
+#endif
+#ifndef MOON_VM_H
+#define MOON_VM_H
+#include "chunk.h"
+#include "object.h"
+#include "table.h"
+#include "value.h"
+#define FRAMES_MAX 256
+#define STACK_MAX (FRAMES_MAX * 256)
+// Represents one running function call
+typedef struct {
+  ObjFunction *function; // Which function is running?
+  uint8_t *ip;           // Where are we in that function?
+  Value *slots;          // Where do this function's locals start on the stack?
+} CallFrame;
+typedef enum {
+  INTERPRET_OK,  INTERPRET_COMPILE_ERROR,  INTERPRET_RUNTIME_ERROR
+} InterpretResult;
+typedef struct {
+  CallFrame frames[FRAMES_MAX];
+  int frameCount;
+  Value stack[STACK_MAX];
+  Value *stackTop;
+  Table globals;
+  Table strings;
+  Obj *objects; // for the GC
+  bool debugMode; // <--- ADD THIS FLAG
+  ObjString *charStrings[256];
+} VM;
+extern VM vm;
+void initVM();
+void freeVM();
+InterpretResult interpret(const char *source);
+void push(Value value);
+Value pop();
+#endif
+#include "ast.h"
+#include "memory.h"
+#include <stdlib.h>
+// -- Compiling the dynamic arrays
+DEFINE_ARRAY(Node *, NodeArray)
+DEFINE_ARRAY(Token, TokenArray)
+// Helper to allocate a raw node
+static Node *allocateNode(NodeType type, int line) {
+  Node *node = ALLOCATE(Node, 1);
+  node->type = type;
+  node->parent = NULL; // Default to NULL, parser links this later
+  node->line = line;
+  return node;
+}
+// --- Constructors ---
+Node *newLiteralNode(Value value, int line) {
+  Node *node = allocateNode(NODE_LITERAL, line);
+  node->as.literal.value = value;
+  return node;
+}
+Node *newBinaryNode(Node *left, Token operator, Node *right, int line) {
+  Node *node = allocateNode(NODE_BINARY, line);
+  node->as.binary.left = left;
+  node->as.binary.opToken = operator;
+  node->as.binary.right = right;
+  // Wire up the parents! This is where the magic starts.
+  if (left != NULL)
+    left->parent = node;
+  if (right != NULL)
+    right->parent = node;
+  return node;
+}
+Node *newIfNode(Node *condition, Node *thenBranch, Node *elseBranch, int line) {
+  Node *node = allocateNode(NODE_IF, line);
+  node->as.ifStmt.condition = condition;
+  node->as.ifStmt.thenBranch = thenBranch;
+  node->as.ifStmt.elseBranch = elseBranch;
+  if (condition != NULL)
+    condition->parent = node;
+  if (thenBranch != NULL)
+    thenBranch->parent = node;
+  if (elseBranch != NULL)
+    elseBranch->parent = node;
+  return node;
+}
+Node *newVariableNode(Token name, int line) {
+  Node *node = allocateNode(NODE_VARIABLE, line);
+  node->as.variable.name = name;
+  return node;
+}
+Node *newUnaryNode(Token opToken, Node *right, int line) {
+  Node *node = allocateNode(NODE_UNARY, line);
+  node->as.unary.opToken = opToken;
+  node->as.unary.right = right;
+  if (right != NULL)
+    right->parent = node;
+  return node;
+}
+Node *newRangeNode(Node *start, Node *end, Node *step, int line) {
+  Node *node = allocateNode(NODE_RANGE, line);
+  node->as.range.start = start;
+  node->as.range.end = end;
+  node->as.range.step = step;
+  if (start)
+    start->parent = node;
+  if (end)
+    end->parent = node;
+  if (step)
+    step->parent = node;
+  return node;
+}
+Node *newListNode(Node **items, int count, int line) {
+  Node *node = allocateNode(NODE_LIST, line);
+  node->as.list.count = count;
+  node->as.list.items = ALLOCATE(Node *, count);
+  for (int i = 0; i < count; i++) {
+    node->as.list.items[i] = items[i];
+    if (items[i])
+      items[i]->parent = node;
+  }
+  return node;
+}
+Node *newDictNode(Node **keys, Node **values, int count, int line) {
+  Node *node = malloc(sizeof(Node));
+  node->type = NODE_DICT;
+  node->line = line;
+  node->parent = NULL;
+  node->as.dictExpr.count = count;
+  node->as.dictExpr.keys = malloc(sizeof(Node *) * count);
+  node->as.dictExpr.values = malloc(sizeof(Node *) * count);
+  for (int i = 0; i < count; i++) {
+    node->as.dictExpr.keys[i] = keys[i];
+    node->as.dictExpr.values[i] = values[i];
+    if (keys[i])
+      keys[i]->parent = node;
+    if (values[i])
+      values[i]->parent = node;
+  }
+  return node;
+}
+Node *newSubscriptNode(Node *left, Node *index, int line) {
+  Node *node = allocateNode(NODE_SUBSCRIPT, line);
+  node->as.subscript.left = left;
+  node->as.subscript.index = index;
+  if (left)
+    left->parent = node;
+  if (index)
+    index->parent = node;
+  return node;
+}
+Node *newEndNode(int line) { return allocateNode(NODE_END, line); }
+Node *newBlockNode(Node **statements, int count, int line) {
+  Node *node = allocateNode(NODE_BLOCK, line);
+  node->as.block.count = count;
+  node->as.block.statements = ALLOCATE(Node *, count);
+  for (int i = 0; i < count; i++) {
+    node->as.block.statements[i] = statements[i];
+    if (statements[i] != NULL)
+      statements[i]->parent = node;
+  }
+  return node;
+}
+Node *newSetNode(Node **targets, int targetCount, Node **values, int valueCount,                 int line) {
+  Node *node = allocateNode(NODE_SET, line);
+  node->as.set.targetCount = targetCount;
+  node->as.set.valueCount = valueCount;
+  node->as.set.targets = ALLOCATE(Node *, targetCount);
+  for (int i = 0; i < targetCount; i++) {
+    node->as.set.targets[i] = targets[i];
+    if (targets[i] != NULL)
+      targets[i]->parent = node;
+  }
+  node->as.set.values = ALLOCATE(Node *, valueCount);
+  for (int i = 0; i < valueCount; i++) {
+    node->as.set.values[i] = values[i];
+    if (values[i] != NULL)
+      values[i]->parent = node;
+  }
+  return node;
+}
+Node *newSingleExprNode(NodeType type, Node *expression, int line) {
+  Node *node = allocateNode(type, line); // Used for SHOW, RETURN, EXPR_STMT
+  node->as.singleExpr.expression = expression;
+  if (expression != NULL)
+    expression->parent = node;
+  return node;
+}
+Node *newLogicalNode(Node *left, Token opToken, Node *right, int line) {
+  Node *node = allocateNode(NODE_LOGICAL, line);
+  node->as.binary.left = left; // We can reuse the binary payload structurally
+  node->as.binary.opToken = opToken;
+  node->as.binary.right = right;
+  if (left != NULL)
+    left->parent = node;
+  if (right != NULL)
+    right->parent = node;
+  return node;
+}
+Node *newWhileNode(Node *condition, Node *body, int line) {
+  Node *node = allocateNode(NODE_WHILE, line);
+  node->as.whileStmt.condition = condition;
+  node->as.whileStmt.body = body;
+  if (condition != NULL)
+    condition->parent = node;
+  if (body != NULL)
+    body->parent = node;
+  return node;
+}
+Node *newForNode(Token iterator, Node *sequence, Node *body, int line) {
+  Node *node = allocateNode(NODE_FOR, line);
+  node->as.forStmt.iterator = iterator;
+  node->as.forStmt.sequence = sequence;
+  node->as.forStmt.body = body;
+  if (sequence != NULL)
+    sequence->parent = node;
+  if (body != NULL)
+    body->parent = node;
+  return node;
+}
+Node *newBreakNode(int line) {
+  Node *node = allocateNode(NODE_BREAK, line);
+  node->type = NODE_BREAK;
+  node->parent = NULL;
+  node->line = line;
+  return node;
+}
+Node *newSkipNode(int line) {
+  Node *node = allocateNode(NODE_SKIP, line);
+  node->type = NODE_SKIP;
+  node->parent = NULL;
+  node->line = line;
+  return node;
+}
+Node *newPhrasalCallNode(Token mangledName, Node **args, int argCount,                         int line) {
+  Node *node = allocateNode(NODE_PHRASAL_CALL, line);
+  node->as.phrasalCall.mangledName = mangledName;
+  node->as.phrasalCall.argCount = argCount;
+  node->as.phrasalCall.arguments = ALLOCATE(Node *, argCount);
+  for (int i = 0; i < argCount; i++) {
+    node->as.phrasalCall.arguments[i] = args[i];
+    if (args[i] != NULL)
+      args[i]->parent = node;
+  }
+  return node;
+}
+Node *newLetNode(Token *names, int nameCount, Node **exprs, int exprCount,                 int line) {
+  Node *node = allocateNode(NODE_LET, line);
+  node->as.let.nameCount = nameCount;
+  node->as.let.exprCount = exprCount;
+  node->as.let.names = ALLOCATE(Token, nameCount);
+  node->as.let.exprs = ALLOCATE(Node *, exprCount);
+  // Copy the variable names
+  for (int i = 0; i < nameCount; i++) {
+    node->as.let.names[i] = names[i];
+  }
+  // Copy the assigned expressions
+  for (int i = 0; i < exprCount; i++) {
+    node->as.let.exprs[i] = exprs[i];
+    if (exprs[i] != NULL) {
+      exprs[i]->parent = node;
+    }
+  }
+  return node;
+}
+Node *newInterpolationNode(Node **parts, int partCount, int line) {
+  Node *node = allocateNode(NODE_INTERPOLATION, line);
+  node->as.interpolation.partCount = partCount;
+  node->as.interpolation.parts = ALLOCATE(Node *, partCount);
+  for (int i = 0; i < partCount; i++) {
+    node->as.interpolation.parts[i] = parts[i];
+    if (parts[i] != NULL)
+      parts[i]->parent = node;
+  }
+  return node;
+}
+Node *newPropertyNode(Node *target, Token name, int line) {
+  Node *node = allocateNode(NODE_PROPERTY, line);
+  node->as.property.target = target;
+  node->as.property.name = name;
+  if (target != NULL)
+    target->parent = node;
+  return node;
+}
+Node *newCallNode(Node *callee, Node **arguments, int argCount, int line) {
+  Node *node = allocateNode(NODE_CALL, line);
+  node->as.call.callee = callee;
+  node->as.call.argCount = argCount;
+  node->as.call.arguments = ALLOCATE(Node *, argCount);
+  for (int i = 0; i < argCount; i++) {
+    node->as.call.arguments[i] = arguments[i];
+    if (arguments[i] != NULL)
+      arguments[i]->parent = node;
+  }
+  if (callee != NULL)
+    callee->parent = node;
+  return node;
+}
+Node *newFunctionNode(Token name, Token *parameters, Token *paramTypes,                      int paramCount, Node *body, int line) {
+  Node *node = allocateNode(NODE_FUNCTION, line);
+  node->as.function.name = name;
+  node->as.function.paramCount = paramCount;
+  node->as.function.parameters = ALLOCATE(Token, paramCount);
+  node->as.function.paramTypes = ALLOCATE(Token, paramCount); // NEW
+  for (int i = 0; i < paramCount; i++) {
+    node->as.function.parameters[i] = parameters[i];
+    node->as.function.paramTypes[i] = paramTypes[i]; // NEW
+  }
+  node->as.function.body = body;
+  if (body != NULL)
+    body->parent = node;
+  return node;
+}
+// --- The Destructor (Crucial for avoiding leaks) ---
+void freeNode(Node *node) {
+  if (node == NULL)
+    return;
+  // We must recursively free all children before freeing the parent!
+  switch (node->type) {
+  case NODE_BINARY:
+  case NODE_LOGICAL: { // Reuses binary payload
+    freeNode(node->as.binary.left);
+    freeNode(node->as.binary.right);
+    break;
+  }
+  case NODE_UNARY: {
+    freeNode(node->as.unary.right);
+    break;
+  }
+  case NODE_IF: {
+    freeNode(node->as.ifStmt.condition);
+    freeNode(node->as.ifStmt.thenBranch);
+    freeNode(node->as.ifStmt.elseBranch);
+    break;
+  }
+  case NODE_WHILE: {
+    freeNode(node->as.whileStmt.condition);
+    freeNode(node->as.whileStmt.body);
+    break;
+  }
+  case NODE_FOR: {
+    freeNode(node->as.forStmt.sequence);
+    freeNode(node->as.forStmt.body);
+    break;
+  }
+  case NODE_BLOCK: {
+    for (int i = 0; i < node->as.block.count; i++) {
+      freeNode(node->as.block.statements[i]);
+    }
+    FREE_ARRAY(Node *, node->as.block.statements, node->as.block.count);
+    break;
+  }
+  case NODE_LET: {
+    FREE_ARRAY(Token, node->as.let.names, node->as.let.nameCount);
+    for (int i = 0; i < node->as.let.exprCount; i++) {
+      freeNode(node->as.let.exprs[i]);
+    }
+    FREE_ARRAY(Node *, node->as.let.exprs, node->as.let.exprCount);
+    break;
+  }
+  case NODE_SET: {
+    for (int i = 0; i < node->as.set.targetCount; i++)
+      freeNode(node->as.set.targets[i]);
+    FREE_ARRAY(Node *, node->as.set.targets, node->as.set.targetCount);
+    for (int i = 0; i < node->as.set.valueCount; i++)
+      freeNode(node->as.set.values[i]);
+    FREE_ARRAY(Node *, node->as.set.values, node->as.set.valueCount);
+    break;
+  }
+  case NODE_LIST: {
+    for (int i = 0; i < node->as.list.count; i++)
+      freeNode(node->as.list.items[i]);
+    FREE_ARRAY(Node *, node->as.list.items, node->as.list.count);
+    break;
+  }
+  case NODE_DICT: {
+    for (int i = 0; i < node->as.dictExpr.count; i++) {
+      freeNode(node->as.dictExpr.keys[i]);
+      freeNode(node->as.dictExpr.values[i]);
+    }
+    free(node->as.dictExpr.keys); // You used standard malloc here originally
+    free(node->as.dictExpr.values);
+    break;
+  }
+  case NODE_INTERPOLATION: {
+    for (int i = 0; i < node->as.interpolation.partCount; i++)
+      freeNode(node->as.interpolation.parts[i]);
+    FREE_ARRAY(Node *, node->as.interpolation.parts,               node->as.interpolation.partCount);
+    break;
+  }
+  case NODE_CALL: {
+    freeNode(node->as.call.callee);
+    for (int i = 0; i < node->as.call.argCount; i++)
+      freeNode(node->as.call.arguments[i]);
+    FREE_ARRAY(Node *, node->as.call.arguments, node->as.call.argCount);
+    break;
+  }
+  case NODE_PHRASAL_CALL: {
+    for (int i = 0; i < node->as.phrasalCall.argCount; i++)
+      freeNode(node->as.phrasalCall.arguments[i]);
+    FREE_ARRAY(Node *, node->as.phrasalCall.arguments,               node->as.phrasalCall.argCount);
+    break;
+  }
+  case NODE_FUNCTION: {
+    FREE_ARRAY(Token, node->as.function.parameters,               node->as.function.paramCount);
+    FREE_ARRAY(Token, node->as.function.paramTypes,               node->as.function.paramCount); // NEW
+    freeNode(node->as.function.body);
+    break;
+  }
+  case NODE_SUBSCRIPT: {
+    freeNode(node->as.subscript.left);
+    freeNode(node->as.subscript.index);
+    break;
+  }
+  case NODE_PROPERTY: {
+    freeNode(node->as.property.target);
+    break;
+  }
+  case NODE_RANGE: {
+    freeNode(node->as.range.start);
+    freeNode(node->as.range.end);
+    freeNode(node->as.range.step);
+    break;
+  }
+  case NODE_EXPRESSION_STMT:
+  case NODE_RETURN: {
+    freeNode(node->as.singleExpr.expression);
+    break;
+  }
+  default:
+    break; // Nodes like Literal, Variable, Break, Skip have no children/heap
+           // arrays
+  }
+  // Finally, free the parent node itself
+  FREE(Node, node);
+}
+// chunk.c
+#include <stdlib.h>
+#include "chunk.h"
+void initChunk(Chunk *chunk) {
+  chunk->count = 0;
+  chunk->capacity = 0;
+  chunk->code = NULL;
+  chunk->lines = NULL;
+  initValueArray(&chunk->constants);
+}
+void freeChunk(Chunk *chunk) {
+  free(chunk->code);
+  free(chunk->lines);
+  freeValueArray(&chunk->constants);
+  initChunk(chunk);
+}
+void writeChunk(Chunk *chunk, uint8_t byte, int line) {
+  if (chunk->capacity < chunk->count + 1) {
+    int oldCapacity = chunk->capacity;
+    chunk->capacity = (oldCapacity < 8) ? 8 : oldCapacity * 2;
+    chunk->code =
+        (uint8_t *)realloc(chunk->code, sizeof(uint8_t) * chunk->capacity);
+    chunk->lines = (int *)realloc(chunk->lines, sizeof(int) * chunk->capacity);
+  }
+  chunk->code[chunk->count] = byte;
+  chunk->lines[chunk->count] = line;
+  chunk->count++;
+}
+extern bool valuesEqual(Value a, Value b);
+int addConstant(Chunk *chunk, Value value) {
+  // --- THE DEDUPLICATION LOOP ---
+  // If we already have this exact number or string in the chunk, reuse it!
+  for (int i = 0; i < chunk->constants.count; i++) {
+    if (valuesEqual(chunk->constants.values[i], value)) {
+      return i;
+    }
+  }
+  // Otherwise, add it as a brand new constant
+  writeValueArray(&chunk->constants, value);
+  return chunk->constants.count - 1;
+}
+#include "codegen.h"
+#include "ast.h"
+#include <stdint.h>
+#include <stdlib.h>
+#include "chunk.h"
+#include "emitter.h"
+#include "scanner.h"
+// ==========================================
+// CODEGEN STATE (Scope & Locals)
+// ==========================================
+static uint16_t identifierConstant(Token *name) { // <--- Change to uint16_t
+  return makeConstant(OBJ_VAL(copyString(name->start, name->length)));
+}
+// ==========================================
+// LOOP STATE TRACKER
+// ==========================================
+typedef struct sCompilerLoop {
+  int start;      // Byte offset of the loop's start (for 'skip')
+  int scopeDepth; // Scope depth at loop entry (for cleanup)
+  int breakJumps[256]; // Array of jump offsets waiting to be patched
+  int breakCount;
+  struct sCompilerLoop *enclosing; // Point to the outer loop if nested
+} CompilerLoop;
+static CompilerLoop *currentLoop = NULL; // The active loop
+static void startLoop(CompilerLoop *loop, int startByte) {
+  loop->enclosing = currentLoop;          // Link to the outer loop (if nested)
+  loop->start = startByte;                // Where 'skip' jumps to
+  loop->scopeDepth = current->scopeDepth; // The depth at loop entry!
+  loop->breakCount = 0;
+  currentLoop = loop; // Make this the active loop
+}
+static void endLoop() {
+  // Backpatch every single 'break' jump that was recorded in this loop!
+  for (int i = 0; i < currentLoop->breakCount; i++) {
+    patchJump(currentLoop->breakJumps[i]);
+  }
+  // Restore the previous enclosing loop
+  currentLoop = currentLoop->enclosing;
+}
+// Forward declaration for the recursive walker
+static void walkNode(Node *node);
+// ==========================================
+// THE TREE WALKER
+// ==========================================
+static void walkNode(Node *node) {
+  if (node == NULL)
+    return;
+  switch (node->type) {
+    // --- 1. LITERALS & MATH (Post-Order Traversal) ---
+  case NODE_LITERAL: {
+    // Leaf node: Just push the value onto the VM stack
+    emitConstant(node->as.literal.value);
+    break;
+  }
+  case NODE_UNARY: {
+    walkNode(node->as.unary.right); // Walk the child first
+    if (node->as.unary.opToken.type == TOKEN_MINUS)
+      emitByte(OP_NEGATE);
+    else if (node->as.unary.opToken.type == TOKEN_NOT)
+      emitByte(OP_NOT);
+    break;
+  }
+  case NODE_BINARY: {
+    // 1. Walk the left branch (pushes left value to stack)
+    walkNode(node->as.binary.left);
+    // 2. Walk the right branch (pushes right value to stack)
+    walkNode(node->as.binary.right);
+    // 3. Emit the operator instruction!
+    // The VM will pop the two values, apply this operator, and push the result.
+    switch (node->as.binary.opToken.type) {
+    case TOKEN_PLUS:
+      emitByte(OP_ADD);
+      break;
+    case TOKEN_ADD_INPLACE:
+      emitByte(OP_ADD_INPLACE);
+      break;
+    case TOKEN_MINUS:
+      emitByte(OP_SUBTRACT);
+      break;
+    case TOKEN_STAR:
+      emitByte(OP_MULTIPLY);
+      break;
+    case TOKEN_SLASH:
+      emitByte(OP_DIVIDE);
+      break;
+    case TOKEN_MOD:
+      emitByte(OP_MOD);
+      break;
+    case TOKEN_EQUAL_EQUAL:
+    case TOKEN_EQUAL:
+      emitByte(OP_EQUAL);
+      break;
+    case TOKEN_IS:
+      emitByte(OP_EQUAL);
+      break;
+    case TOKEN_GREATER:
+      emitByte(OP_GREATER);
+      break;
+    case TOKEN_LESS:
+      emitByte(OP_LESS);
+      break;
+    case TOKEN_GREATER_EQUAL:
+      emitByte(OP_LESS);
+      emitByte(OP_NOT);
+      break;
+    case TOKEN_LESS_EQUAL:
+      emitByte(OP_GREATER);
+      emitByte(OP_NOT);
+      break;
+    default:
+      break;
+    }
+    break;
+  }
+    // --- 2. ACTIONS ---
+  case NODE_EXPRESSION_STMT: {
+    walkNode(node->as.singleExpr.expression);
+    emitByte(OP_POP); // Discard the result so the VM stack doesn't overflow!
+    break;
+  }
+  case NODE_BLOCK: {
+    // If it has no parent, it's the root script! Don't bump the scope!
+    bool isScript = (node->parent == NULL);
+    if (!isScript)
+      beginScope();
+    for (int i = 0; i < node->as.block.count; i++) {
+      walkNode(node->as.block.statements[i]);
+    }
+    if (!isScript)
+      endScope();
+    break;
+  }
+    // --- 3. CONTROL FLOW (The Snip-Fix!) ---
+  case NODE_IF: {
+    // 1. Walk the condition (leaves a true/false on the stack)
+    walkNode(node->as.ifStmt.condition);
+    // 2. Emit the jump to skip the 'then' block if false.
+    // We save the offset because we don't know how big the 'then' block is yet!
+    int thenJump = emitJump(OP_JUMP_IF_FALSE);
+    emitByte(OP_POP); // Clean up the condition bool
+    // 3. Walk the 'then' block
+    if (node->as.ifStmt.thenBranch != NULL) {
+      walkNode(node->as.ifStmt.thenBranch);
+    }
+    // 4. Emit a jump to skip over the 'else' block
+    int elseJump = emitJump(OP_JUMP);
+    // 5. Patch the FIRST jump so it lands exactly here
+    patchJump(thenJump);
+    emitByte(OP_POP);
+    // 6. Walk the 'else' block
+    if (node->as.ifStmt.elseBranch != NULL) {
+      walkNode(node->as.ifStmt.elseBranch);
+    }
+    // 7. Patch the SECOND jump so the 'then' block lands exactly here
+    patchJump(elseJump);
+    break;
+  }
+  case NODE_LOGICAL: {
+    walkNode(node->as.binary.left);
+    if (node->as.binary.opToken.type == TOKEN_OR) {
+      // 'OR' Logic:
+      // If left is false, jump to evaluate the right side.
+      int elseJump = emitJump(OP_JUMP_IF_FALSE);
+      // If left is true, we fall through to here and unconditionally jump to
+      // the end!
+      int endJump = emitJump(OP_JUMP);
+      patchJump(elseJump);
+      emitByte(OP_POP); // Clean up the left value (it was false)
+      walkNode(node->as.binary.right);
+      patchJump(endJump);
+    } else {
+      // 'AND' Logic:
+      // If left is false, short-circuit and jump to the end.
+      int endJump = emitJump(OP_JUMP_IF_FALSE);
+      emitByte(OP_POP); // Clean up the left value (it was true)
+      walkNode(node->as.binary.right);
+      patchJump(endJump);
+    }
+    break;
+  }
+  case NODE_WHILE: {
+    int loopStart = currentChunk()->count; // mark where to jump back to
+    // --- TRACKER START ---
+    CompilerLoop loop;
+    startLoop(&loop, loopStart);
+    walkNode(node->as.whileStmt.condition);
+    int exitJump = emitJump(OP_JUMP_IF_FALSE);
+    emitByte(OP_POP); // clean up condition
+    walkNode(node->as.whileStmt.body);
+    emitLoop(loopStart); // Jump back to condition
+    patchJump(exitJump); // Where to land when the loop breaks
+    emitByte(OP_POP);
+    // --- TRACKER END ---
+    endLoop();
+    break;
+  }
+  case NODE_FOR: {
+    // --- SCOPE 1: The Outer Loop Scope ---
+    beginScope();
+    // 1. Evaluate the Sequence (pushes it to the physical stack)
+    walkNode(node->as.forStmt.sequence);
+    // RESERVATION 1: Tell the compiler a sequence is sitting on the stack!
+    // We start the name with a space so the user can never type it.
+    Token seqToken = {.type = TOKEN_IDENTIFIER, .start = " seq", .length = 4};
+    addLocal(seqToken);
+    markInitialized();
+    // 2. Setup the Hidden Iterator (pushes -1 to the stack)
+    emitByte(OP_GET_ITER);
+    // RESERVATION 2: Tell the compiler the index is sitting on the stack!
+    Token iterToken = {.type = TOKEN_IDENTIFIER, .start = " iter", .length = 5};
+    addLocal(iterToken);
+    markInitialized();
+    // 3. Mark the top of the loop
+    int loopStart = currentChunk()->count;
+    // --- TRACKER START ---
+    // We start tracking HERE, so 'skip' jumps to OP_FOR_ITER
+    CompilerLoop loop;
+    startLoop(&loop, loopStart);
+    // 4. The Iteration Check
+    int exitJump = emitJump(OP_FOR_ITER);
+    // --- SCOPE 2: The Inner Body Scope ---
+    beginScope();
+    // 5. Register the Loop Variable
+    // Because we registered the ghosts, the compiler knows the stack is full,    // and correctly assigns 'item' to Slot 3!
+    addLocal(node->as.forStmt.iterator);
+    markInitialized();
+    // 6. Execute the body
+    walkNode(node->as.forStmt.body);
+    // 7. Close Inner Scope (Automatically emits OP_POP for 'item')
+    endScope();
+    // 8. Loop back up
+    emitLoop(loopStart);
+    // 9. The Exit Point
+    patchJump(exitJump);
+    // --- TRACKER END ---
+    endLoop();
+    // 10. Close Outer Scope
+    // Automatically emits OP_POP twice to clean up " seq" and " iter"!
+    endScope();
+    break;
+  }
+  case NODE_BREAK: {
+    if (currentLoop == NULL)
+      return; // (Sanity check)
+    // 1. STACK CLEANUP: Pop any locals created inside the loop body
+    for (int i = current->localCount - 1;
+         i >= 0 && current->locals[i].depth > currentLoop->scopeDepth; i--) {
+      emitByte(OP_POP);
+    }
+    // 2. Emit the dummy jump and record its location in the tracker!
+    int jump = emitJump(OP_JUMP);
+    currentLoop->breakJumps[currentLoop->breakCount++] = jump;
+    break;
+  }
+  case NODE_SKIP: {
+    if (currentLoop == NULL)
+      return;
+    // 1. STACK CLEANUP: Pop locals (exact same logic as break)
+    for (int i = current->localCount - 1;
+         i >= 0 && current->locals[i].depth > currentLoop->scopeDepth; i--) {
+      emitByte(OP_POP);
+    }
+    // 2. Jump backwards to the top of the loop
+    emitLoop(currentLoop->start);
+    break;
+  }
+    // --- 4. VARIABLES & SCOPE ---
+  case NODE_VARIABLE: {
+    // 1. Is it a local variable? (Inside a block/function)
+    int arg = resolveLocal(current, &node->as.variable.name);
+    if (arg != -1) {
+      // Yes: It lives on the VM stack at a specific offset
+      emitBytes(OP_GET_LOCAL, (uint8_t)arg);
+    } else {
+      uint16_t globalName = identifierConstant(&node->as.variable.name);
+      emitByte(OP_GET_GLOBAL);
+      emitByte((globalName >> 8) & 0xff); // High byte
+      emitByte(globalName & 0xff);        // Low byte
+    }
+    break;
+  }
+  case NODE_LET: {
+    for (int i = 0; i < node->as.let.nameCount; i++) {
+      // RULE 2 & 3: Decide which expression to evaluate
+      if (node->as.let.exprCount == 1) {
+        // N-to-1 Broadcast: Always evaluate the 0th expression
+        walkNode(node->as.let.exprs[0]);
+      } else {
+        // N-to-N: Evaluate the specifically matching expression
+        walkNode(node->as.let.exprs[i]);
+      }
+      // Memory Storage Logic
+      if (current->scopeDepth > 0) {
+        addLocal(node->as.let.names[i]);
+        markInitialized();
+      } else {
+        uint16_t globalName = identifierConstant(&node->as.let.names[i]);
+        emitByte(OP_DEFINE_GLOBAL);
+        emitByte((globalName >> 8) & 0xff);
+        emitByte(globalName & 0xff);
+        emitByte(OP_POP);
+      }
+    }
+    break;
+  }
+  case NODE_LIST: {
+    for (int i = 0; i < node->as.list.count; i++) {
+      walkNode(node->as.list.items[i]);
+    }
+    emitByte(OP_BUILD_LIST);
+    uint16_t count = (uint16_t)node->as.list.count;
+    emitByte((count >> 8) & 0xff); // High byte
+    emitByte(count & 0xff);        // Low byte
+    break;
+  }
+  case NODE_DICT: {
+    for (int i = 0; i < node->as.dictExpr.count; i++) {
+      walkNode(node->as.dictExpr.keys[i]);
+      walkNode(node->as.dictExpr.values[i]);
+    }
+    emitByte(OP_BUILD_DICT);
+    uint16_t count = (uint16_t)node->as.dictExpr.count;
+    emitByte((count >> 8) & 0xff); // High byte
+    emitByte(count & 0xff);        // Low byte
+    break;
+    break;
+  }
+  case NODE_RANGE: {
+    // Evaluate the 3 parts of the range in order: start, end, step
+    walkNode(node->as.range.start);
+    walkNode(node->as.range.end);
+    walkNode(node->as.range.step);
+    // VM pops all 3 and pushes the Range object
+    emitByte(OP_RANGE);
+    break;
+  }
+  case NODE_SUBSCRIPT: {
+    // 1. Push the sequence (list or string) to the stack FIRST
+    walkNode(node->as.subscript.left);
+    // 2. Push the index (or range) SECOND
+    walkNode(node->as.subscript.index);
+    // 3. VM pops both and pushes the result
+    emitByte(OP_GET_SUBSCRIPT);
+    break;
+  }
+  case NODE_END: {
+    emitByte(OP_GET_END_INDEX);
+    break;
+  }
+  case NODE_PROPERTY: {
+    walkNode(node->as.property.target);
+    // THE FIX: Directly emit the constant value dynamically!
+    Value nameVal = OBJ_VAL(copyString(node->as.property.name.start,                                       node->as.property.name.length));
+    emitConstant(nameVal);
+    emitByte(OP_GET_SUBSCRIPT);
+    break;
+  }
+    // --- 5. ASSIGNMENT ---
+  case NODE_SET: {
+    // --- PHASE 1: Evaluate LHS Addresses (Left-to-Right) ---
+    // We must lock in memory addresses before any variables mutate!
+    for (int i = 0; i < node->as.set.targetCount; i++) {
+      Node *target = node->as.set.targets[i];
+      if (target->type == NODE_SUBSCRIPT) {
+        walkNode(target->as.subscript.left);
+        walkNode(target->as.subscript.index);
+      } else if (target->type == NODE_PROPERTY) {
+        walkNode(target->as.property.target);
+        // THE FIX: Directly emit the constant value dynamically!
+        Value nameVal = OBJ_VAL(copyString(target->as.property.name.start,                                           target->as.property.name.length));
+        emitConstant(nameVal);
+      }
+      // Variables don't have an address to evaluate on the stack.
+    }
+    // --- PHASE 2: Evaluate RHS Values (Left-to-Right) ---
+    for (int i = 0; i < node->as.set.targetCount; i++) {
+      Node *expr = (node->as.set.valueCount == 1) ? node->as.set.values[0]
+                                                  : node->as.set.values[i];
+      walkNode(expr);
+    }
+    // --- PHASE 3: Assign and Pop (Right-to-Left) ---
+    // Because values are piled up on the stack, the last value is at the top!
+    for (int i = node->as.set.targetCount - 1; i >= 0; i--) {
+      Node *target = node->as.set.targets[i];
+      if (target->type == NODE_VARIABLE) {
+        int localArg = resolveLocal(current, &target->as.variable.name);
+        if (localArg != -1) {
+          emitBytes(OP_SET_LOCAL, (uint8_t)localArg);
+        } else {
+          uint16_t globalName = identifierConstant(&target->as.variable.name);
+          emitByte(OP_SET_GLOBAL);
+          emitByte((globalName >> 8) & 0xff);
+          emitByte(globalName & 0xff);
+        }
+        emitByte(OP_POP);
+      } else if (target->type == NODE_SUBSCRIPT ||
+                 target->type == NODE_PROPERTY) {
+        emitByte(OP_SET_SUBSCRIPT);
+        emitByte(
+            OP_POP); // OP_SET_SUBSCRIPT leaves the value, so we pop it here
+      }
+    }
+    break;
+  }
+  case NODE_INTERPOLATION: {
+    for (int i = 0; i < node->as.interpolation.partCount; i++) {
+      walkNode(node->as.interpolation.parts[i]);
+    }
+    emitByte(OP_BUILD_STRING);
+    uint16_t count = (uint16_t)node->as.interpolation.partCount;
+    emitByte((count >> 8) & 0xff); // High byte
+    emitByte(count & 0xff);        // Low byte
+    break;
+  }
+  case NODE_CALL: {
+    walkNode(node->as.call.callee);
+    for (int i = 0; i < node->as.call.argCount; i++) {
+      walkNode(node->as.call.arguments[i]);
+    }
+    emitByte(OP_CALL);
+    uint16_t count = (uint16_t)node->as.call.argCount;
+    emitByte((count >> 8) & 0xff);
+    emitByte(count & 0xff);
+    break;
+  }
+  case NODE_PHRASAL_CALL: {
+    int arg = resolveLocal(current, &node->as.phrasalCall.mangledName);
+    if (arg != -1) {
+      emitBytes(OP_GET_LOCAL, (uint8_t)arg);
+    } else {
+      uint16_t nameConstant =
+          identifierConstant(&node->as.phrasalCall.mangledName);
+      emitByte(OP_GET_GLOBAL);
+      emitByte((nameConstant >> 8) & 0xff);
+      emitByte(nameConstant & 0xff);
+    }
+    for (int i = 0; i < node->as.phrasalCall.argCount; i++) {
+      walkNode(node->as.phrasalCall.arguments[i]);
+    }
+    emitByte(OP_CALL);
+    uint16_t count = (uint16_t)node->as.phrasalCall.argCount;
+    emitByte((count >> 8) & 0xff);
+    emitByte(count & 0xff);
+    break;
+  }
+  case NODE_RETURN: {
+    if (node->as.singleExpr.expression != NULL) {
+      walkNode(node->as.singleExpr.expression);
+    } else {
+      emitByte(OP_NIL);
+    }
+    emitByte(OP_RETURN);
+    break;
+  }
+  case NODE_FUNCTION: {
+    // 1. Boot up a new compiler context for this function
+    Compiler fnCompiler;
+    initCompiler(&fnCompiler, TYPE_FUNCTION);
+    fnCompiler.function->name =
+        copyString(node->as.function.name.start, node->as.function.name.length);
+    // 2. Open scope and inject the parameters as local variables!
+    beginScope();
+    for (int i = 0; i < node->as.function.paramCount; i++) {
+      fnCompiler.function->arity++;
+      addLocal(node->as.function.parameters[i]);
+      markInitialized();
+    }
+    // 3. Walk the body of the function
+    walkNode(node->as.function.body);
+    // 4. Close the compiler and get the finished object
+    ObjFunction *fn = endCompiler();
+    // 5. Back in the parent scope, define the function variable
+    uint8_t fnConstant = makeConstant(OBJ_VAL(fn));
+    emitBytes(OP_CONSTANT, fnConstant);
+    if (current->scopeDepth > 0) {
+      addLocal(node->as.function.name);
+      markInitialized();
+    } else {
+      uint16_t globalName = identifierConstant(&node->as.function.name);
+      emitByte(OP_DEFINE_GLOBAL);
+      emitByte((globalName >> 8) & 0xff);
+      emitByte(globalName & 0xff);
+      emitByte(OP_POP);
+    }
+    break;
+  }
+  default:
+    // Unhandled node type
+    break;
+  }
+}
+// ==========================================
+// MAIN GENERATOR ENTRY
+// ==========================================
+ObjFunction *generateCode(Node *rootAST) {
+  if (rootAST == NULL)
+    return NULL;
+  // 1. Boot up the compiler scope tracking
+  Compiler compiler;
+  initCompiler(&compiler, TYPE_SCRIPT);
+  current = &compiler;
+  // 2. Fire the Tree Walker!
+  walkNode(rootAST);
+  // 3. Wrap it up and return the finished VM function
+  emitReturn();
+  ObjFunction *function = endCompiler();
+  return function;
+}
+#include "compiler.h"
+#include "ast.h"
+#include "codegen.h"
+#include "debug.h" // <--- 1. ADDED THIS
+#include "parser.h"
+// The Master Compilation Pipeline
+ObjFunction *compile(const char *source) {
+  // Phase 1: Front-End (Source Code -> Abstract Syntax Tree)
+  Node *ast = parseSource(source);
+  // If the parser found syntax errors, we abort before generating bad bytecode.
+  if (ast == NULL || parser.hadError) {
+    if (ast != NULL)
+      freeNode(ast);
+    return NULL;
+  }
+  // --- 2. THE AST INTERCEPT ---
+  // Catch the tree before it gets compiled into bytecode!
+  if (printAstFlag) {
+    printf("=== ABSTRACT SYNTAX TREE ===\n");
+    printAST(ast, 0);
+    printf("============================\n");
+    freeNode(ast);
+    return NULL; // Halt compilation so the VM doesn't try to run empty code
+  }
+  // ----------------------------
+  // Phase 2: Back-End (Abstract Syntax Tree -> VM Bytecode)
+  ObjFunction *function = generateCode(ast);
+  // Phase 3: Cleanup
+  freeNode(ast);
+  // --- ADD THIS SAFETY CATCH ---
+  // If emitting bytecode threw an error (like "too many constants"), abort!
+  if (parser.hadError)
+    return NULL;
+  return function;
+}
+#include <stdio.h>
+#include "ast.h"
+#include "debug.h"
+#include "value.h"
+#include "vm.h"
+// 1. The Stack Visualizer
+void debugStack(VM *vm) {
+  printf("          "); // Indent to align with opcode column
+  // Loop from bottom (vm->stack) to top (vm->stackTop)
+  for (Value *slot = vm->stack; slot < vm->stackTop; slot++) {
+    printf("[ ");
+    printValue(*slot);
+    printf(" ]");
+  }
+  printf("\n");
+}
+void disassembleChunk(Chunk *chunk, const char *name) {
+  printf("== %s ==\n", name);
+  for (int offset = 0; offset < chunk->count;) {
+    offset = disassembleInstruction(chunk, offset);
+  }
+}
+static int simpleInstruction(const char *name, int offset) {
+  printf("%s\n", name);
+  return offset + 1;
+}
+static int byteInstruction(const char *name, Chunk *chunk, int offset) {
+  uint8_t slot = chunk->code[offset + 1];
+  printf("%-16s %4d\n", name, slot);
+  return offset + 2;
+}
+static int shortInstruction(const char *name, Chunk *chunk, int offset) {
+  uint16_t slot = (uint16_t)(chunk->code[offset + 1] << 8);
+  slot |= chunk->code[offset + 2];
+  printf("%-16s %4d\n", name, slot);
+  return offset + 3;
+}
+static int jumpInstruction(const char *name, int sign, Chunk *chunk,                           int offset) {
+  uint16_t jump = (uint16_t)(chunk->code[offset + 1] << 8);
+  jump |= chunk->code[offset + 2];
+  printf("%-16s %4d -> %d\n", name, offset, offset + 3 + sign * jump);
+  return offset + 3;
+}
+static int constantInstruction(const char *name, Chunk *chunk, int offset) {
+  uint8_t constant = chunk->code[offset + 1];
+  printf("%-16s %4d '", name, constant);
+  printValue(chunk->constants.values[constant]);
+  printf("'\n");
+  return offset + 2;
+}
+static int constantLongInstruction(const char *name, Chunk *chunk, int offset) {
+  uint16_t constant = (uint16_t)(chunk->code[offset + 1] << 8);
+  constant |= chunk->code[offset + 2];
+  printf("%-16s %4d '", name, constant);
+  printValue(chunk->constants.values[constant]);
+  printf("'\n");
+  return offset + 3;
+}
+int disassembleInstruction(Chunk *chunk, int offset) {
+  printf("%04d ", offset);
+  if (offset > 0 && chunk->lines[offset] == chunk->lines[offset - 1]) {
+    printf("   | ");
+  } else {
+    printf("%4d ", chunk->lines[offset]);
+  }
+  uint8_t instruction = chunk->code[offset];
+  switch (instruction) {
+  case OP_CONSTANT:
+    return constantInstruction("OP_CONSTANT", chunk, offset);
+  case OP_CONSTANT_LONG:
+    return constantLongInstruction("OP_CONSTANT_LONG", chunk, offset);
+  case OP_NIL:
+    return simpleInstruction("OP_NIL", offset);
+  case OP_TRUE:
+    return simpleInstruction("OP_TRUE", offset);
+  case OP_FALSE:
+    return simpleInstruction("OP_FALSE", offset);
+  case OP_POP:
+    return simpleInstruction("OP_POP", offset);
+  case OP_GET_LOCAL:
+    return byteInstruction("OP_GET_LOCAL", chunk, offset);
+  case OP_SET_LOCAL:
+    return byteInstruction("OP_SET_LOCAL", chunk, offset);
+  case OP_GET_GLOBAL:
+    return constantLongInstruction("OP_GET_GLOBAL", chunk, offset);
+  case OP_DEFINE_GLOBAL:
+    return constantLongInstruction("OP_DEFINE_GLOBAL", chunk, offset);
+  case OP_SET_GLOBAL:
+    return constantLongInstruction("OP_SET_GLOBAL", chunk, offset);
+  case OP_EQUAL:
+    return simpleInstruction("OP_EQUAL", offset);
+  case OP_GREATER:
+    return simpleInstruction("OP_GREATER", offset);
+  case OP_LESS:
+    return simpleInstruction("OP_LESS", offset);
+  case OP_ADD:
+    return simpleInstruction("OP_ADD", offset);
+  case OP_ADD_INPLACE:
+    return simpleInstruction("OP_ADD_INPLACE", offset);
+  case OP_SUBTRACT:
+    return simpleInstruction("OP_SUBTRACT", offset);
+  case OP_MULTIPLY:
+    return simpleInstruction("OP_MULTIPLY", offset);
+  case OP_DIVIDE:
+    return simpleInstruction("OP_DIVIDE", offset);
+  case OP_NOT:
+    return simpleInstruction("OP_NOT", offset);
+  case OP_NEGATE:
+    return simpleInstruction("OP_NEGATE", offset);
+  // NEW JUMP DEBUGGING:
+  case OP_JUMP:
+    return jumpInstruction("OP_JUMP", 1, chunk, offset);
+  case OP_JUMP_IF_FALSE:
+    return jumpInstruction("OP_JUMP_IF_FALSE", 1, chunk, offset);
+  case OP_LOOP:
+    return jumpInstruction("OP_LOOP", -1, chunk, offset);
+  case OP_BUILD_STRING:
+    return shortInstruction("OP_BUILD_STRING", chunk, offset);
+  case OP_BUILD_LIST:
+    return shortInstruction("OP_BUILD_LIST", chunk, offset);
+  case OP_BUILD_DICT:
+    return shortInstruction("OP_BUILD_DICT", chunk, offset);
+  case OP_CALL:
+    return shortInstruction("OP_CALL", chunk, offset);
+  case OP_GET_PROPERTY:
+    return constantLongInstruction("OP_GET_PROPERTY", chunk, offset);
+  case OP_SET_PROPERTY:
+    return constantLongInstruction("OP_SET_PROPERTY", chunk, offset);
+  case OP_GET_SUBSCRIPT:
+    return simpleInstruction("OP_GET_SUBSCRIPT", offset);
+  case OP_SET_SUBSCRIPT:
+    return simpleInstruction("OP_SET_SUBSCRIPT", offset);
+  case OP_GET_END_INDEX:
+    return simpleInstruction("OP_GET_END_INDEX", offset);
+  case OP_RANGE:
+    return simpleInstruction("OP_RANGE", offset);
+    // ...
+  case OP_FOR_ITER:
+    return jumpInstruction("OP_FOR_ITER", 1, chunk, offset);
+  case OP_GET_ITER: // <--- Add this
+    return simpleInstruction("OP_GET_ITER", offset);
+  case OP_RETURN:
+    return simpleInstruction("OP_RETURN", offset);
+  default:
+    printf("Unknown opcode %d\n", instruction);
+    return offset + 1;
+  }
+}
+void printAST(Node *node, int indent) {
+  if (node == NULL)
+    return;
+  for (int i = 0; i < indent; i++) {
+    printf((i == indent - 1) ? " ├─ " : " │  ");
+  }
+  switch (node->type) {
+  case NODE_LITERAL:
+    printf("[LITERAL: ");
+    printValue(node->as.literal.value);
+    printf("]\n");
+    break;
+  case NODE_VARIABLE:
+    printf("[VARIABLE: %.*s]\n", node->as.variable.name.length,           node->as.variable.name.start);
+    break;
+  case NODE_UNARY:
+    printf("[UNARY: %.*s]\n", node->as.unary.opToken.length,           node->as.unary.opToken.start);
+    printAST(node->as.unary.right, indent + 1);
+    break;
+  case NODE_BINARY:
+  case NODE_LOGICAL:
+    printf("[%s: %.*s]\n", node->type == NODE_BINARY ? "BINARY" : "LOGICAL",           node->as.binary.opToken.length, node->as.binary.opToken.start);
+    printAST(node->as.binary.left, indent + 1);
+    printAST(node->as.binary.right, indent + 1);
+    break;
+  case NODE_BLOCK:
+    printf("[BLOCK: %d statements]\n", node->as.block.count);
+    for (int i = 0; i < node->as.block.count; i++) {
+      printAST(node->as.block.statements[i], indent + 1);
+    }
+    break;
+  case NODE_IF:
+    printf("[IF STATEMENT]\n");
+    printAST(node->as.ifStmt.condition, indent + 1);
+    printf("%*s ├─ [THEN]\n", indent * 4, "");
+    printAST(node->as.ifStmt.thenBranch, indent + 2);
+    if (node->as.ifStmt.elseBranch) {
+      printf("%*s ├─ [ELSE]\n", indent * 4, "");
+      printAST(node->as.ifStmt.elseBranch, indent + 2);
+    }
+    break;
+  case NODE_LET:
+    printf("[LET DECLARATION: %d variables]\n", node->as.let.nameCount);
+    for (int i = 0; i < node->as.let.nameCount; i++) {
+      printf("%*s ├─ Var: %.*s\n", indent * 4, "", node->as.let.names[i].length,             node->as.let.names[i].start);
+    }
+    for (int i = 0; i < node->as.let.exprCount; i++) {
+      printAST(node->as.let.exprs[i], indent + 1);
+    }
+    break;
+  case NODE_SET:
+    printf("[SET ASSIGNMENT]\n");
+    for (int i = 0; i < node->as.set.targetCount; i++) {
+      printAST(node->as.set.targets[i], indent + 1);
+    }
+    printf("%*s ├─ [TO]\n", indent * 4, "");
+    for (int i = 0; i < node->as.set.valueCount; i++) {
+      printAST(node->as.set.values[i], indent + 2);
+    }
+    break;
+  case NODE_PHRASAL_CALL:
+    printf("[PHRASAL CALL: %s]\n", node->as.phrasalCall.mangledName.start);
+    for (int i = 0; i < node->as.phrasalCall.argCount; i++) {
+      printAST(node->as.phrasalCall.arguments[i], indent + 1);
+    }
+    break;
+  case NODE_RETURN:
+    printf("[GIVE (RETURN)]\n");
+    printAST(node->as.singleExpr.expression, indent + 1);
+    break;
+  case NODE_EXPRESSION_STMT:
+    printf("[EXPR STMT]\n");
+    printAST(node->as.singleExpr.expression, indent + 1);
+    break;
+  case NODE_LIST:
+    printf("[LIST: %d items]\n", node->as.list.count);
+    for (int i = 0; i < node->as.list.count; i++) {
+      printAST(node->as.list.items[i], indent + 1);
+    }
+    break;
+  case NODE_DICT:
+    printf("[DICTIONARY: %d pairs]\n", node->as.dictExpr.count);
+    for (int i = 0; i < node->as.dictExpr.count; i++) {
+      for (int j = 0; j < indent + 1; j++)
+        printf(" |  ");
+      printf("├─ [PAIR]\n");
+      printAST(node->as.dictExpr.keys[i], indent + 2);
+      printAST(node->as.dictExpr.values[i], indent + 2);
+    }
+    break;
+  case NODE_SUBSCRIPT:
+    printf("[SUBSCRIPT]\n");
+    printAST(node->as.subscript.left, indent + 1);
+    printf("%*s ├─ [INDEX]\n", indent * 4, "");
+    printAST(node->as.subscript.index, indent + 2);
+    break;
+  case NODE_RANGE:
+    printf("[RANGE]\n");
+    printAST(node->as.range.start, indent + 1);
+    printf("%*s ├─ [TO]\n", indent * 4, "");
+    printAST(node->as.range.end, indent + 2);
+    printf("%*s ├─ [BY]\n", indent * 4, "");
+    printAST(node->as.range.step, indent + 2);
+    break;
+  case NODE_END:
+    printf("[KEYWORD: end]\n");
+    break;
+  case NODE_FUNCTION:
+    printf("[FUNCTION: %.*s]\n", node->as.function.name.length,           node->as.function.name.start);
+    for (int i = 0; i < node->as.function.paramCount; i++) {
+      // THE UPGRADE: It prints both the parameter name AND its extracted Type
+      // Annotation!
+      printf("%*s ├─ Param: %.*s (Type: %.*s)\n", indent * 4, "",             node->as.function.parameters[i].length,             node->as.function.parameters[i].start,             node->as.function.paramTypes[i].length,             node->as.function.paramTypes[i].start);
+    }
+    printf("%*s ├─ [BODY]\n", indent * 4, "");
+    printAST(node->as.function.body, indent + 2);
+    break;
+  case NODE_CALL:
+    printf("[CALL]\n");
+    printAST(node->as.call.callee, indent + 1);
+    for (int i = 0; i < node->as.call.argCount; i++) {
+      printAST(node->as.call.arguments[i], indent + 2);
+    }
+    break;
+  case NODE_PROPERTY:
+    printf("[PROPERTY ACCESS: %.*s]\n", node->as.property.name.length,           node->as.property.name.start);
+    printAST(node->as.property.target, indent + 1);
+    break;
+  case NODE_WHILE:
+    printf("[WHILE LOOP]\n");
+    printAST(node->as.whileStmt.condition, indent + 1);
+    printf("%*s ├─ [BODY]\n", indent * 4, "");
+    printAST(node->as.whileStmt.body, indent + 2);
+    break;
+  case NODE_FOR:
+    printf("[FOR LOOP: iterator %.*s]\n", node->as.forStmt.iterator.length,           node->as.forStmt.iterator.start);
+    printAST(node->as.forStmt.sequence, indent + 1);
+    printf("%*s ├─ [BODY]\n", indent * 4, "");
+    printAST(node->as.forStmt.body, indent + 2);
+    break;
+  case NODE_BREAK:
+    printf("[BREAK]\n");
+    break;
+  case NODE_SKIP:
+    printf("[SKIP (CONTINUE)]\n");
+    break;
+  case NODE_INTERPOLATION:
+    printf("[INTERPOLATION: %d parts]\n", node->as.interpolation.partCount);
+    for (int i = 0; i < node->as.interpolation.partCount; i++) {
+      printAST(node->as.interpolation.parts[i], indent + 1);
+    }
+    break;
+  default:
+    printf("[UNKNOWN NODE TYPE: %d]\n", node->type);
+    break;
+  }
+}
+#include <string.h>
+#include "emitter.h"
+#include "parser.h" // We will create this next!
+#ifdef DEBUG_PRINT_CODE
+#include "debug.h"
+#endif
+// ==========================================
+// GLOBAL STATE
+// ==========================================
+Compiler *current = NULL;
+// ==========================================
+// COMPILER INITIALIZATION
+// ==========================================
+void initCompiler(Compiler *compiler, FunctionType type) {
+  compiler->enclosing = current;
+  compiler->function = NULL;
+  compiler->type = type;
+  compiler->localCount = 0;
+  compiler->scopeDepth = 0;
+  compiler->function = newFunction();
+  current = compiler;
+  compiler->chunk = &compiler->function->chunk;
+  if (type != TYPE_SCRIPT) {
+    current->function->name =
+        copyString(parser.previous.start, parser.previous.length);
+  }
+  Local *local = &compiler->locals[compiler->localCount++];
+  local->depth = 0;
+  local->isCaptured = false;
+  local->name.start = "";
+  local->name.length = 0;
+}
+ObjFunction *endCompiler() {
+  emitReturn(); // Emit OP_NIL, OP_RETURN for the end of the function
+  ObjFunction *function = current->function;
+#ifdef DEBUG_PRINT_CODE
+  if (!parser.hadError) {
+    disassembleChunk(currentChunk(), function->name != NULL
+                                         ? function->name->chars
+                                         : "<script>");
+  }
+#endif
+  current = current->enclosing;
+  return function;
+}
+// ==========================================
+// SCOPE MANAGEMENT
+// ==========================================
+void beginScope() { current->scopeDepth++; }
+void endScope() {
+  current->scopeDepth--;
+  // Pop locals that fell out of scope
+  while (current->localCount > 0 &&
+         current->locals[current->localCount - 1].depth > current->scopeDepth) {
+    emitByte(OP_POP);
+    current->localCount--;
+  }
+}
+// ==========================================
+// LOCAL VARIABLES
+// ==========================================
+Token syntheticToken(const char *text) {
+  Token token;
+  token.type = TOKEN_IDENTIFIER;
+  token.start = text;
+  token.length = (int)strlen(text);
+  token.line = 0;
+  return token;
+}
+bool identifiersEqual(Token *a, Token *b) {
+  if (a->length != b->length)
+    return false;
+  return memcmp(a->start, b->start, a->length) == 0;
+}
+void addLocal(Token name) {
+  if (current->localCount == UINT8_COUNT) {
+    error("Too many local variables in function.");
+    return;
+  }
+  Local *local = &current->locals[current->localCount++];
+  local->name = name;
+  local->depth = -1; // Uninitialized
+}
+int resolveLocal(Compiler *compiler, Token *name) {
+  for (int i = compiler->localCount - 1; i >= 0; i--) {
+    Local *local = &compiler->locals[i];
+    if (identifiersEqual(name, &local->name)) {
+      if (local->depth == -1) {
+        error("Can't read local variable in its own initializer.");
+      }
+      return i;
+    }
+  }
+  return -1;
+}
+void declareVariable() {
+  if (current->scopeDepth == 0)
+    return;
+  Token *name = &parser.previous;
+  for (int i = current->localCount - 1; i >= 0; i--) {
+    Local *local = &current->locals[i];
+    if (local->depth != -1 && local->depth < current->scopeDepth) {
+      break;
+    }
+    if (identifiersEqual(name, &local->name)) {
+      error("Already a variable with this name in this scope.");
+    }
+  }
+  addLocal(*name);
+}
+void markInitialized() {
+  if (current->scopeDepth == 0)
+    return;
+  current->locals[current->localCount - 1].depth = current->scopeDepth;
+}
+void defineVariable(uint8_t global) {
+  if (current->scopeDepth > 0) {
+    markInitialized();
+    return;
+  }
+  emitBytes(OP_DEFINE_GLOBAL, global);
+}
+// ==========================================
+// CHUNK MANAGEMENT & DRAFTING
+// ==========================================
+Chunk *currentChunk() { return current->chunk; }
+// ==========================================
+// BYTECODE EMISSION
+// ==========================================
+void emitByte(uint8_t byte) {
+  writeChunk(currentChunk(), byte, parser.previous.line);
+}
+void emitBytes(uint8_t byte1, uint8_t byte2) {
+  emitByte(byte1);
+  emitByte(byte2);
+}
+void emitReturn() { emitBytes(OP_NIL, OP_RETURN); }
+uint16_t makeConstant(Value value) {
+  int constant = addConstant(currentChunk(), value);
+  if (constant > 65535) { // <--- Upgrade from 255
+    error("Too many constants in one chunk.");
+    return 0;
+  }
+  return (uint16_t)constant;
+}
+void emitConstant(Value value) {
+  int constant = addConstant(currentChunk(), value);
+  if (constant <= 255) {
+    emitBytes(OP_CONSTANT, (uint8_t)constant);
+  } else if (constant <= 65535) {
+    emitByte(OP_CONSTANT_LONG);
+    emitByte((constant >> 8) & 0xff);
+    emitByte(constant & 0xff);
+  } else {
+    error("Too many constants in one chunk.");
+  }
+}
+// ==========================================
+// CONTROL FLOW EMISSION
+// ==========================================
+int emitJump(uint8_t instruction) {
+  emitByte(instruction);
+  emitByte(0xff);
+  emitByte(0xff);
+  return currentChunk()->count - 2;
+}
+void patchJump(int offset) {
+  int jump = currentChunk()->count - offset - 2;
+  if (jump > UINT16_MAX) {
+    error("Too much code to jump over.");
+  }
+  currentChunk()->code[offset] = (jump >> 8) & 0xff;
+  currentChunk()->code[offset + 1] = jump & 0xff;
+}
+void emitLoop(int loopStart) {
+  emitByte(OP_LOOP);
+  int offset = currentChunk()->count - loopStart + 2;
+  if (offset > UINT16_MAX)
+    error("Loop body too large.");
+  emitByte((offset >> 8) & 0xff);
+  emitByte(offset & 0xff);
+}
+#include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
+#include "common.h"
+#include "vm.h"
+// --- GLOBAL FLAGS ---
+bool printAstFlag = false;
+static void repl() {
+  char line[2048];
+  for (;;) {
+    printf("> ");
+    if (!fgets(line, sizeof(line), stdin)) {
+      printf("\n");
+      break;
+    }
+    interpret(line);
+  }
+}
+static char *readFile(const char *path) {
+  FILE *file = fopen(path, "rb");
+  if (file == NULL) {
+    fprintf(stderr, "Could not open file \"%s\".\n", path);
+    exit(74);
+  }
+  fseek(file, 0L, SEEK_END);
+  size_t fileSize = ftell(file);
+  rewind(file);
+  char *buffer = malloc(fileSize + 1);
+  if (buffer == NULL) {
+    fprintf(stderr, "Not enough memory to read \"%s\".\n", path);
+    exit(74);
+  }
+  size_t bytesRead = fread(buffer, sizeof(char), fileSize, file);
+  if (bytesRead < fileSize) {
+    fprintf(stderr, "Could not read file \"%s\".\n", path);
+    exit(74);
+  }
+  buffer[bytesRead] = '\0';
+  fclose(file);
+  return buffer;
+}
+static void runFile(const char *path) {
+  char *source = readFile(path);
+  InterpretResult result = interpret(source);
+  free(source);
+  if (result == INTERPRET_COMPILE_ERROR)
+    exit(65);
+  if (result == INTERPRET_RUNTIME_ERROR)
+    exit(70);
+}
+int main(int argc, char *argv[]) {
+  initVM();
+  char *filePath = NULL;
+  // --- THE ROBUST CLI PARSER ---
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "--debug") == 0) {
+      vm.debugMode = true;
+    } else if (strcmp(argv[i], "--ast") == 0) {
+      printAstFlag = true;
+    } else if (argv[i][0] == '-') {
+      // Catch typos like '--debg' or '-a'
+      fprintf(stderr, "Unknown flag: %s\n", argv[i]);
+      fprintf(stderr, "Usage: moon [--debug] [--ast] [path]\n");
+      exit(64);
+    } else {
+      // If it doesn't start with '-', it must be the file path!
+      if (filePath != NULL) {
+        fprintf(stderr, "Error: Multiple file paths provided.\n");
+        fprintf(stderr, "Usage: moon [--debug] [--ast] [path]\n");
+        exit(64);
+      }
+      filePath = argv[i];
+    }
+  }
+  // --- EXECUTION ROUTING ---
+  if (filePath == NULL) {
+    repl();
+  } else {
+    runFile(filePath);
+  }
+  freeVM();
+  return 0;
+}
+// memory.c
+#include <stdlib.h>
+#include "memory.h"
+#include "vm.h"
+void *reallocate(void *pointer, size_t oldSize, size_t newSize) {
+  (void)oldSize; // Silence unused parameter warning
+  if (newSize == 0) {
+    free(pointer);
+    return NULL;
+  }
+  void *result = realloc(pointer, newSize);
+  if (result == NULL)
+    exit(1);
+  return result;
+}
+void freeObject(Obj *object) {
+  switch (object->type) {
+  case OBJ_RANGE: {
+    FREE(ObjRange, object);
+    break;
+  }
+  case OBJ_LIST: {
+    ObjList *list = (ObjList *)object;
+    FREE_ARRAY(Value, list->items, list->capacity);
+    FREE(ObjList, object);
+    break;
+  }
+  case OBJ_STRING: {
+    ObjString *string = (ObjString *)object;
+    FREE_ARRAY(char, string->chars, string->length + 1);
+    FREE(ObjString, object);
+    break;
+  }
+  case OBJ_FUNCTION: {
+    ObjFunction *function = (ObjFunction *)object;
+    freeChunk(&function->chunk); // Free the bytecode!
+    FREE(ObjFunction, object);
+    break;
+  }
+  case OBJ_DICT: {
+    ObjDict *dict = (ObjDict *)object;
+    freeTable(&dict->fields); // Free the hash table array
+    FREE(ObjDict, object);    // Free the object wrapper itself
+    break;
+  }
+  case OBJ_NATIVE: {
+    FREE(ObjNative, object);
+    break;
+  }
+  case OBJ_TYPE_BLUEPRINT: {
+    FREE(ObjType, object);
+    break;
+  }
+  case OBJ_INSTANCE: {
+    ObjInstance *instance = (ObjInstance *)object;
+    freeTable(&instance->fields); // Free the hash table!
+    FREE(ObjInstance, object);
+    break;
+  }
+  case OBJ_MULTI_FUNCTION: {
+    ObjMultiFunction *multi = (ObjMultiFunction *)object;
+    // Free the 2D signatures array
+    if (multi->signatures != NULL) {
+      for (int i = 0; i < multi->methodCapacity; i++) {
+        if (multi->signatures[i] != NULL) {
+          FREE_ARRAY(ObjType *, multi->signatures[i], multi->arity);
+        }
+      }
+      FREE_ARRAY(ObjType **, multi->signatures, multi->methodCapacity);
+    }
+    // Free the methods array
+    if (multi->methods != NULL) {
+      FREE_ARRAY(ObjFunction *, multi->methods, multi->methodCapacity);
+    }
+    FREE(ObjMultiFunction, object);
+    break;
+  }
+  }
+}
+void freeObjects() {
+  Obj *object = vm.objects;
+  while (object != NULL) {
+    Obj *next = object->next;
+    freeObject(object);
+    object = next;
+  }
+}
+// object.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "memory.h"
+#include "object.h"
+#include "value.h"
+#include "vm.h"
+#define ALLOCATE_OBJ(type, objectType)                                         \
+  (type *)allocateObject(sizeof(type), objectType)
+static Obj *allocateObject(size_t size, ObjKind type) {
+  Obj *object = (Obj *)reallocate(NULL, 0, size);
+  object->type = type;
+  // Link to the VM's list of objects (for future GC)
+  object->next = vm.objects;
+  vm.objects = object;
+  return object;
+}
+// FNV-1a Hash Algorithm
+uint32_t hashString(const char *key, int length) {
+  uint32_t hash = 2166136261u;
+  for (int i = 0; i < length; i++) {
+    hash ^= (uint8_t)key[i];
+    hash *= 16777619;
+  }
+  return hash;
+}
+static ObjString *allocateString(char *chars, int length, uint32_t hash) {
+  ObjString *string = ALLOCATE_OBJ(ObjString, OBJ_STRING);
+  string->length = length;
+  string->chars = chars;
+  string->hash = hash;
+  //  FIX: Add the new string to the interned set immediately
+  tableSet(&vm.strings, OBJ_VAL(string), NIL_VAL);
+  return string;
+}
+// ... hashString function ...
+ObjString *takeString(char *chars, int length) {
+  uint32_t hash = hashString(chars, length);
+  // Check if we already have it
+  ObjString *interned = tableFindString(&vm.strings, chars, length, hash);
+  if (interned != NULL) {
+    FREE_ARRAY(char, chars,               length + 1); // We don't need the passed-in chars anymore
+    return interned;
+  }
+  return allocateString(chars, length, hash);
+}
+ObjString *copyString(const char *chars, int length) {
+  uint32_t hash = hashString(chars, length);
+  // Check if we already have it
+  ObjString *interned = tableFindString(&vm.strings, chars, length, hash);
+  if (interned != NULL)
+    return interned;
+  char *heapChars = ALLOCATE(char, length + 1);
+  memcpy(heapChars, chars, length);
+  heapChars[length] = '\0';
+  return allocateString(heapChars, length, hash);
+}
+ObjString *copyStringUnescaped(const char *chars, int length) {
+  // Optimistic allocation: The result will be at most 'length' bytes.
+  char *heapChars = ALLOCATE(char, length + 1);
+  int dest = 0;
+  for (int i = 0; i < length; i++) {
+    // Check for double backtick escape
+    if (chars[i] == '`' && i + 1 < length && chars[i + 1] == '`') {
+      heapChars[dest++] = '`'; // Write one
+      i++;                     // Skip the second one
+    } else {
+      heapChars[dest++] = chars[i];
+    }
+  }
+  heapChars[dest] = '\0';
+  // takeString hashes the content, checks the intern table,  // and either adopts our 'heapChars' or frees it and returns the existing one.
+  return takeString(heapChars, dest);
+}
+void printObject(Value value) {
+  switch (OBJ_TYPE(value)) {
+  case OBJ_DICT:
+    printf("<dict>");
+    break;
+  case OBJ_RANGE: {
+    ObjRange *range = AS_RANGE(value);
+    // We print using %.14g to strip trailing zeros (1.0 -> 1)
+    printf("%.14g to %.14g", range->start, range->end);
+    break;
+  }
+  case OBJ_LIST: {
+    ObjList *list = AS_LIST(value);
+    printf("[");
+    for (int i = 0; i < list->count; i++) {
+      printValue(list->items[i]);
+      if (i < list->count - 1)
+        printf(", ");
+    }
+    printf("]");
+    break;
+  }
+  case OBJ_STRING:
+    printf("\"%s\"", AS_CSTRING(value));
+    break;
+  case OBJ_FUNCTION: {
+    if (AS_FUNCTION(value)->name == NULL) {
+      printf("<script>");
+    } else {
+      printf("<fn %s>", AS_FUNCTION(value)->name->chars);
+    }
+    break;
+  }
+  case OBJ_TYPE_BLUEPRINT:
+    printf("<type %s>", AS_TYPE(value)->name->chars);
+    break;
+  case OBJ_INSTANCE:
+    printf("<%s instance>", AS_INSTANCE(value)->type->name->chars);
+    break;
+  case OBJ_MULTI_FUNCTION:
+    printf("<multi-fn %s>", AS_MULTI_FUNCTION(value)->name->chars);
+    break;
+  case OBJ_NATIVE:
+    printf("<native fn>");
+    break;
+  default:
+    printf("<unknown>");
+    break;
+  }
+}
+ObjFunction *newFunction() {
+  ObjFunction *function = ALLOCATE_OBJ(ObjFunction, OBJ_FUNCTION);
+  function->arity = 0;
+  function->name = NULL;
+  initChunk(&function->chunk);
+  return function;
+}
+ObjNative *newNative(NativeFn function) {
+  ObjNative *native = ALLOCATE_OBJ(ObjNative, OBJ_NATIVE);
+  native->function = function;
+  return native;
+}
+ObjList *newList() {
+  ObjList *list = ALLOCATE_OBJ(ObjList, OBJ_LIST);
+  list->items = NULL;
+  list->count = 0;
+  list->capacity = 0;
+  return list;
+}
+ObjDict *newDict() {
+  ObjDict *dict = ALLOCATE_OBJ(ObjDict, OBJ_DICT);
+  initTable(&dict->fields);
+  return dict;
+}
+void appendList(ObjList *list, Value value) {
+  if (list->capacity < list->count + 1) {
+    int oldCapacity = list->capacity;
+    list->capacity = GROW_CAPACITY(oldCapacity);
+    list->items = GROW_ARRAY(Value, list->items, oldCapacity, list->capacity);
+  }
+  list->items[list->count] = value;
+  list->count++;
+}
+void storeList(ObjList *list, int index, Value value) {
+  // Note: Bounds checking should happen in the VM before calling this
+  list->items[index] = value;
+}
+Value indexList(ObjList *list, int index) { return list->items[index]; }
+void deleteList(ObjList *list, int index) {
+  for (int i = index; i < list->count - 1; i++) {
+    list->items[i] = list->items[i + 1];
+  }
+  list->items[list->count - 1] = NIL_VAL; // Clear the last slot
+  list->count--;
+}
+ObjRange *newRange(double start, double end, double step) {
+  ObjRange *range = ALLOCATE_OBJ(ObjRange, OBJ_RANGE);
+  range->start = start;
+  range->end = end;
+  range->step = step;
+  return range;
+}
+ObjType *newType(ObjString *name) {
+  ObjType *type = ALLOCATE_OBJ(ObjType, OBJ_TYPE_BLUEPRINT);
+  type->name = name;
+  return type;
+}
+ObjInstance *newInstance(ObjType *type) {
+  ObjInstance *instance = ALLOCATE_OBJ(ObjInstance, OBJ_INSTANCE);
+  instance->type = type;
+  initTable(&instance->fields); // Boot up the empty hash table for data!
+  return instance;
+}
+ObjMultiFunction *newMultiFunction(ObjString *name, int arity) {
+  ObjMultiFunction *multi = ALLOCATE_OBJ(ObjMultiFunction, OBJ_MULTI_FUNCTION);
+  multi->name = name;
+  multi->arity = arity;
+  multi->methodCount = 0;
+  multi->methodCapacity = 0;
+  multi->methods = NULL;
+  multi->signatures = NULL;
+  return multi;
+}
+ObjString *valueToString(Value value) {
+  // If it's already a string, just cast and return
+  if (IS_STRING(value))
+    return AS_STRING(value);
+  // If it's a number, format it
+  if (IS_NUMBER(value)) {
+    double number = AS_NUMBER(value);
+    char buffer[32];
+    int length = sprintf(buffer, "%.14g", number);
+    return copyString(buffer, length);
+  }
+  // If it's boolean
+  if (IS_BOOL(value)) {
+    return AS_BOOL(value) ? copyString("true", 4) : copyString("false", 5);
+  }
+  // If it's nil
+  if (IS_NIL(value)) {
+    return copyString("nil", 3);
+  }
+  if (IS_DICT(value)) {
+    // For now, just print the type. We can write a full JSON stringifier later!
+    return copyString("<dict>", 6);
+  }
+  // --- LIST FORMATTING ---
+  if (IS_LIST(value)) {
+    ObjList *list = AS_LIST(value);
+    // Start with a reasonable buffer capacity
+    int capacity = 64;
+    int length = 0;
+    char *buffer = malloc(capacity);
+    buffer[length++] = '['; // Opening bracket
+    for (int i = 0; i < list->count; i++) {
+      // 1. Recursively convert the item into a string!
+      ObjString *itemStr = valueToString(list->items[i]);
+      // 2. Ensure the buffer is large enough for the item + ", ]\0"
+      while (length + itemStr->length + 4 > capacity) {
+        capacity *= 2;
+        buffer = realloc(buffer, capacity);
+      }
+      // 3. Copy the item's characters into our buffer
+      memcpy(buffer + length, itemStr->chars, itemStr->length);
+      length += itemStr->length;
+      // 4. Add the comma separator (if it's not the last item)
+      if (i < list->count - 1) {
+        buffer[length++] = ',';
+        buffer[length++] = ' ';
+      }
+    }
+    buffer[length++] = ']'; // Closing bracket
+    buffer[length] = '\0';  // Null terminator
+    // Transfer the raw C string into the VM's managed memory pool!
+    ObjString *result = copyString(buffer, length);
+    free(buffer);
+    return result;
+  }
+  // Fallback for objects we haven't implemented yet
+  return copyString("<object>", 8);
+}
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "ast.h"
+#include "object.h"
+#include "parser.h"
+#include "scanner.h"
+#include "sigtrie.h"
+// ==========================================
+// 1. GLOBAL STATE & REGISTRY
+// ==========================================
+Parser parser;
+// --- THE BLINDFOLD STATE ---
+typedef struct {
+  uint32_t hash;
+  int depth;
+} ExpectedLabel;
+static ExpectedLabel expectedLabelStack[256];
+static int expectedLabelCount = 0;
+static int groupingDepth = 0; // Tracks if we are inside () or []
+static Node *currentStickySubject = NULL;
+static int loopingDepth = 0;
+// Safely clones an AST node so we don't double-free memory!
+static Node *cloneNode(Node *original) {
+  if (!original)
+    return NULL;
+  switch (original->type) {
+  case NODE_VARIABLE:
+    return newVariableNode(original->as.variable.name, original->line);
+  case NODE_LITERAL:
+    return newLiteralNode(original->as.literal.value, original->line);
+  case NODE_PROPERTY:
+    return newPropertyNode(cloneNode(original->as.property.target),                           original->as.property.name, original->line);
+  case NODE_SUBSCRIPT:
+    return newSubscriptNode(cloneNode(original->as.subscript.left),                            cloneNode(original->as.subscript.index),                            original->line);
+  default:
+    error("Cannot use a complex expression as a sticky subject.");
+    return NULL;
+  }
+}
+static bool isExpectedLabel() {
+  if (expectedLabelCount == 0)
+    return false;
+  // Hash the current token
+  uint32_t currentHash =
+      hashString(parser.current.start, parser.current.length);
+  // Check if it matches an expected label AT THE CURRENT DEPTH
+  for (int i = 0; i < expectedLabelCount; i++) {
+    if (expectedLabelStack[i].hash == currentHash &&
+        expectedLabelStack[i].depth == groupingDepth) {
+      return true;
+    }
+  }
+  return false;
+}
+// ---------------------------
+static char *my_strdup(const char *s) {
+  size_t len = strlen(s) + 1;
+  char *dup = malloc(len);
+  if (dup)
+    memcpy(dup, s, len);
+  return dup;
+}
+static bool canStartExpression(TokenType type) {
+  switch (type) {
+  case TOKEN_NEWLINE:
+  case TOKEN_EOF:
+  case TOKEN_RIGHT_PAREN:
+  case TOKEN_RIGHT_BRACKET:
+  case TOKEN_RIGHT_BRACE:
+  case TOKEN_COMMA:
+  case TOKEN_COLON:
+  case TOKEN_ELSE:
+  case TOKEN_BE:
+  case TOKEN_TO:
+  case TOKEN_IF:
+  case TOKEN_UNLESS:
+  case TOKEN_THEN:
+  case TOKEN_BY:
+    // REMOVED: TOKEN_END is gone! We've allowed it to start an expression!
+    return false;
+  default:
+    return true;
+  }
+}
+void hoistPhrases(const char *source) {
+  initSignatureTable();
+  initScanner(source);
+  Token token = scanToken();
+  while (token.type != TOKEN_EOF) {
+    if (token.type == TOKEN_LET) {
+      Token nameToken = scanToken();
+      if (nameToken.type == TOKEN_IDENTIFIER) {
+        Token next = scanToken();
+        if (next.type != TOKEN_BE && next.type != TOKEN_COMMA) {
+          char mangled[1024] = {0};
+          strncat(mangled, nameToken.start, nameToken.length);
+          // THE 0-ARITY FIX: Did it immediately hit a colon?
+          if (next.type == TOKEN_COLON) {
+            strcat(mangled, "$0");
+          } else {
+            while (next.type != TOKEN_COLON && next.type != TOKEN_EOF &&
+                   next.type != TOKEN_NEWLINE) {
+              if (next.type == TOKEN_LEFT_PAREN) {
+                int arity = 0;
+                while (scanToken().type != TOKEN_RIGHT_PAREN) {
+                  arity++;
+                  if (arity > 1)
+                    scanToken();
+                }
+                char buf[16];
+                sprintf(buf, "$%d", arity);
+                strcat(mangled, buf);
+              } else {
+                strcat(mangled, "_");
+                strncat(mangled, next.start, next.length);
+              }
+              next = scanToken();
+            }
+          }
+          char root[256] = {0};
+          snprintf(root, nameToken.length + 1, "%.*s", nameToken.length,                   nameToken.start);
+          insertSignature(root, mangled);
+        }
+      }
+    }
+    token = scanToken();
+  }
+  // --- ADD THIS LINE ---
+  // The Rewind: Reset the scanner back to the top of the file for the real
+  // pass!
+  initScanner(source);
+}
+// ==========================================
+// 3. ERROR HANDLING
+// ==========================================
+void errorAt(Token *token, const char *message) {
+  if (parser.panicMode)
+    return;
+  parser.panicMode = true;
+  fprintf(stderr, "[line %d] Error", token->line);
+  if (token->type == TOKEN_EOF) {
+    fprintf(stderr, " at end");
+  } else if (token->type != TOKEN_ERROR) {
+    fprintf(stderr, " at '%.*s'", token->length, token->start);
+  }
+  fprintf(stderr, ": %s\n", message);
+  parser.hadError = true;
+}
+void error(const char *message) { errorAt(&parser.previous, message); }
+void errorAtCurrent(const char *message) { errorAt(&parser.current, message); }
+void synchronize() {
+  parser.panicMode = false;
+  while (parser.current.type != TOKEN_EOF) {
+    if (parser.previous.type == TOKEN_END)
+      return;
+    switch (parser.current.type) {
+    case TOKEN_LET:
+    case TOKEN_IF:
+    case TOKEN_WHILE:
+    case TOKEN_GIVE:
+    case TOKEN_SET:
+      return;
+    default:;
+    }
+    advance();
+  }
+}
+// ==========================================
+// 4. LOW-LEVEL PARSING (Token Control)
+// ==========================================
+void advance() {
+  parser.previous = parser.current;
+  for (;;) {
+    parser.current = scanToken();
+    if (parser.current.type != TOKEN_ERROR)
+      break;
+    errorAtCurrent(parser.current.start);
+  }
+}
+void consume(TokenType type, const char *message) {
+  if (parser.current.type == type) {
+    advance();
+    return;
+  }
+  errorAtCurrent(message);
+}
+bool check(TokenType type) { return parser.current.type == type; }
+bool match(TokenType type) {
+  if (!check(type))
+    return false;
+  advance();
+  return true;
+}
+bool checkTerminator(TokenType *terminators, int count) {
+  for (int i = 0; i < count; i++) {
+    if (check(terminators[i]))
+      return true;
+  }
+  return check(TOKEN_EOF);
+}
+void ignoreNewlines() {
+  while (match(TOKEN_NEWLINE))
+    ;
+}
+// ==========================================
+// 5. PRATT ENGINE & EXPRESSIONS
+// ==========================================
+typedef enum {
+  PREC_NONE,  PREC_ASSIGNMENT,  PREC_RANGE,  PREC_OR,  PREC_AND,  PREC_EQUALITY,  PREC_COMPARISON,  PREC_TERM,  PREC_FACTOR,  PREC_UNARY,  PREC_CALL,  PREC_PRIMARY
+} Precedence;
+typedef Node *(*PrefixFn)();
+typedef Node *(*InfixFn)(Node *left);
+typedef struct {
+  PrefixFn prefix;
+  InfixFn infix;
+  Precedence precedence;
+} ParseRule;
+static Node *expression();
+static ParseRule *getRule(TokenType type);
+static Node *parsePrecedence(Precedence precedence) {
+  advance();
+  PrefixFn prefixRule = getRule(parser.previous.type)->prefix;
+  if (prefixRule == NULL) {
+    error("Expect expression.");
+    return NULL;
+  }
+  Node *leftNode = prefixRule();
+  while (precedence <= getRule(parser.current.type)->precedence) {
+    // --- THE BLINDFOLD CHECK ---
+    // This is the line you missed! It stops the Pratt parser from eating
+    // labels.
+    if (isExpectedLabel())
+      break;
+    advance();
+    InfixFn infixRule = getRule(parser.previous.type)->infix;
+    leftNode = infixRule(leftNode);
+  }
+  return leftNode;
+}
+static Node *expression() {
+  Node *expr = parsePrecedence(PREC_ASSIGNMENT);
+  // Is it a Ternary or a Modifier?
+  if (match(TOKEN_IF)) {
+    int line = parser.previous.line;
+    Node *cond = expression(); // Parse the condition
+    if (match(TOKEN_ELSE)) {
+      // It has an 'else'! It's a standard Ternary Expression.
+      Node *elseBranch = expression();
+      return newIfNode(cond, expr, elseBranch, line);
+    } else {
+      // No 'else'! It's a Statement Modifier. We return it with a NULL
+      // elseBranch so the parent statement can invert it.
+      return newIfNode(cond, expr, NULL, line);
+    }
+  } else if (match(TOKEN_UNLESS)) {
+    int line = parser.previous.line;
+    Node *cond = expression();
+    // Invert the condition for 'unless'
+    Token notToken = {
+        .type = TOKEN_NOT, .start = "not", .length = 3, .line = line};
+    cond = newUnaryNode(notToken, cond, line);
+    if (match(TOKEN_THEN)) {
+      Node *elseBranch = expression();
+      return newIfNode(cond, expr, elseBranch, line);
+    } else {
+      // Statement Modifier
+      return newIfNode(cond, expr, NULL, line);
+    }
+  }
+  return expr;
+}
+static Node *string() {
+  // We chop off the leading and trailing quotes (+1 and -2)
+  ObjString *str =
+      copyString(parser.previous.start + 1, parser.previous.length - 2);
+  return newLiteralNode(OBJ_VAL(str), parser.previous.line);
+}
+// Helper to chop off the quotes and backticks (+1 and -2)
+static Node *extractInterpolationString(Token token) {
+  ObjString *str = copyString(token.start + 1, token.length - 2);
+  return newLiteralNode(OBJ_VAL(str), token.line);
+}
+// The Interpolation Parser
+static Node *interpolation() {
+  int line = parser.previous.line;
+  NodeArray parts;
+  initNodeArray(&parts);
+  // 1. The Opening String ("hello `)
+  writeNodeArray(&parts, extractInterpolationString(parser.previous));
+  // 2. The Loop
+  while (true) {
+    // Parse the expression inside the backticks ( x + y )
+    writeNodeArray(&parts, expression());
+    // It MUST be followed by a MIDDLE or a CLOSE token
+    if (match(TOKEN_STRING_MIDDLE)) {
+      writeNodeArray(&parts, extractInterpolationString(parser.previous));
+    } else if (match(TOKEN_STRING_CLOSE)) {
+      writeNodeArray(&parts, extractInterpolationString(parser.previous));
+      break;
+    } else {
+      errorAtCurrent("Expect end of string interpolation (` or \").");
+      break;
+    }
+  }
+  Node *node = newInterpolationNode(parts.items, parts.count, line);
+  freeNodeArray(&parts);
+  return node;
+}
+static Node *number() {
+  double value = strtod(parser.previous.start, NULL);
+  return newLiteralNode(NUMBER_VAL(value), parser.previous.line);
+}
+static Node *literal() {
+  int line = parser.previous.line;
+  switch (parser.previous.type) {
+  case TOKEN_FALSE:
+    return newLiteralNode(BOOL_VAL(false), line);
+  case TOKEN_TRUE:
+    return newLiteralNode(BOOL_VAL(true), line);
+  case TOKEN_NIL:
+    return newLiteralNode(NIL_VAL, line);
+  default:
+    return NULL;
+  }
+}
+static Node *variable() {
+  Token rootToken = parser.previous;
+  char rootWord[256] = {0};
+  snprintf(rootWord, rootToken.length + 1, "%.*s", rootToken.length,           rootToken.start);
+  TrieNode *currentNode = getSignatureTrie(rootWord);
+  if (currentNode == NULL) {
+    return newVariableNode(rootToken, rootToken.line);
+  }
+  // Use dynamic array for accumulated arguments
+  NodeArray args;
+  initNodeArray(&args);
+  TrieNode *startNode = currentNode;
+  TrieNode *lastGoodState = currentNode->isTerminal ? currentNode : NULL;
+  while (currentNode->childCount > 0) {
+    uint32_t nextHash = hashString(parser.current.start, parser.current.length);
+    TrieNode *matchedLabel = NULL;
+    bool expectsArgument = false;
+    for (int i = 0; i < currentNode->childCount; i++) {
+      TrieNode *child = currentNode->children[i];
+      if (child->type == NODE_LABEL && child->labelHash == nextHash) {
+        matchedLabel = child;
+      } else if (child->type == NODE_ARGUMENT) {
+        expectsArgument = true;
+      }
+    }
+    if (matchedLabel != NULL) {
+      advance();
+      currentNode = matchedLabel;
+      if (currentNode->isTerminal)
+        lastGoodState = currentNode;
+      continue;
+    }
+    if (expectsArgument && canStartExpression(parser.current.type)) {
+      int labelsPushed = 0;
+      for (int i = 0; i < currentNode->childCount; i++) {
+        if (currentNode->children[i]->type == NODE_ARGUMENT) {
+          TrieNode *ac = currentNode->children[i];
+          for (int j = 0; j < ac->childCount; j++) {
+            if (ac->children[j]->type == NODE_LABEL) {
+              expectedLabelStack[expectedLabelCount].hash =
+                  ac->children[j]->labelHash;
+              expectedLabelStack[expectedLabelCount].depth = groupingDepth;
+              expectedLabelCount++;
+              labelsPushed++;
+            }
+          }
+        }
+      }
+      // Initialize temp array INSIDE the loop
+      NodeArray tempArgs;
+      initNodeArray(&tempArgs);
+      if (check(TOKEN_LEFT_PAREN)) {
+        advance();
+        groupingDepth++;
+        if (!check(TOKEN_RIGHT_PAREN)) {
+          do {
+            writeNodeArray(&tempArgs, expression());
+          } while (match(TOKEN_COMMA));
+        }
+        consume(TOKEN_RIGHT_PAREN, "Expect ')' after arguments.");
+        groupingDepth--;
+      } else {
+        writeNodeArray(&tempArgs, expression());
+      }
+      expectedLabelCount -= labelsPushed;
+      TrieNode *matchedArgChild = NULL;
+      for (int i = 0; i < currentNode->childCount; i++) {
+        if (currentNode->children[i]->type == NODE_ARGUMENT &&
+            currentNode->children[i]->arity == tempArgs.count) {
+          matchedArgChild = currentNode->children[i];
+          break;
+        }
+      }
+      if (matchedArgChild != NULL) {
+        // Transfer contents
+        for (int i = 0; i < tempArgs.count; i++)
+          writeNodeArray(&args, tempArgs.items[i]);
+        freeNodeArray(&tempArgs); // Free the temp buffer before looping!
+        currentNode = matchedArgChild;
+        if (currentNode->isTerminal)
+          lastGoodState = currentNode;
+        continue;
+      } else {
+        freeNodeArray(&tempArgs); // Free on dead end!
+        break;
+      }
+    }
+    break;
+  }
+  if (lastGoodState != NULL) {
+    if (currentNode != lastGoodState) {
+      error("Incomplete phrasal function. Missing expected labels.");
+      freeNodeArray(&args);
+      return newVariableNode(rootToken, rootToken.line);
+    }
+    Token mangledToken = rootToken;
+    mangledToken.start = my_strdup(lastGoodState->mangledName);
+    mangledToken.length = strlen(lastGoodState->mangledName);
+    Node *node = newPhrasalCallNode(mangledToken, args.items, args.count,                                    rootToken.line);
+    freeNodeArray(&args);
+    return node;
+  }
+  if (currentNode != startNode) {
+    error("Invalid phrasing. Did not match any known function signature.");
+  }
+  freeNodeArray(&args);
+  return newVariableNode(rootToken, rootToken.line);
+}
+static Node *explicitSticky() {
+  Node *right = parsePrecedence(PREC_UNARY);
+  currentStickySubject = right; // Lock it into the register!
+  return right; // Act transparently, passing the value right through
+}
+static Node *unary() {
+  Token opToken = parser.previous;
+  Node *right = parsePrecedence(PREC_UNARY);
+  return newUnaryNode(opToken, right, opToken.line);
+}
+static Node *stickyPrefix() {
+  if (currentStickySubject == NULL) {
+    error("Missing left operand, and no sticky subject is active.");
+    return NULL;
+  }
+  Token opToken = parser.previous;
+  // --- THE "IS NOT" FIX ---
+  bool invert = false;
+  if ((opToken.type == TOKEN_IS) && match(TOKEN_NOT)) {
+    invert = true;
+  }
+  ParseRule *rule = getRule(opToken.type);
+  Node *right = parsePrecedence((Precedence)(rule->precedence + 1));
+  // Build the binary node using the cloned subject!
+  Node *stickyNode = newBinaryNode(cloneNode(currentStickySubject), opToken,                                   right, opToken.line);
+  if (invert) {
+    Token notToken = {TOKEN_NOT, "not", 3, opToken.line};
+    return newUnaryNode(notToken, stickyNode, opToken.line);
+  }
+  return stickyNode;
+}
+static bool isComparison(Token opToken) {
+  switch (opToken.type) {
+  case TOKEN_IS:
+  case TOKEN_EQUAL_EQUAL:
+  case TOKEN_LESS_EQUAL:
+  case TOKEN_LESS:
+  case TOKEN_GREATER_EQUAL:
+  case TOKEN_GREATER:
+  case TOKEN_EQUAL:
+    return true;
+  default:
+    return false;
+  }
+}
+static Node *binary(Node *left) {
+  Token opToken = parser.previous;
+  // --- STICKY SUBJECT CAPTURE ---
+  if (isComparison(opToken)) {
+    currentStickySubject = left;
+  }
+  // --- THE "IS NOT" FIX ---
+  bool invert = false;
+  if ((opToken.type == TOKEN_IS) && match(TOKEN_NOT)) {
+    invert = true;
+  }
+  ParseRule *rule = getRule(opToken.type);
+  Node *right = parsePrecedence((Precedence)(rule->precedence + 1));
+  Node *binNode = newBinaryNode(left, opToken, right, opToken.line);
+  // If we caught a 'not', wrap the whole binary expression!
+  if (invert) {
+    Token notToken = {TOKEN_NOT, "not", 3, opToken.line};
+    return newUnaryNode(notToken, binNode, opToken.line);
+  }
+  return binNode;
+}
+static Node *and_(Node *left) {
+  Token opToken = parser.previous;
+  Node *right = parsePrecedence(PREC_AND);
+  return newLogicalNode(left, opToken, right, opToken.line);
+}
+static Node *or_(Node *left) {
+  Token opToken = parser.previous;
+  Node *right = parsePrecedence(PREC_OR);
+  return newLogicalNode(left, opToken, right, opToken.line);
+}
+static Node *list() {
+  int line = parser.previous.line;
+  NodeArray itemsArr, *items = &itemsArr;
+  initNodeArray(items);
+  groupingDepth++; // Protect the list items!
+  if (!check(TOKEN_RIGHT_BRACKET)) {
+    do {
+      ignoreNewlines();
+      if (check(TOKEN_RIGHT_BRACKET))
+        break;
+      writeNodeArray(items, expression());
+    } while (match(TOKEN_COMMA));
+  }
+  groupingDepth--; // Coming back out!
+  ignoreNewlines();
+  consume(TOKEN_RIGHT_BRACKET, "Expect a ']' after list.");
+  Node *node = newListNode(items->items, items->count, line);
+  freeNodeArray(items);
+  return node;
+}
+static Node *dict() {
+  int line = parser.previous.line;
+  NodeArray keys;
+  initNodeArray(&keys);
+  NodeArray values;
+  initNodeArray(&values);
+  groupingDepth++; // Protect from blindfolds!
+  if (!check(TOKEN_RIGHT_BRACE)) {
+    do {
+      ignoreNewlines();
+      if (check(TOKEN_RIGHT_BRACE))
+        break;
+      // 1. Parse the Key (Force it to be a String Literal!)
+      Node *keyNode = NULL;
+      if (match(TOKEN_IDENTIFIER)) {
+        // If they type `name:`, convert the bare identifier into the string
+        // "name"
+        ObjString *keyStr =
+            copyString(parser.previous.start, parser.previous.length);
+        keyNode = newLiteralNode(OBJ_VAL(keyStr), parser.previous.line);
+      } else if (match(TOKEN_STRING)) {
+        // If they type `"name":`, chop off the quotes normally
+        ObjString *keyStr =
+            copyString(parser.previous.start + 1, parser.previous.length - 2);
+        keyNode = newLiteralNode(OBJ_VAL(keyStr), parser.previous.line);
+      } else {
+        error("Expect property name (identifier or string) in dictionary.");
+        break;
+      }
+      // 2. The Colon
+      consume(TOKEN_COLON, "Expect ':' after property name.");
+      // 3. The Value
+      Node *valueNode = expression();
+      writeNodeArray(&keys, keyNode);
+      writeNodeArray(&values, valueNode);
+    } while (match(TOKEN_COMMA));
+  }
+  groupingDepth--; // Coming back out!
+  ignoreNewlines();
+  consume(TOKEN_RIGHT_BRACE, "Expect '}' after dictionary properties.");
+  Node *node = newDictNode(keys.items, values.items, keys.count, line);
+  freeNodeArray(&keys);
+  freeNodeArray(&values);
+  return node;
+}
+static Node *subscript(Node *left) {
+  int line = parser.previous.line;
+  groupingDepth++; // Protect the index!
+  Node *index = expression();
+  groupingDepth--; // Coming back out!
+  consume(TOKEN_RIGHT_BRACKET, "Expect ']' after index.");
+  return newSubscriptNode(left, index, line);
+}
+static Node *dot(Node *left) {
+  int line = parser.previous.line;
+  // Moon's Dot Indexer! It expects an expression, not a literal name.
+  // e.g. `list.0` or `list.i`
+  Node *index = parsePrecedence(PREC_CALL);
+  // It returns a SubscriptNode, completely identical to `list[i]`
+  return newSubscriptNode(left, index, line);
+}
+static Node *range(Node *left) {
+  int line = parser.previous.line;
+  // The 'left' node is the start of the range (e.g., 1)
+  // We parse the 'end' with PREC_RANGE + 1 so it binds tightly
+  Node *endNode = parsePrecedence((Precedence)(PREC_RANGE + 1));
+  Node *stepNode = NULL;
+  if (match(TOKEN_BY)) {
+    // If there is a 'by', parse the step size
+    stepNode = parsePrecedence((Precedence)(PREC_RANGE + 1));
+  } else {
+    // Default step is 1.0
+    stepNode = newLiteralNode(NUMBER_VAL(1.0), line);
+  }
+  return newRangeNode(left, endNode, stepNode, line);
+}
+static Node *possessive(Node *left) {
+  int line = parser.previous.line;
+  // Moon's Property Accessor!
+  // e.g. `player's health`
+  consume(TOKEN_IDENTIFIER, "Expect property name after 's.");
+  Token name = parser.previous;
+  return newPropertyNode(left, name, line);
+}
+static Node *endKeyword() { return newEndNode(parser.previous.line); }
+// ==========================================
+// 6. STATEMENTS & DECLARATIONS
+// ==========================================
+static Node *declaration();
+static Node *statement();
+static Node *block(TokenType *terminators, int count) {
+  int line = parser.previous.line;
+  NodeArray statements;
+  initNodeArray(&statements);
+  while (true) {
+    ignoreNewlines();
+    if (checkTerminator(terminators, count) || check(TOKEN_EOF))
+      break;
+    writeNodeArray(&statements, declaration());
+  }
+  Node *node = newBlockNode(statements.items, statements.count, line);
+  freeNodeArray(&statements);
+  return node;
+}
+static Node *ifStatement(bool invert) {
+  int line = parser.previous.line;
+  Node *condition = expression();
+  if (invert) {
+    Token notToken = {TOKEN_NOT, "not", 3, line};
+    condition = newUnaryNode(notToken, condition, line);
+  }
+  Node *thenBranch = NULL, *elseBranch = NULL;
+  // THE KEYWORD SWAP: 'if' uses 'else', 'unless' uses 'then'
+  TokenType altToken = invert ? TOKEN_THEN : TOKEN_ELSE;
+  if (match(TOKEN_COLON)) {
+    TokenType thenEnds[] = {altToken, TOKEN_END};
+    thenBranch = block(thenEnds, 2);
+    if (match(altToken)) {
+      if (match(TOKEN_IF)) {
+        elseBranch = ifStatement(false);
+      } else if (match(TOKEN_UNLESS)) {
+        elseBranch = ifStatement(true);
+      } else if (match(TOKEN_COLON)) {
+        TokenType elseEnds[] = {TOKEN_END};
+        elseBranch = block(elseEnds, 1);
+        consume(TOKEN_END, "Expect 'end' after block.");
+      } else {
+        elseBranch = statement();
+      }
+    } else {
+      consume(TOKEN_END, "Expect 'end' after block.");
+    }
+  } else {
+    // Single-statement branches
+    thenBranch = statement();
+    ignoreNewlines(); // Skip line breaks before checking for the alternate
+                      // branch!
+    if (match(altToken)) {
+      if (match(TOKEN_IF))
+        elseBranch = ifStatement(false);
+      else if (match(TOKEN_UNLESS))
+        elseBranch = ifStatement(true);
+      else
+        elseBranch = statement();
+    }
+  }
+  return newIfNode(condition, thenBranch, elseBranch, line);
+}
+static Node *whileLogic(bool invert) {
+  int line = parser.previous.line;
+  Node *condition = expression();
+  if (invert) {
+    Token notToken = {TOKEN_NOT, "not", 3, line};
+    condition = newUnaryNode(notToken, condition, line);
+  }
+  Node *body = NULL;
+  loopingDepth++;
+  if (match(TOKEN_COLON)) {
+    TokenType terminators[] = {TOKEN_END};
+    body = block(terminators, 1);
+    consume(TOKEN_END, "Expect 'end' after loop.");
+  } else {
+    body = statement();
+  }
+  loopingDepth--;
+  return newWhileNode(condition, body, line);
+}
+static Node *forStatement() {
+  int line = parser.previous.line;
+  if (check(TOKEN_EACH))
+    advance();
+  Token iteratorName = parser.current;
+  consume(TOKEN_IDENTIFIER, "Expect variable name.");
+  if (check(TOKEN_IN))
+    advance();
+  else if (check(TOKEN_FROM))
+    advance();
+  Node *sequence = expression();
+  Node *body = NULL;
+  loopingDepth++;
+  if (match(TOKEN_COLON)) {
+    TokenType terminators[] = {TOKEN_END};
+    body = block(terminators, 1);
+    consume(TOKEN_END, "Expect 'end' after loop.");
+  } else {
+    body = statement();
+  }
+  loopingDepth--;
+  return newForNode(iteratorName, sequence, body, line);
+}
+static Node *parseLValue() {
+  // Base Case: The root must be an identifier
+  consume(TOKEN_IDENTIFIER, "Expect variable name for assignment.");
+  Node *lvalue = newVariableNode(parser.previous, parser.previous.line);
+  // The Recursive Modifier Loop: [ <expr> ] | . <expr> | 's <id>
+  while (true) {
+    if (match(TOKEN_LEFT_BRACKET)) {
+      lvalue = subscript(lvalue);
+    } else if (match(TOKEN_DOT)) {
+      lvalue = dot(lvalue);
+    } else if (match(TOKEN_POSSESSIVE)) {
+      lvalue = possessive(lvalue);
+    } else {
+      break; // No more modifiers, the memory address is fully resolved!
+    }
+  }
+  return lvalue;
+}
+static Node *addStatement() {
+  int line = parser.previous.line;
+  NodeArray values;
+  initNodeArray(&values);
+  // --- THE BLINDFOLD FIX ---
+  // We manually push "to" onto the expected label stack so the Pratt parser
+  // knows to stop when it sees it, rather than eating it as a range operator!
+  expectedLabelStack[expectedLabelCount].hash = hashString("to", 2);
+  expectedLabelStack[expectedLabelCount].depth = groupingDepth;
+  expectedLabelCount++;
+  // 1. Gather all the expressions to add
+  do {
+    writeNodeArray(&values, expression());
+  } while (match(TOKEN_COMMA));
+  // Pop the blindfold!
+  expectedLabelCount--;
+  // -------------------------
+  // 2. The Bridge
+  consume(TOKEN_TO, "Expect 'to' after expressions to add.");
+  // 3. The Target (L-Value)
+  Node *target = parseLValue();
+  // 4. THE DESUGARING (Build the Accumulator)
+  Node *accumulator = cloneNode(target);
+  if (accumulator == NULL) {
+    error("Invalid target for 'add' statement.");
+    return NULL;
+  }
+  Token plusToken = {
+      .type = TOKEN_ADD_INPLACE, .start = "add", .length = 3, .line = line};
+  for (int i = 0; i < values.count; i++) {
+    accumulator = newBinaryNode(accumulator, plusToken, values.items[i], line);
+  }
+  freeNodeArray(&values);
+  // 5. Wrap it all in a SET node
+  Node *targets[1] = {target};
+  Node *setValues[1] = {accumulator};
+  Node *addNode = newSetNode(targets, 1, setValues, 1, line);
+  // --- OPTIONAL: AST INVERSION (Statement Modifiers) ---
+  if (match(TOKEN_IF)) {
+    Node *cond = expression();
+    return newIfNode(cond, addNode, NULL, line);
+  } else if (match(TOKEN_UNLESS)) {
+    Node *cond = expression();
+    Token notToken = {TOKEN_NOT, "not", 3, line};
+    Node *invertedCond = newUnaryNode(notToken, cond, line);
+    return newIfNode(invertedCond, addNode, NULL, line);
+  }
+  return addNode;
+}
+static Node *setStatement() {
+  int line = parser.previous.line;
+  NodeArray targets;
+  initNodeArray(&targets);
+  NodeArray values;
+  initNodeArray(&values);
+  do {
+    writeNodeArray(&targets, parseLValue());
+  } while (match(TOKEN_COMMA));
+  consume(TOKEN_TO, "Expect 'to' after target(s).");
+  do {
+    writeNodeArray(&values, expression());
+  } while (match(TOKEN_COMMA));
+  Node *lastVal = values.items[values.count - 1];
+  if (lastVal->type == NODE_IF && lastVal->as.ifStmt.elseBranch == NULL) {
+    Node *cond = lastVal->as.ifStmt.condition;
+    values.items[values.count - 1] = lastVal->as.ifStmt.thenBranch;
+    Node *setNode = newSetNode(targets.items, targets.count, values.items,                               values.count, line);
+    freeNodeArray(&targets);
+    freeNodeArray(&values); // FREE BEFORE RETURN!
+    return newIfNode(cond, setNode, NULL, line);
+  }
+  if (values.count > 1 && values.count != targets.count) {
+    error("Mismatch in assignment counts.");
+  }
+  Node *node = newSetNode(targets.items, targets.count, values.items,                          values.count, line);
+  freeNodeArray(&targets);
+  freeNodeArray(&values);
+  return node;
+}
+static Node *giveStatement() {
+  int line = parser.previous.line;
+  Node *expr = NULL;
+  if (!check(TOKEN_NEWLINE) && !check(TOKEN_EOF) && !check(TOKEN_END)) {
+    expr = expression();
+  }
+  // THE AST INVERSION
+  if (expr != NULL && expr->type == NODE_IF &&
+      expr->as.ifStmt.elseBranch == NULL) {
+    Node *cond = expr->as.ifStmt.condition;
+    Node *inner = expr->as.ifStmt.thenBranch;
+    Node *giveStmt = newSingleExprNode(NODE_RETURN, inner, line);
+    return newIfNode(cond, giveStmt, NULL, line); // Wrap the give!
+  }
+  return newSingleExprNode(NODE_RETURN, expr, line);
+}
+static Node *expressionStatement() {
+  int line = parser.current.line;
+  Node *expr = expression();
+  // THE AST INVERSION
+  if (expr != NULL && expr->type == NODE_IF &&
+      expr->as.ifStmt.elseBranch == NULL) {
+    Node *cond = expr->as.ifStmt.condition;
+    Node *inner = expr->as.ifStmt.thenBranch;
+    Node *exprStmt = newSingleExprNode(NODE_EXPRESSION_STMT, inner, line);
+    return newIfNode(cond, exprStmt, NULL, line);
+  }
+  return newSingleExprNode(NODE_EXPRESSION_STMT, expr, line);
+}
+static Node *breakStatement() {
+  if (loopingDepth == 0) {
+    error("Cannot use 'break' outside of a loop.");
+  }
+  return newBreakNode(parser.previous.line);
+}
+static Node *skipStatement() {
+  if (loopingDepth == 0) {
+    error("Cannot use 'skip' outside of a loop.");
+  }
+  return newSkipNode(parser.previous.line);
+}
+static Node *statement() {
+  currentStickySubject = NULL;
+  ignoreNewlines();
+  // --- 1. Block Statements (Control Flow) ---
+  if (match(TOKEN_IF))
+    return ifStatement(false);
+  if (match(TOKEN_UNLESS))
+    return ifStatement(true);
+  if (match(TOKEN_WHILE))
+    return whileLogic(false);
+  if (match(TOKEN_UNTIL))
+    return whileLogic(true);
+  if (match(TOKEN_FOR))
+    return forStatement();
+  // --- 2. Action Statements ---
+  Node *stmt = NULL;
+  if (match(TOKEN_BREAK)) {
+    stmt = breakStatement();
+  } else if (match(TOKEN_SKIP)) {
+    stmt = skipStatement();
+  } else if (match(TOKEN_SET)) {
+    stmt = setStatement();
+  } else if (match(TOKEN_ADD)) {
+    stmt = addStatement();
+  } else if (match(TOKEN_GIVE)) {
+    stmt = giveStatement();
+  } else {
+    stmt = expressionStatement();
+  }
+  return stmt;
+}
+static Node *letDeclaration() {
+  TokenArray names;
+  initTokenArray(&names);
+  do {
+    consume(TOKEN_IDENTIFIER, "Expect variable name.");
+    writeTokenArray(&names, parser.previous);
+  } while (match(TOKEN_COMMA));
+  if (match(TOKEN_BE)) {
+    NodeArray exprs;
+    initNodeArray(&exprs);
+    do {
+      writeNodeArray(&exprs, expression());
+    } while (match(TOKEN_COMMA));
+    Node *lastVal = exprs.items[exprs.count - 1];
+    if (lastVal->type == NODE_IF && lastVal->as.ifStmt.elseBranch == NULL) {
+      error("Cannot use statement modifiers on 'let' declarations.");
+    }
+    if (exprs.count != 1 && exprs.count != names.count) {
+      error("Expression count must be 1, or exactly match variables.");
+    }
+    Node *node = newLetNode(names.items, names.count, exprs.items, exprs.count,                            names.items[0].line);
+    freeNodeArray(&exprs);
+    freeTokenArray(&names);
+    return node;
+  }
+  Token rootName = names.items[0];
+  if (check(TOKEN_LEFT_PAREN) || check(TOKEN_COLON) ||
+      (!check(TOKEN_BE) && !check(TOKEN_COMMA))) {
+    if (names.count > 1) {
+      error("Cannot declare multiple functions on the same line.");
+      freeTokenArray(&names);
+      return NULL;
+    }
+    int line = rootName.line;
+    TokenArray parameters;
+    initTokenArray(&parameters);
+    TokenArray paramTypes;       // NEW
+    initTokenArray(&paramTypes); // NEW
+    char mangled[1024] = {0};
+    strncat(mangled, rootName.start, rootName.length);
+    if (check(TOKEN_COLON)) {
+      strcat(mangled, "$0");
+    } else {
+      while (!check(TOKEN_COLON) && !check(TOKEN_EOF)) {
+        if (match(TOKEN_LEFT_PAREN)) {
+          int segmentArity = 0;
+          if (!check(TOKEN_RIGHT_PAREN)) {
+            do {
+              consume(TOKEN_IDENTIFIER, "Expect parameter name.");
+              writeTokenArray(&parameters, parser.previous);
+              // --- NEW: THE TYPE EXTRACTION ---
+              if (match(TOKEN_COLON)) {
+                consume(TOKEN_IDENTIFIER, "Expect type name after ':'.");
+                writeTokenArray(&paramTypes, parser.previous);
+              } else {
+                // If no type is provided, insert a dummy 'Any' token
+                Token anyToken = {.type = TOKEN_IDENTIFIER,                                  .start = "Any",                                  .length = 3,                                  .line = parser.previous.line};
+                writeTokenArray(&paramTypes, anyToken);
+              }
+              // --------------------------------
+              segmentArity++;
+            } while (match(TOKEN_COMMA));
+          }
+          consume(TOKEN_RIGHT_PAREN, "Expect ')'.");
+          char buf[16];
+          sprintf(buf, "$%d", segmentArity);
+          strcat(mangled, buf);
+        } else {
+          advance();
+          strcat(mangled, "_");
+          strncat(mangled, parser.previous.start, parser.previous.length);
+        }
+      }
+    }
+    consume(TOKEN_COLON, "Expect ':' before function body.");
+    TokenType terminators[] = {TOKEN_END};
+    Node *body = block(terminators, 1);
+    consume(TOKEN_END, "Expect 'end' after function body.");
+    Token finalName = rootName;
+    if (strlen(mangled) > (size_t)rootName.length) {
+      finalName.start = my_strdup(mangled);
+      finalName.length = strlen(mangled);
+    }
+    // Pass paramTypes.items into the constructor!
+    Node *node = newFunctionNode(finalName, parameters.items, paramTypes.items,                                 parameters.count, body, line);
+    freeTokenArray(&parameters);
+    freeTokenArray(&paramTypes); // Free the temp buffer!
+    freeTokenArray(&names);
+    return node;
+  }
+  error("Expect 'be' for variables or a valid function signature.");
+  freeTokenArray(&names);
+  return NULL;
+}
+static Node *grouping() {
+  groupingDepth++; // Going deeper...
+  // --- THE STICKY SCOPE FIX ---
+  // Save the current subject on the C call stack before evaluating the inside
+  Node *previousSubject = currentStickySubject;
+  Node *expr = expression();
+  // Restore the outside subject now that we are done!
+  currentStickySubject = previousSubject;
+  // ----------------------------
+  groupingDepth--; // Coming back out!
+  consume(TOKEN_RIGHT_PAREN, "Expect ')' after expression.");
+  return expr;
+}
+static Node *call(Node *callee) {
+  int line = parser.previous.line;
+  NodeArray args;
+  initNodeArray(&args);
+  groupingDepth++; // Protect the arguments!
+  if (!check(TOKEN_RIGHT_PAREN)) {
+    do {
+      writeNodeArray(&args, expression());
+    } while (match(TOKEN_COMMA));
+  }
+  groupingDepth--; // Coming back out!
+  consume(TOKEN_RIGHT_PAREN, "Expect ')' after arguments.");
+  Node *node = newCallNode(callee, args.items, args.count, line);
+  freeNodeArray(&args);
+  return node;
+}
+static Node *declaration() {
+  ignoreNewlines();
+  if (check(TOKEN_EOF))
+    return NULL;
+  Node *decl;
+  if (match(TOKEN_LET)) {
+    decl = letDeclaration();
+  } else {
+    decl = statement();
+  }
+  if (parser.panicMode)
+    synchronize();
+  return decl;
+}
+// ==========================================
+// 7. RULES TABLE & ENTRY
+// ==========================================
+ParseRule rules[] = {
+    [TOKEN_LEFT_PAREN] = {grouping, call, PREC_CALL},    [TOKEN_LEFT_BRACE] = {dict, NULL, PREC_NONE},    [TOKEN_MINUS] = {unary, binary, PREC_TERM},    [TOKEN_PLUS] = {NULL, binary, PREC_TERM},    [TOKEN_SLASH] = {NULL, binary, PREC_FACTOR},    [TOKEN_STAR] = {explicitSticky, binary, PREC_FACTOR},    [TOKEN_MOD] = {NULL, binary, PREC_FACTOR},    [TOKEN_IS] = {stickyPrefix, binary, PREC_EQUALITY},    [TOKEN_EQUAL_EQUAL] = {stickyPrefix, binary, PREC_EQUALITY},    [TOKEN_EQUAL] = {stickyPrefix, binary, PREC_EQUALITY},    [TOKEN_GREATER] = {stickyPrefix, binary, PREC_COMPARISON},    [TOKEN_GREATER_EQUAL] = {stickyPrefix, binary, PREC_COMPARISON},    [TOKEN_LESS] = {stickyPrefix, binary, PREC_COMPARISON},    [TOKEN_LESS_EQUAL] = {stickyPrefix, binary, PREC_COMPARISON},    [TOKEN_STRING] = {string, NULL, PREC_NONE},    [TOKEN_STRING_OPEN] = {interpolation, NULL, PREC_NONE},    [TOKEN_NUMBER] = {number, NULL, PREC_NONE},    [TOKEN_NIL] = {literal, NULL, PREC_NONE},    [TOKEN_TRUE] = {literal, NULL, PREC_NONE},    [TOKEN_FALSE] = {literal, NULL, PREC_NONE},    [TOKEN_IDENTIFIER] = {variable, NULL, PREC_NONE},    [TOKEN_IF] = {NULL, NULL, PREC_NONE},    [TOKEN_UNLESS] = {NULL, NULL, PREC_NONE},    [TOKEN_NOT] = {unary, NULL, PREC_NONE},    [TOKEN_AND] = {NULL, and_, PREC_AND},    [TOKEN_OR] = {NULL, or_, PREC_OR},    [TOKEN_TO] = {NULL, range, PREC_RANGE},    [TOKEN_LEFT_BRACKET] = {list, subscript, PREC_CALL},    [TOKEN_DOT] = {NULL, dot, PREC_CALL},    [TOKEN_POSSESSIVE] = {NULL, possessive, PREC_CALL},    [TOKEN_END] = {endKeyword, NULL, PREC_NONE},    [TOKEN_EOF] = {NULL, NULL, PREC_NONE},};
+static ParseRule *getRule(TokenType type) { return &rules[type]; }
+Node *parseSource(const char *source) {
+  hoistPhrases(source);
+  insertSignature("show", "show$1");
+  parser.hadError = false;
+  parser.panicMode = false;
+  advance();
+  NodeArray statements;
+  initNodeArray(&statements);
+  while (!match(TOKEN_EOF)) {
+    writeNodeArray(&statements, declaration());
+  }
+  freeSignatureTable();
+  Node *node = (parser.hadError)
+                   ? NULL
+                   : newBlockNode(statements.items, statements.count, 0);
+  freeNodeArray(&statements);
+  return node;
+}
+// scanner.c
+#include <stdio.h>
+#include <string.h>
+#include "scanner.h"
+#include <stdbool.h>
+typedef struct {
+  const char *start;
+  const char *current;
+  int line;
+  int interpolationDepth;
+} Scanner;
+Scanner scanner;
+void initScanner(const char *source) {
+  scanner.start = source;
+  scanner.current = source;
+  scanner.line = 1;
+  scanner.interpolationDepth = 0;
+}
+// -- Helper Functions --
+static bool isAlpha(char c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+}
+static bool isDigit(char c) { return c >= '0' && c <= '9'; }
+static bool isAtEnd() { return *scanner.current == '\0'; }
+static char advance() {
+  scanner.current++;
+  return scanner.current[-1];
+}
+static char peek() { return *scanner.current; }
+static char peekNext() {
+  if (isAtEnd())
+    return '\0';
+  return scanner.current[1];
+}
+static bool match(char expected) {
+  if (isAtEnd())
+    return false;
+  if (*scanner.current != expected)
+    return false;
+  scanner.current++;
+  return true;
+}
+static Token makeToken(TokenType type) {
+  Token token;
+  token.type = type;
+  token.start = scanner.start;
+  token.length = (int)(scanner.current - scanner.start);
+  token.line = scanner.line;
+  return token;
+}
+static Token errorToken(const char *message) {
+  Token token;
+  token.type = TOKEN_ERROR;
+  token.start = message;
+  token.length = (int)strlen(message);
+  token.line = scanner.line;
+  return token;
+}
+static void skipWhitespace() {
+  for (;;) {
+    char c = peek();
+    switch (c) {
+    case ' ':
+    case '\r':
+    case '\t':
+      advance();
+      break;
+    // Handle Comments (@@)
+    case '@':
+      if (peekNext() == '@') {
+        // Consume until end of line
+        while (peek() != '\n' && !isAtEnd())
+          advance();
+      } else {
+        return;
+      }
+      break;
+    default:
+      return;
+    }
+  }
+}
+// -- Literal Handlers --
+static TokenType checkKeyword(int start, int length, const char *rest,                              TokenType type) {
+  if (scanner.current - scanner.start == start + length &&
+      memcmp(scanner.start + start, rest, length) == 0) {
+    return type;
+  }
+  return TOKEN_IDENTIFIER;
+}
+static TokenType identifierType() {
+  // Trie-like switch for Keyword matching
+  switch (scanner.start[0]) {
+  case 'a': {
+    if (scanner.current - scanner.start > 1) {
+      switch (scanner.start[1]) {
+      case 'd':
+        return checkKeyword(2, 1, "d", TOKEN_ADD); // add
+      case 'n':
+        return checkKeyword(2, 1, "d", TOKEN_AND); // and
+      case 's':
+        return checkKeyword(2, 1, "k", TOKEN_ASK); // ask
+      }
+    }
+    break;
+  }
+  case 'b': {
+    if (scanner.current - scanner.start > 1) {
+      switch (scanner.start[1]) {
+      case 'e':
+        return checkKeyword(2, 0, "", TOKEN_BE); // be
+      case 'r':
+        return checkKeyword(2, 3, "eak", TOKEN_BREAK); // break
+      case 'y':
+        return checkKeyword(2, 0, "", TOKEN_BY);
+      }
+    }
+    break;
+  }
+  case 'e': {
+    if (scanner.current - scanner.start > 1) {
+      switch (scanner.start[1]) {
+      case 'a':
+        return checkKeyword(2, 2, "ch", TOKEN_EACH);
+      case 'l':
+        return checkKeyword(2, 2, "se", TOKEN_ELSE); // else
+      case 'n':
+        return checkKeyword(2, 1, "d", TOKEN_END); // end
+      }
+    }
+    break;
+  }
+  case 'f': {
+    if (scanner.current - scanner.start > 1) {
+      switch (scanner.start[1]) {
+      case 'a':
+        return checkKeyword(2, 3, "lse", TOKEN_FALSE); // false
+      case 'o':
+        return checkKeyword(2, 1, "r", TOKEN_FOR); // for
+      case 'r':
+        return checkKeyword(2, 2, "om", TOKEN_FROM); // from
+      }
+    }
+    break;
+  }
+  case 'g':
+    return checkKeyword(1, 3, "ive", TOKEN_GIVE);
+  case 'i': {
+    if (scanner.current - scanner.start > 1) {
+      switch (scanner.start[1]) {
+      case 'f':
+        return checkKeyword(2, 0, "", TOKEN_IF); // if
+      case 'n':
+        return checkKeyword(2, 0, "", TOKEN_IN); // in
+      case 's':
+        return checkKeyword(2, 0, "", TOKEN_IS); // is
+      }
+    }
+    break;
+  }
+  case 'l': {
+    return checkKeyword(1, 2, "et", TOKEN_LET);
+  }
+  case 'm': {
+    return checkKeyword(1, 2, "od", TOKEN_MOD);
+  }
+  case 'n': {
+    if (scanner.current - scanner.start > 1) {
+      switch (scanner.start[1]) {
+      case 'o':
+        return checkKeyword(2, 1, "t", TOKEN_NOT);
+      case 'i':
+        return checkKeyword(2, 1, "l", TOKEN_NIL);
+      }
+    }
+    break;
+  }
+  case 'o': {
+    return checkKeyword(1, 1, "r", TOKEN_OR);
+  }
+  case 'q': {
+    return checkKeyword(1, 3, "uit", TOKEN_QUIT);
+  }
+  case 'r': {
+    return checkKeyword(1, 5, "eturn", TOKEN_GIVE);
+  }
+  case 's': {
+    if (scanner.current - scanner.start > 1) {
+      switch (scanner.start[1]) {
+      case 'e':
+        return checkKeyword(2, 1, "t", TOKEN_SET); // set
+      case 'k':
+        return checkKeyword(2, 2, "ip", TOKEN_SKIP); // skip
+      }
+    }
+    break;
+  }
+  case 't': {
+    if (scanner.current - scanner.start > 1) {
+      switch (scanner.start[1]) {
+      case 'h':
+        return checkKeyword(2, 2, "en", TOKEN_THEN); // then
+      case 'o':
+        return checkKeyword(2, 0, "", TOKEN_TO); // to
+      case 'r':
+        return checkKeyword(2, 2, "ue", TOKEN_TRUE); // true
+      case 'y':
+        return checkKeyword(2, 2, "pe", TOKEN_TYPE); // type
+      }
+    }
+    break;
+  }
+  case 'u': {
+    if (scanner.current - scanner.start > 1) {
+      switch (scanner.start[1]) {
+      case 'n':
+        if (scanner.start[2] == 'l')
+          return checkKeyword(3, 3, "ess", TOKEN_UNLESS); // unless
+        if (scanner.start[2] == 't')
+          return checkKeyword(3, 2, "il", TOKEN_UNTIL); // until
+        break;
+      }
+    }
+    break;
+  }
+  case 'w': {
+    return checkKeyword(1, 4, "hile", TOKEN_WHILE);
+  }
+  }
+  return TOKEN_IDENTIFIER;
+}
+static Token identifier() {
+  while (isAlpha(peek()) || isDigit(peek()))
+    advance();
+  return makeToken(identifierType());
+}
+static Token number() {
+  while (isDigit(peek()))
+    advance();
+  // Look for a fractional part.
+  if (peek() == '.' && isDigit(peekNext())) {
+    // Consume the ".".
+    advance();
+    while (isDigit(peek()))
+      advance();
+  }
+  return makeToken(TOKEN_NUMBER);
+}
+static Token string() {
+  // 1. Loop until we hit a closing quote OR a backtick
+  for (;;) {
+    char c = peek();
+    // Stop if end of file
+    if (isAtEnd())
+      return errorToken("Unterminated string.");
+    // Stop if we hit a double-quote
+    if (c == '"') {
+      advance(); // Consume the quote
+      // If we were inside an interpolation (depth > 0), decrement depth
+      if (scanner.interpolationDepth > 0) {
+        scanner.interpolationDepth--;
+        return makeToken(TOKEN_STRING_CLOSE); // `...string"`
+      }
+      return makeToken(TOKEN_STRING); // "string"
+    }
+    // Stop if we hit a backtick
+    if (c == '`') {
+      // Check for escape (double backtick)
+      if (peekNext() == '`') {
+        advance();
+        advance(); // Skip both
+        continue;
+      }
+      advance(); // Consume the single backtick
+      // If we are already deep, we are SWITCHING holes: `...` -> `
+      if (scanner.interpolationDepth > 0) {
+        return makeToken(TOKEN_STRING_MIDDLE);
+      }
+      // Otherwise, we are OPENING a hole: "..." -> `
+      scanner.interpolationDepth++;
+      return makeToken(TOKEN_STRING_OPEN);
+    }
+    if (c == '\n')
+      scanner.line++;
+    advance();
+  }
+}
+// -- Main Scan Function --
+Token scanToken() {
+  skipWhitespace();
+  scanner.start = scanner.current;
+  if (isAtEnd())
+    return makeToken(TOKEN_EOF);
+  char c = advance();
+  if (isAlpha(c))
+    return identifier();
+  if (isDigit(c))
+    return number();
+  if (c == '\n') {
+    scanner.line++;
+    return makeToken(TOKEN_NEWLINE);
+  }
+  switch (c) {
+  case '(':
+    return makeToken(TOKEN_LEFT_PAREN);
+  case ')':
+    return makeToken(TOKEN_RIGHT_PAREN);
+  case '{':
+    return makeToken(TOKEN_LEFT_BRACE);
+  case '}':
+    return makeToken(TOKEN_RIGHT_BRACE);
+  case '[':
+    return makeToken(TOKEN_LEFT_BRACKET);
+  case ']':
+    return makeToken(TOKEN_RIGHT_BRACKET);
+  case ',':
+    return makeToken(TOKEN_COMMA);
+  case ':':
+    return makeToken(TOKEN_COLON);
+  case '.':
+    return makeToken(TOKEN_DOT);
+  case '-':
+    return makeToken(TOKEN_MINUS);
+  case '+':
+    return makeToken(TOKEN_PLUS);
+  case '/':
+    return makeToken(TOKEN_SLASH);
+  case '*':
+    return makeToken(TOKEN_STAR);
+  case '!':
+    return makeToken(match('=') ? TOKEN_BANG_EQUAL : TOKEN_BANG);
+  case '=':
+    return makeToken(match('=') ? TOKEN_EQUAL_EQUAL : TOKEN_EQUAL);
+  case '<':
+    return makeToken(match('=') ? TOKEN_LESS_EQUAL : TOKEN_LESS);
+  case '>':
+    return makeToken(match('=') ? TOKEN_GREATER_EQUAL : TOKEN_GREATER);
+  case '"':
+    return string();
+  case '`':
+    if (scanner.interpolationDepth > 0) {
+      return string(); // Resume string scanning
+    }
+    return errorToken("Unexpected backtick.");
+  case '\'':
+    if (match('s'))
+      return makeToken(TOKEN_POSSESSIVE);
+    return errorToken("Unexpected character (orphan single quote).");
+  }
+  return errorToken("Unexpected character.");
+}
+// For testing purposes, we just print the token type
+void printToken(Token token) {
+  printf("%2d ", token.line);
+  // Print the token name based on enum
+  // (In a real app we'd have a string array for this)
+  if (token.type < TOKEN_IDENTIFIER)
+    printf("PUNCT  ");
+  else if (token.type == TOKEN_IDENTIFIER)
+    printf("IDENT  ");
+  else if (token.type == TOKEN_STRING)
+    printf("STRING ");
+  else if (token.type == TOKEN_NUMBER)
+    printf("NUMBER ");
+  else if (token.type >= TOKEN_ADD)
+    printf("KEYWORD");
+  else
+    printf("UNKNOWN");
+  printf(" | '%.*s'\n", token.length, token.start);
+}
+#include "sigtrie.h"
+#include "object.h" // For hashString
+#include <stdlib.h>
+#include <string.h>
 // --- MEMORY MACROS (Isolated from the VM) ---
 #define ALLOCATE_TRIE(type, count) (type *)malloc(sizeof(type) * (count))
 #define FREE_TRIE(ptr) free(ptr)
-
 // --- THE HASH TABLE ---
 typedef struct {
   uint32_t rootHash;
   char *rootWord;
   TrieNode *trieRoot;
 } RegistryEntry;
-
-#define TABLE_MAX 255
-static RegistryEntry phrasalTable[TABLE_MAX];
-static int tableCount = 0;
-
+#define TABLE_CAPACITY 1024
+static RegistryEntry phrasalTable[TABLE_CAPACITY];
 // --- UTILS ---
 static char *my_strdup(const char *s) {
   size_t len = strlen(s) + 1;
@@ -26,7 +3940,6 @@ static char *my_strdup(const char *s) {
     memcpy(dup, s, len);
   return dup;
 }
-
 // --- NODE MANAGEMENT ---
 static TrieNode *newNode(PhraseNodeType type) {
   TrieNode *node = ALLOCATE_TRIE(TrieNode, 1);
@@ -40,12 +3953,11 @@ static TrieNode *newNode(PhraseNodeType type) {
   node->childCapacity = 0;
   return node;
 }
-
-static void freeNode(TrieNode *node) {
+static void freeTrieNode(TrieNode *node) {
   if (node == NULL)
     return;
   for (int i = 0; i < node->childCount; i++) {
-    freeNode(node->children[i]);
+    freeTrieNode(node->children[i]);
   }
   if (node->children != NULL)
     FREE_TRIE(node->children);
@@ -53,63 +3965,59 @@ static void freeNode(TrieNode *node) {
     FREE_TRIE(node->mangledName);
   FREE_TRIE(node);
 }
-
 // --- PUBLIC API ---
-
 void initSignatureTable() {
-  tableCount = 0;
-  for (int i = 0; i < TABLE_MAX; i++) {
-    phrasalTable[i].rootHash = 0;
-    phrasalTable[i].rootWord = NULL;
-    phrasalTable[i].trieRoot = NULL;
+  for (int i = 0; i < TABLE_CAPACITY; i++) {
+    phrasalTable[i].rootWord = NULL; // NULL means empty bucket
   }
 }
-
 void freeSignatureTable() {
-  for (int i = 0; i < tableCount; i++) {
-    FREE_TRIE(phrasalTable[i].rootWord);
-    freeNode(phrasalTable[i].trieRoot);
+  for (int i = 0; i < TABLE_CAPACITY; i++) {
+    if (phrasalTable[i].rootWord != NULL) {
+      FREE_TRIE(phrasalTable[i].rootWord);
+      freeTrieNode(phrasalTable[i].trieRoot);
+      phrasalTable[i].rootWord = NULL;
+    }
   }
-  tableCount = 0;
 }
-
 TrieNode *getSignatureTrie(const char *rootWord) {
   uint32_t hash = hashString(rootWord, strlen(rootWord));
-
-  for (int i = 0; i < tableCount; i++) {
-    if (phrasalTable[i].rootHash == hash) {
-      return phrasalTable[i].trieRoot;
+  uint32_t index = hash % TABLE_CAPACITY;
+  // O(1) Lookup with Linear Probing for collisions!
+  for (;;) {
+    RegistryEntry *entry = &phrasalTable[index];
+    if (entry->rootWord == NULL)
+      return NULL; // Not found
+    if (entry->rootHash == hash && strcmp(entry->rootWord, rootWord) == 0) {
+      return entry->trieRoot; // Found it!
     }
+    index = (index + 1) % TABLE_CAPACITY;
   }
-  return NULL;
 }
-
 void insertSignature(const char *rootWord, const char *mangledName) {
-  // 1. Find or create the root entry in the Hash Table
   uint32_t rHash = hashString(rootWord, strlen(rootWord));
+  uint32_t index = rHash % TABLE_CAPACITY;
   TrieNode *current = NULL;
-
-  for (int i = 0; i < tableCount; i++) {
-    if (phrasalTable[i].rootHash == rHash) {
-      current = phrasalTable[i].trieRoot;
+  // Find the exact bucket or an empty one
+  for (;;) {
+    RegistryEntry *entry = &phrasalTable[index];
+    if (entry->rootWord == NULL) {
+      // Empty bucket, claim it!
+      entry->rootHash = rHash;
+      entry->rootWord = my_strdup(rootWord);
+      entry->trieRoot = newNode(NODE_LABEL);
+      current = entry->trieRoot;
+      break;
+    } else if (entry->rootHash == rHash &&
+               strcmp(entry->rootWord, rootWord) == 0) {
+      // Found existing root!
+      current = entry->trieRoot;
       break;
     }
+    index = (index + 1) % TABLE_CAPACITY;
   }
-
-  if (current == NULL) {
-    if (tableCount >= TABLE_MAX)
-      return; // Table full
-    phrasalTable[tableCount].rootHash = rHash;
-    phrasalTable[tableCount].rootWord = my_strdup(rootWord);
-    phrasalTable[tableCount].trieRoot = newNode(NODE_LABEL); // Dummy root
-    current = phrasalTable[tableCount].trieRoot;
-    tableCount++;
-  }
-
   // 2. Walk the mangled string and build the DFA branches
   const char *cursor = mangledName + strlen(rootWord);
-
-  // If there is nothing after the root (e.g., "greet$0")
   if (*cursor == '$') {
     cursor++;
     int arity = atoi(cursor);
@@ -121,25 +4029,19 @@ void insertSignature(const char *rootWord, const char *mangledName) {
       return;
     }
   }
-
-  // Reset cursor to parse actual branches
   cursor = mangledName + strlen(rootWord);
-
   while (*cursor != '\0') {
     PhraseNodeType nextType;
     uint32_t nextHash = 0;
     int nextArity = 0;
-
     if (*cursor == '_') {
       cursor++;
       nextType = NODE_LABEL;
-
       char labelBuf[256] = {0};
       int len = 0;
       while (cursor[len] != '\0' && cursor[len] != '$' && cursor[len] != '_')
         len++;
       strncpy(labelBuf, cursor, len);
-
       nextHash = hashString(labelBuf, len);
       cursor += len;
     } else if (*cursor == '$') {
@@ -152,8 +4054,6 @@ void insertSignature(const char *rootWord, const char *mangledName) {
       cursor++;
       continue;
     }
-
-    // Do we already have this child?
     TrieNode *nextNode = NULL;
     for (int i = 0; i < current->childCount; i++) {
       TrieNode *child = current->children[i];
@@ -168,13 +4068,10 @@ void insertSignature(const char *rootWord, const char *mangledName) {
         }
       }
     }
-
-    // If not, create it!
     if (nextNode == NULL) {
       nextNode = newNode(nextType);
       nextNode->labelHash = nextHash;
       nextNode->arity = nextArity;
-
       if (current->childCapacity < current->childCount + 1) {
         int old = current->childCapacity;
         current->childCapacity = old < 4 ? 4 : old * 2;
@@ -183,54 +4080,1098 @@ void insertSignature(const char *rootWord, const char *mangledName) {
       }
       current->children[current->childCount++] = nextNode;
     }
-
-    current = nextNode; // Move down the tree
+    current = nextNode;
   }
-
-  // 3. Mark the finish line
   current->isTerminal = true;
   if (current->mangledName)
     FREE_TRIE(current->mangledName);
   current->mangledName = my_strdup(mangledName);
 }
-#ifndef moon_sigtrie_h
-#define moon_sigtrie_h
-
-#include <stdbool.h>
+// table.c
+#include <string.h>
+#include "memory.h"
+#include "object.h"
+#include "table.h"
+#include "value.h"
+#define TABLE_MAX_LOAD 0.75
+// Extern definition so we can access valuesEqual and hashValue
+extern bool valuesEqual(Value a, Value b);
+extern uint32_t hashValue(Value value);
+void initTable(Table *table) {
+  table->count = 0;
+  table->capacity = 0;
+  table->entries = NULL;
+}
+void freeTable(Table *table) {
+  FREE_ARRAY(Entry, table->entries, table->capacity);
+  initTable(table);
+}
+static Entry *findEntry(Entry *entries, int capacity, Value key) {
+  // Use our new universal hash integer scrambler!
+  uint32_t index = hashValue(key) % capacity;
+  Entry *tombstone = NULL;
+  for (;;) {
+    Entry *entry = &entries[index];
+    if (IS_EMPTY(entry->key)) {
+      // Truly empty slot. If we passed a tombstone earlier, reuse it!
+      return tombstone != NULL ? tombstone : entry;
+    } else if (IS_TOMB(entry->key)) {
+      // We found a tombstone. Save it in case we need to insert.
+      if (tombstone == NULL)
+        tombstone = entry;
+    } else if (valuesEqual(entry->key, key)) {
+      // Exact match! 1 == 1, but 1 != "1"
+      return entry;
+    }
+    index = (index + 1) % capacity;
+  }
+}
+static void adjustCapacity(Table *table, int capacity) {
+  Entry *entries = ALLOCATE(Entry, capacity);
+  for (int i = 0; i < capacity; i++) {
+    entries[i].key = EMPTY_VAL; // Initialize with our secret empty tag
+    entries[i].value = NIL_VAL;
+  }
+  table->count = 0;
+  for (int i = 0; i < table->capacity; i++) {
+    Entry *entry = &table->entries[i];
+    // Don't copy over empty slots OR tombstones
+    if (IS_EMPTY(entry->key) || IS_TOMB(entry->key))
+      continue;
+    Entry *dest = findEntry(entries, capacity, entry->key);
+    dest->key = entry->key;
+    dest->value = entry->value;
+    table->count++;
+  }
+  FREE_ARRAY(Entry, table->entries, table->capacity);
+  table->entries = entries;
+  table->capacity = capacity;
+}
+bool tableGet(Table *table, Value key, Value *value) {
+  if (table->count == 0)
+    return false;
+  Entry *entry = findEntry(table->entries, table->capacity, key);
+  if (IS_EMPTY(entry->key) || IS_TOMB(entry->key))
+    return false;
+  *value = entry->value;
+  return true;
+}
+bool tableSet(Table *table, Value key, Value value) {
+  if (table->count + 1 > table->capacity * TABLE_MAX_LOAD) {
+    int capacity = GROW_CAPACITY(table->capacity);
+    adjustCapacity(table, capacity);
+  }
+  Entry *entry = findEntry(table->entries, table->capacity, key);
+  // It's a new key if the slot is completely empty OR if it's a reusable
+  // tombstone
+  bool isNewKey = IS_EMPTY(entry->key) || IS_TOMB(entry->key);
+  // We only increment the count if it goes into a truly empty slot
+  if (isNewKey && IS_EMPTY(entry->key))
+    table->count++;
+  entry->key = key;
+  entry->value = value;
+  return isNewKey;
+}
+bool tableDelete(Table *table, Value key) {
+  if (table->count == 0)
+    return false;
+  Entry *entry = findEntry(table->entries, table->capacity, key);
+  if (IS_EMPTY(entry->key) || IS_TOMB(entry->key))
+    return false;
+  // Place a tombstone using our secret tag!
+  entry->key = TOMBSTONE_VAL;
+  entry->value = BOOL_VAL(true);
+  return true;
+}
+void tableAddAll(Table *from, Table *to) {
+  for (int i = 0; i < from->capacity; i++) {
+    Entry *entry = &from->entries[i];
+    // Copy valid entries only
+    if (!IS_EMPTY(entry->key) && !IS_TOMB(entry->key)) {
+      tableSet(to, entry->key, entry->value);
+    }
+  }
+}
+ObjString *tableFindString(Table *table, const char *chars, int length,                           uint32_t hash) {
+  if (table->count == 0)
+    return NULL;
+  uint32_t index = hash % table->capacity;
+  for (;;) {
+    Entry *entry = &table->entries[index];
+    if (IS_EMPTY(entry->key)) {
+      if (IS_NIL(entry->value))
+        return NULL; // Stop if truly empty
+    }
+    // Is it a string? And do the hashes and characters match?
+    else if (IS_STRING(entry->key)) {
+      ObjString *stringKey = AS_STRING(entry->key);
+      if (stringKey->length == length && stringKey->hash == hash &&
+          memcmp(stringKey->chars, chars, length) == 0) {
+        return stringKey;
+      }
+    }
+    index = (index + 1) % table->capacity;
+  }
+}
+#include <stdio.h>
+#include <stdlib.h>
+#include "object.h"
+#include "value.h"
+void initValueArray(ValueArray *array) {
+  array->values = NULL;
+  array->capacity = 0;
+  array->count = 0;
+}
+void writeValueArray(ValueArray *array, Value value) {
+  if (array->capacity < array->count + 1) {
+    int oldCapacity = array->capacity;
+    array->capacity = (oldCapacity < 8) ? 8 : oldCapacity * 2;
+    // We use standard realloc for now, simplified
+    array->values =
+        (Value *)realloc(array->values, sizeof(Value) * array->capacity);
+  }
+  array->values[array->count] = value;
+  array->count++;
+}
+void freeValueArray(ValueArray *array) {
+  free(array->values);
+  initValueArray(array);
+}
+uint32_t hashValue(Value value) {
+  // 1. If it's an object (like a string), use the string's cached FNV-1a hash!
+  if (IS_OBJ(value)) {
+    if (IS_STRING(value))
+      return AS_STRING(value)->hash;
+    // For other objects (lists/dicts), we hash their memory pointer
+    return (uint32_t)(uintptr_t)AS_OBJ(value);
+  }
+  // 2. If it's a number, boolean, or nil, use a fast integer hash
+  uint64_t hash = value;
+  hash = (~hash) + (hash << 18);
+  hash = hash ^ (hash >> 31);
+  hash = hash * 21;
+  hash = hash ^ (hash >> 11);
+  hash = hash + (hash << 6);
+  hash = hash ^ (hash >> 22);
+  return (uint32_t)hash;
+}
+void printValue(Value value) {
+  if (IS_BOOL(value)) {
+    printf(AS_BOOL(value) ? "true" : "false");
+  } else if (IS_NIL(value)) {
+    printf("nil");
+  } else if (IS_NUMBER(value)) {
+    printf("%.14g", AS_NUMBER(value));
+  } else if (IS_OBJ(value)) {
+    printObject(value);
+  }
+}
+// vm.c
+#include <math.h>
+#include <stdarg.h>
 #include <stdint.h>
-
-// 1. Node Types
-typedef enum {
-  NODE_LABEL,   // e.g., "of", "and"
-  NODE_ARGUMENT // e.g., $1, $2
-} PhraseNodeType;
-
-// 2. The Trie Node (The DFA State)
-typedef struct TrieNode {
-  PhraseNodeType type;
-
-  // Payload
-  uint32_t labelHash; // Used if type == NODE_LABEL
-  int arity;          // Used if type == NODE_ARGUMENT
-
-  // Accept State
-  bool isTerminal;
-  char *mangledName;
-
-  // Branches
-  struct TrieNode **children;
-  int childCount;
-  int childCapacity;
-} TrieNode;
-
-// 3. The Public API
-void initSignatureTable();
-void freeSignatureTable();
-
-// Used by the Pre-Pass Skimmer to build the tree
-void insertSignature(const char *rootWord, const char *mangledName);
-
-// Used by the Parser to fetch the tree
-TrieNode *getSignatureTrie(const char *rootWord);
-
-#endif
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include "compiler.h"
+#include "debug.h"
+#include "memory.h"
+#include "object.h"
+#include "value.h"
+VM vm; // Define the global VM instance here
+static void resetStack() { vm.stackTop = vm.stack; }
+static void runtimeError(const char *format, ...) {
+  va_list args;
+  va_start(args, format);
+  vfprintf(stderr, format, args);
+  va_end(args);
+  fputs("\n", stderr);
+  // Walk the stack trace from top to bottom
+  for (int i = vm.frameCount - 1; i >= 0; i--) {
+    CallFrame *frame = &vm.frames[i];
+    ObjFunction *function = frame->function;
+    // The instruction pointer is currently pointing to the NEXT instruction.
+    // We want the previous one (the one that failed).
+    size_t instruction = frame->ip - function->chunk.code - 1;
+    fprintf(stderr, "[line %d] in ", function->chunk.lines[instruction]);
+    if (function->name == NULL) {
+      fprintf(stderr, "script\n");
+    } else {
+      fprintf(stderr, "%s()\n", function->name->chars);
+    }
+  }
+  resetStack();
+}
+// Helper to define natives
+static void defineNative(const char *name, NativeFn function) {
+  push(OBJ_VAL(copyString(name, (int)strlen(name))));
+  push(OBJ_VAL(newNative(function)));
+  tableSet(&vm.globals, vm.stack[0], vm.stack[1]);
+  pop();
+  pop();
+}
+static Value clockNative(int argCount, Value *args) {
+  (void)argCount; // Silence warning
+  (void)args;     // Silence warning
+  return NUMBER_VAL((double)clock() / CLOCKS_PER_SEC);
+}
+static Value showNative(int argCount, Value *args) {
+  (void)argCount;
+  // Phrasal 'show' only expects 1 argument (the evaluated expression)
+  printValue(args[0]);
+  printf("\n"); // Always append the newline
+  return NIL_VAL; // Native functions must return something
+}
+void initVM() {
+  resetStack();
+  vm.objects = NULL;
+  vm.debugMode = false;
+  initTable(&vm.strings);
+  initTable(&vm.globals);
+  for (int i = 0; i < 256; i++) {
+    char c = (char)i;
+    // copyString takes a pointer to the char and the length (1)
+    vm.charStrings[i] = copyString(&c, 1);
+  }
+  // Define native function
+  defineNative("clock", clockNative);
+  defineNative("show$1", showNative);
+}
+void freeVM() {
+  freeTable(&vm.strings);
+  freeTable(&vm.globals);
+  freeObjects();
+}
+void push(Value value) {
+  *vm.stackTop = value;
+  vm.stackTop++;
+}
+Value pop() {
+  vm.stackTop--;
+  return *vm.stackTop;
+}
+// FIX: Add peek() function
+static Value peek(int distance) { return vm.stackTop[-1 - distance]; }
+static bool isFalsey(Value value) {
+  return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
+}
+// FIX: Add concatenate() function for strings
+static void concatenate() {
+  ObjString *b = AS_STRING(pop());
+  ObjString *a = AS_STRING(pop());
+  int length = a->length + b->length;
+  char *chars = ALLOCATE(char, length + 1);
+  memcpy(chars, a->chars, a->length);
+  memcpy(chars + a->length, b->chars, b->length);
+  chars[length] = '\0';
+  ObjString *result = takeString(chars, length);
+  push(OBJ_VAL(result));
+}
+bool valuesEqual(Value a, Value b) { return a == b; }
+static bool getBuiltinProperty(Value object, ObjString *name, Value *result) {
+  // --- List Properties ---
+  if (IS_LIST(object)) {
+    if (strcmp(name->chars, "length") == 0 ||
+        strcmp(name->chars, "count") == 0) {
+      *result = NUMBER_VAL(AS_LIST(object)->count);
+      return true;
+    }
+  }
+  // --- String Properties ---
+  else if (IS_STRING(object)) {
+    if (strcmp(name->chars, "length") == 0 ||
+        strcmp(name->chars, "count") == 0) {
+      *result = NUMBER_VAL(AS_STRING(object)->length);
+      return true;
+    }
+  }
+  return false; // Not a recognized built-in property!
+}
+// Run()
+static InterpretResult run() {
+  CallFrame *frame = &vm.frames[vm.frameCount - 1];
+  register uint8_t *ip = frame->ip;
+  // Instead of vm.ip, we look at the TOP frame
+  // 2. Update macros to use local 'ip' instead of 'frame->ip'
+#define READ_CONSTANT() (frame->function->chunk.constants.values[READ_BYTE()])
+#define READ_BYTE() (*ip++)
+#define READ_SHORT() (ip += 2, (uint16_t)((ip[-2] << 8) | ip[-1]))
+#define READ_STRING()                                                          \
+  AS_STRING(frame->function->chunk.constants.values[READ_SHORT()])
+#define BINARY_OP(valueType, op)                                               \
+  do {                                                                         \
+    if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) {                          \
+      runtimeError("Operands must be numbers.");                               \
+      return INTERPRET_RUNTIME_ERROR;                                          \
+    }                                                                          \
+    double b = AS_NUMBER(pop());                                               \
+    double a = AS_NUMBER(pop());                                               \
+    push(valueType(a op b));                                                   \
+  } while (false)
+  for (;;) {
+    if (vm.debugMode) {
+      // 1. Visualize the Stack
+      debugStack(&vm);
+      disassembleInstruction(&frame->function->chunk,                             (int)(ip - frame->function->chunk.code));
+    }
+    uint8_t instruction;
+    switch (instruction = READ_BYTE()) {
+    case OP_CONSTANT: {
+      Value constant = READ_CONSTANT();
+      push(constant);
+      break;
+    }
+    case OP_CONSTANT_LONG: {
+      uint16_t index = READ_SHORT();
+      Value constant = frame->function->chunk.constants.values[index];
+      push(constant);
+      break;
+    }
+    case OP_ADD: {
+      Value b = peek(0); // Right operand
+      Value a = peek(1); // Left operand
+      // --- RULE 1: STRICT MATH (Number + Number) ---
+      if (IS_NUMBER(a) && IS_NUMBER(b)) {
+        double right = AS_NUMBER(pop());
+        double left = AS_NUMBER(pop());
+        push(NUMBER_VAL(left + right));
+      }
+      // --- RULE 2: THE COERCER (String + Any) ---
+      else if (IS_STRING(a)) {
+        ObjString *leftStr = AS_STRING(a);
+        ObjString *rightStr =
+            valueToString(b); // Dynamically stringify the right side!
+        // Clean the stack
+        pop(); // Pop b
+        pop(); // Pop a
+        // Push the string versions for the concatenate helper
+        push(OBJ_VAL(leftStr));
+        push(OBJ_VAL(rightStr));
+        concatenate();
+      }
+      // --- RULE 3 & 4: LIST CLONING & MERGING (List + Any) ---
+      else if (IS_LIST(a)) {
+        ObjList *leftList = AS_LIST(a);
+        // 1. Allocate the brand new clone list
+        ObjList *newListObj = newList();
+        // Protect it from the Garbage Collector while we build it!
+        push(OBJ_VAL(newListObj));
+        // 2. Clone the original list into the new one (O(N) copy)
+        for (int i = 0; i < leftList->count; i++) {
+          appendList(newListObj, leftList->items[i]);
+        }
+        // 3. The Fork: Are we merging a list, or appending a single item?
+        if (IS_LIST(b)) {
+          ObjList *rightList = AS_LIST(b);
+          for (int i = 0; i < rightList->count; i++) {
+            appendList(newListObj, rightList->items[i]);
+          }
+        } else {
+          appendList(newListObj, b); // Just append the raw item
+        }
+        // 4. Clean up the stack
+        Value result = pop(); // Temporarily hold the finished newList
+        pop();                // Pop original b
+        pop();                // Pop original a
+        push(result);         // Push the brand new list back to the top!
+      }
+      // --- RULE 5: THE REJECTOR ---
+      else {
+        runtimeError("Invalid '+' operation. Must be Number+Number, "
+                     "String+Any, or List+Any.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      break;
+    }
+    case OP_ADD_INPLACE: {
+      Value b = peek(0); // Right operand
+      Value a = peek(1); // Left operand (The Accumulator)
+      // RULE 1: Numbers (Just do normal math)
+      if (IS_NUMBER(a) && IS_NUMBER(b)) {
+        double right = AS_NUMBER(pop());
+        double left = AS_NUMBER(pop());
+        push(NUMBER_VAL(left + right));
+      }
+      // RULE 2: Lists (THE O(1) MUTATION FIX)
+      else if (IS_LIST(a)) {
+        ObjList *list = AS_LIST(a); // We mutate this directly!
+        if (IS_LIST(b)) {
+          ObjList *rightList = AS_LIST(b);
+          for (int i = 0; i < rightList->count; i++) {
+            appendList(list, rightList->items[i]);
+          }
+        } else {
+          appendList(list, b);
+        }
+        // Cleanup: We pop 'b', but leave 'a' (the mutated list) right where it
+        // is so that the upcoming OP_SET_LOCAL can re-assign it cleanly!
+        pop();
+      }
+      // RULE 3: Strings (Strings are immutable in C, so we still must clone)
+      else if (IS_STRING(a)) {
+        ObjString *leftStr = AS_STRING(a);
+        ObjString *rightStr = valueToString(b);
+        pop();
+        pop();
+        push(OBJ_VAL(leftStr));
+        push(OBJ_VAL(rightStr));
+        concatenate();
+      }
+      else {
+        runtimeError("Invalid 'add' operation.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      break;
+    }
+    case OP_SUBTRACT:
+      BINARY_OP(NUMBER_VAL, -);
+      break;
+    case OP_MULTIPLY:
+      BINARY_OP(NUMBER_VAL, *);
+      break;
+    case OP_DIVIDE:
+      BINARY_OP(NUMBER_VAL, /);
+      break;
+    case OP_MOD: {
+      if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) {
+        runtimeError("Operands must be numbers.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      double b = AS_NUMBER(pop());
+      double a = AS_NUMBER(pop());
+      if (b == 0.0) {
+        runtimeError("Modulo by zero.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      // --- THE FAST PATH ---
+      int intA = (int)a;
+      int intB = (int)b;
+      // If casting them to ints didn't lose any decimal data, use the CPU
+      // hardware!
+      if (a == intA && b == intB) {
+        push(NUMBER_VAL(intA % intB));
+      } else {
+        // Otherwise, fall back to the safe, slower C library
+        push(NUMBER_VAL(fmod(a, b)));
+      }
+      break;
+    }
+    case OP_NEGATE: {
+      if (!IS_NUMBER(peek(0))) {
+        runtimeError("Operand must be a number.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      push(NUMBER_VAL(-AS_NUMBER(pop())));
+      break;
+    }
+    case OP_NIL:
+      push(NIL_VAL);
+      break;
+    case OP_TRUE:
+      push(BOOL_VAL(true));
+      break;
+    case OP_FALSE:
+      push(BOOL_VAL(false));
+      break;
+    case OP_POP:
+      pop();
+      break;
+    case OP_DEFINE_GLOBAL: {
+      ObjString *name = READ_STRING();
+      tableSet(&vm.globals, OBJ_VAL(name), peek(0));
+      break;
+    }
+    case OP_GET_GLOBAL: {
+      ObjString *name = READ_STRING();
+      Value value;
+      if (!tableGet(&vm.globals, OBJ_VAL(name), &value)) {
+        runtimeError("Undefined variable '%s'.", name->chars);
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      push(value);
+      break;
+    }
+    case OP_SET_GLOBAL: {
+      ObjString *name = READ_STRING();
+      if (tableSet(&vm.globals, OBJ_VAL(name), peek(0))) {
+        // tableSet returns true if it's a NEW key.
+        // 'set' is only for EXISTING keys. Delete it and error.
+        tableDelete(&vm.globals, OBJ_VAL(name));
+        runtimeError("Undefined variable '%s'.", name->chars);
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      break;
+    }
+    case OP_GET_LOCAL: {
+      uint8_t slot = READ_BYTE();
+      push(frame->slots[slot]);
+      break;
+    }
+    case OP_SET_LOCAL: {
+      uint8_t slot = READ_BYTE();
+      frame->slots[slot] = peek(0);
+      break;
+    }
+    case OP_JUMP: {
+      uint16_t offset = READ_SHORT();
+      ip += offset; // Update local ip directly
+      break;
+    }
+    case OP_JUMP_IF_FALSE: {
+      uint16_t offset = READ_SHORT();
+      if (isFalsey(peek(0)))
+        ip += offset; // Update local ip directly
+      break;
+    }
+    case OP_LOOP: {
+      uint16_t offset = READ_SHORT();
+      ip -= offset; // Update local ip directly
+      break;
+    }
+    case OP_EQUAL: {
+      Value b = pop();
+      Value a = pop();
+      push(BOOL_VAL(valuesEqual(a, b)));
+      break;
+    }
+    case OP_GREATER:
+      BINARY_OP(BOOL_VAL, >);
+      break;
+    case OP_LESS:
+      BINARY_OP(BOOL_VAL, <);
+      break;
+    case OP_NOT:
+      push(BOOL_VAL(isFalsey(pop())));
+      break;
+    case OP_BUILD_STRING: {
+      uint16_t count = READ_SHORT();
+      // Point to the first item in the sequence
+      // (Stack grows up, so stackTop is past the end. We back up 'count' slots)
+      Value *start = vm.stackTop - count;
+      int totalLength = 0;
+      // Pass 1: Verify types, convert if needed, and calculate total length
+      for (int i = 0; i < count; i++) {
+        // Use your helper function!
+        ObjString *str = valueToString(start[i]);
+        // CRITICAL: Update the stack with the string version.
+        // 1. We need it for Pass 2 (memcpy).
+        // 2. If GC runs (later), it needs to see these string objects to keep
+        // them alive.
+        start[i] = OBJ_VAL(str);
+        totalLength += str->length;
+      }
+      // Pass 2: Allocation and Copy
+      // We allocate one big buffer for the whole result
+      char *chars = ALLOCATE(char, totalLength + 1);
+      char *dest = chars;
+      for (int i = 0; i < count; i++) {
+        ObjString *str = AS_STRING(start[i]);
+        memcpy(dest, str->chars, str->length);
+        dest += str->length;
+      }
+      chars[totalLength] = '\0'; // Null terminate
+      // Create the final object
+      ObjString *result = takeString(chars, totalLength);
+      // Cleanup: Pop the 'count' parts and push the single result
+      vm.stackTop -= count;
+      push(OBJ_VAL(result));
+      break;
+    }
+    case OP_BUILD_LIST: {
+      uint16_t itemCount = READ_SHORT();
+      // 1. Create the new list object
+      ObjList *list = newList();
+      // 2. GC Protection:
+      // We push the list to the stack immediately. If we don't, and
+      // appendList() triggers a GC (by allocating memory), the collector
+      // won't see our new list and might delete it!
+      push(OBJ_VAL(list));
+      // 3. Locate the items on the stack
+      // Stack layout: [item1] [item2] ... [itemN] [list] <--- Top
+      Value *itemsStart = vm.stackTop - 1 - itemCount;
+      // 4. Transfer and EXPAND items
+      for (int i = 0; i < itemCount; i++) {
+        Value item = itemsStart[i];
+        if (IS_RANGE(item)) {
+          ObjRange *range = AS_RANGE(item);
+          double start = range->start;
+          double end = range->end;
+          double step = range->step; // The new step value!
+          // Expand counting up (e.g., 1 to 10 by 2)
+          if (start <= end) {
+            for (double val = start; val <= end; val += step) {
+              appendList(list, NUMBER_VAL(val));
+            }
+          }
+          // Expand counting down (e.g., 10 to 1 by 2)
+          else {
+            for (double val = start; val >= end; val -= step) {
+              appendList(list, NUMBER_VAL(val));
+            }
+          }
+        } else {
+          // Normal Item Logic
+          appendList(list, item);
+        }
+      }
+      // 5. Cleanup the stack
+      pop();                    // Pop the list temporarily
+      vm.stackTop -= itemCount; // Remove all the original items/ranges
+      push(OBJ_VAL(list));      // Push the final expanded list back
+      break;
+    }
+    case OP_BUILD_DICT: {
+      uint16_t itemCount = READ_SHORT();
+      // 1. Create the dictionary and protect it from GC
+      ObjDict *dict = newDict();
+      push(OBJ_VAL(dict));
+      // 2. Locate the keys and values on the stack
+      // Layout: [k1] [v1] [k2] [v2] ... [kN] [vN] [dict] <--- Top
+      Value *itemsStart = vm.stackTop - 1 - (itemCount * 2);
+      // 3. Insert them into the Hash Table
+      for (int i = 0; i < itemCount; i++) {
+        Value key = itemsStart[i * 2];
+        Value val = itemsStart[(i * 2) + 1];
+        // Drop it directly into the C struct's table!
+        tableSet(&dict->fields, key, val);
+      }
+      // 4. Cleanup
+      pop();                          // Pop the dict temporarily
+      vm.stackTop -= (itemCount * 2); // Remove all keys and values
+      push(OBJ_VAL(dict));            // Push the finished dictionary back!
+      break;
+    }
+    case OP_GET_PROPERTY: {
+      ObjString *name = READ_STRING(); // Reads the 16-bit constant string
+      Value target = peek(0);
+      if (!IS_INSTANCE(target)) {
+        runtimeError("Only object instances have properties.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      ObjInstance *instance = AS_INSTANCE(target);
+      Value value;
+      if (tableGet(&instance->fields, OBJ_VAL(name), &value)) {
+        pop();       // Remove the instance from the stack
+        push(value); // Push the property value
+        break;
+      }
+      // (In Phase 4, we will add the fallback check to the ObjType blueprint
+      // here for computed getters!)
+      runtimeError("Undefined property '%s'.", name->chars);
+      return INTERPRET_RUNTIME_ERROR;
+    }
+    case OP_SET_PROPERTY: {
+      Value value = peek(0);
+      ObjString *name = READ_STRING();
+      Value target = peek(1);
+      if (!IS_INSTANCE(target)) {
+        runtimeError("Only object instances have properties.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      ObjInstance *instance = AS_INSTANCE(target);
+      tableSet(&instance->fields, OBJ_VAL(name), value);
+      // Pop the value, pop the instance, then push the value back so chained
+      // assignment works!
+      pop();
+      pop();
+      push(value);
+      break;
+    }
+    case OP_GET_SUBSCRIPT: {
+      Value indexVal = peek(0);
+      Value seqVal = peek(1);
+      if (IS_LIST(seqVal)) {
+        ObjList *list = AS_LIST(seqVal);
+        // 1. Check for Built-in Properties (e.g., list's length)
+        if (IS_STRING(indexVal)) {
+          Value result;
+          if (getBuiltinProperty(seqVal, AS_STRING(indexVal), &result)) {
+            pop();        // pop the index
+            pop();        // pop the list
+            push(result); // push the length!
+            break;
+          } else {
+            runtimeError("Lists do not have a property named '%s'.",                         AS_STRING(indexVal)->chars);
+            return INTERPRET_RUNTIME_ERROR;
+          }
+        } else if (IS_NUMBER(indexVal)) {
+          // --- Normal Indexing (list[2]) ---
+          int index = (int)AS_NUMBER(indexVal);
+          if (index < 1 || index > list->count) {
+            runtimeError("List index out of bounds.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+          pop();                        // Pop index
+          pop();                        // Pop list
+          push(list->items[index - 1]); // 1-based math!
+        } else if (IS_RANGE(indexVal)) {
+          // 3. Slicing (list[2 to 4])
+          ObjRange *range = AS_RANGE(indexVal);
+          int start = (int)range->start;
+          int end = (int)range->end;
+          // Adjust for 1-based indexing and negative indexing
+          if (start < 0)
+            start = list->count + start + 1;
+          if (end < 0)
+            end = list->count + end + 1;
+          // Convert to 0-based C indexes
+          start--;
+          end--;
+          // Allocate the result list
+          ObjList *resultList = newList();
+          push(OBJ_VAL(resultList)); // GC Protection
+          // THE FIX: Only iterate if the range is mathematically valid!
+          if (start <= end && start < list->count && end >= 0) {
+            // Clamp out-of-bounds to safely grab "the rest" of the list
+            if (start < 0)
+              start = 0;
+            if (end >= list->count)
+              end = list->count - 1;
+            // Copy the slice
+            for (int i = start; i <= end; i++) {
+              appendList(resultList, list->items[i]);
+            }
+          }
+          pop();                     // pop resultList
+          pop();                     // pop index
+          pop();                     // pop list
+          push(OBJ_VAL(resultList)); // push final slice
+          break;
+        } else {
+          runtimeError("List index must be a number or a range.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+      } else if (IS_DICT(seqVal)) {
+        ObjDict *dict = AS_DICT(seqVal);
+        Value result;
+        if (tableGet(&dict->fields, indexVal, &result)) {
+          pop(); // index
+          pop(); // dict
+          push(result);
+        } else {
+          // Safely convert the unknown key to a string for the error message!
+          pop();
+          pop();
+          push(NIL_VAL);
+        }
+      } else {
+        runtimeError("Type is not subscriptable.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      break;
+    }
+    case OP_SET_SUBSCRIPT: {
+      // Stack Layout: [Collection] [Index] [Value] <--- Top
+      Value value = peek(0);
+      Value indexVal = peek(1);
+      Value collectionVal = peek(2); // We renamed this from listVal
+      // ==========================================
+      // PATH 1: DICTIONARY ASSIGNMENT
+      // ==========================================
+      if (IS_DICT(collectionVal)) {
+        ObjDict *dict = AS_DICT(collectionVal);
+        // Set or Overwrite the value in the hash map (O(1) time!)
+        tableSet(&dict->fields, indexVal, value);
+        // Cleanup: Leave the VALUE on the stack so chained assignments work
+        pop(); // value
+        pop(); // index
+        pop(); // dict
+        push(value);
+      }
+      // ==========================================
+      // PATH 2: LIST ASSIGNMENT (Your existing code!)
+      // ==========================================
+      else if (IS_LIST(collectionVal)) {
+        ObjList *list = AS_LIST(collectionVal);
+        if (!IS_NUMBER(indexVal)) {
+          runtimeError("List index must be a number.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        int index = (int)AS_NUMBER(indexVal);
+        // Adjust for 1-based indexing
+        if (index < 0) {
+          index = list->count + index + 1;
+        }
+        // Convert to 0-based C array index
+        index--;
+        // Bounds Check
+        if (index < 0 || index >= list->count) {
+          runtimeError("List index out of bounds.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        // Store the value
+        list->items[index] = value;
+        // Cleanup
+        pop(); // value
+        pop(); // index
+        pop(); // list
+        push(value);
+      }
+      // ==========================================
+      // PATH 3: ERROR
+      // ==========================================
+      else {
+        runtimeError("Can only subscript lists and dictionaries.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      break;
+    }
+    case OP_GET_END_INDEX: {
+      Value seq = NIL_VAL;
+      // THE FIX: Scan backwards down the stack to find the collection!
+      for (Value *ptr = vm.stackTop - 1; ptr >= vm.stack; ptr--) {
+        if (IS_LIST(*ptr) || IS_STRING(*ptr)) {
+          seq = *ptr;
+          break;
+        }
+      }
+      if (IS_LIST(seq)) {
+        // 1-BASED INDEXING: The last index is exactly the count!
+        push(NUMBER_VAL(AS_LIST(seq)->count));
+      } else if (IS_STRING(seq)) {
+        // 1-BASED INDEXING: The last index is exactly the length!
+        push(NUMBER_VAL(AS_STRING(seq)->length));
+      } else {
+        runtimeError("Cannot use 'end' outside of a list or string subscript.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      break;
+    }
+    case OP_RANGE: {
+      if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) || !IS_NUMBER(peek(2))) {
+        runtimeError("Range operands must be numbers.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      double step = AS_NUMBER(pop());
+      double end = AS_NUMBER(pop());
+      double start = AS_NUMBER(pop());
+      // Protect against infinite loops and negative steps
+      if (step <= 0) {
+        runtimeError("Range step must be a positive number greater than 0.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      ObjRange *range = newRange(start, end, step);
+      push(OBJ_VAL(range));
+      break;
+    }
+      // 1. Determine where the loop starts
+    case OP_GET_ITER: {
+      Value seq = peek(0); // Sequence is on stack
+      // Strings, Lists, and Ranges all use the universal -1 index counter!
+      if (IS_LIST(seq) || IS_RANGE(seq) || IS_STRING(seq)) {
+        push(NUMBER_VAL(-1));
+      } else {
+        runtimeError("Can only loop over lists, ranges, and strings.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      break;
+    }
+      // 2. The Loop Logic
+    case OP_FOR_ITER: {
+      // Stack: [Sequence] [Iterator Index]
+      Value iteratorVal = peek(0);
+      Value seqVal = peek(1);
+      // A. Range Logic
+      if (IS_RANGE(seqVal)) {
+        ObjRange *range = AS_RANGE(seqVal);
+        double index = AS_NUMBER(iteratorVal);
+        double nextIndex = index + 1;
+        double nextValue;
+        // Calculate the actual value based on direction and step
+        if (range->start <= range->end) {
+          // Counting UP
+          nextValue = range->start + (nextIndex * range->step);
+          if (nextValue <= range->end) {
+            vm.stackTop[-1] = NUMBER_VAL(nextIndex); // Save the index
+            push(NUMBER_VAL(nextValue)); // Push the actual loop value
+            ip += 2;                     // Skip jump
+          } else {
+            uint16_t offset = READ_SHORT();
+            ip += offset;
+          }
+        } else {
+          // Counting DOWN
+          nextValue = range->start - (nextIndex * range->step);
+          if (nextValue >= range->end) {
+            vm.stackTop[-1] = NUMBER_VAL(nextIndex); // Save the index
+            push(NUMBER_VAL(nextValue)); // Push the actual loop value
+            ip += 2;                     // Skip jump
+          } else {
+            uint16_t offset = READ_SHORT();
+            ip += offset;
+          }
+        }
+      }
+      // B. List Logic (Remains mostly the same!)
+      else if (IS_LIST(seqVal)) {
+        ObjList *list = AS_LIST(seqVal);
+        double index = AS_NUMBER(iteratorVal);
+        double nextIndex = index + 1;
+        if (nextIndex < list->count) {
+          vm.stackTop[-1] = NUMBER_VAL(nextIndex); // Save the index
+          push(list->items[(int)nextIndex]);       // Push the list item
+          ip += 2;                                 // Skip jump
+        } else {
+          uint16_t offset = READ_SHORT();
+          ip += offset;
+        }
+      } else if (IS_STRING(seqVal)) {
+        ObjString *string = AS_STRING(seqVal);
+        double index = AS_NUMBER(iteratorVal);
+        double nextIndex = index + 1;
+        if (nextIndex < string->length) {
+          // 1. Save the new index
+          vm.stackTop[-1] = NUMBER_VAL(nextIndex);
+          // 2. Grab the raw char byte (cast to unsigned so it safely maps
+          // 0-255)
+          uint8_t charByte = (uint8_t)string->chars[(int)nextIndex];
+          // 3. THE MAGIC: Push the pre-allocated 1-char string from our pool!
+          push(OBJ_VAL(vm.charStrings[charByte]));
+          // 4. Skip the jump offset
+          ip += 2;
+        } else {
+          // Done
+          uint16_t offset = READ_SHORT();
+          ip += offset;
+        }
+      } else {
+        runtimeError("Can only iterate over ranges, lists, or strings.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+      break;
+    }
+    case OP_CALL: {
+      int argCount = READ_SHORT();
+      Value callee = peek(argCount);
+      if (IS_NATIVE(callee)) {
+        NativeFn native = AS_NATIVE(callee);
+        Value result = native(argCount, vm.stackTop - argCount);
+        vm.stackTop -= argCount + 1;
+        push(result);
+        break;
+      } else if (IS_FUNCTION(callee)) {
+        ObjFunction *function = AS_FUNCTION(callee);
+        if (argCount != function->arity) {
+          runtimeError("Expected %d arguments but got %d.", function->arity,                       argCount);
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        if (vm.frameCount == FRAMES_MAX) {
+          runtimeError("Stack overflow.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        // 1. SAVE: Store current instruction pointer back to current frame
+        frame->ip = ip;
+        // 2. SWITCH: Create new frame
+        CallFrame *newFrame = &vm.frames[vm.frameCount++];
+        newFrame->function = function;
+        // Note: We don't need to set newFrame->ip yet, we'll load it into local
+        // 'ip'
+        newFrame->ip = function->chunk.code;
+        newFrame->slots = vm.stackTop - argCount - 1;
+        frame = newFrame; // Point to new frame
+        // 3. LOAD: Update local 'ip' from the new frame
+        ip = frame->ip;
+        break;
+      } else if (IS_MULTI_FUNCTION(callee)) {
+        ObjMultiFunction *multi = AS_MULTI_FUNCTION(callee);
+        if (argCount != multi->arity) {
+          runtimeError("Expected %d arguments but got %d.", multi->arity,                       argCount);
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        ObjFunction *matchedMethod = NULL;
+        Value *args = vm.stackTop -
+                      argCount; // Pointer to the first argument on the stack
+        // 1. Scan through all compiled versions of this phrase
+        for (int i = 0; i < multi->methodCount; i++) {
+          bool isMatch = true;
+          ObjType **signature = multi->signatures[i];
+          // 2. Check the physical memory of every argument against the
+          // signature
+          for (int j = 0; j < argCount; j++) {
+            ObjType *expectedType = signature[j];
+            // If expectedType is NULL, it means the user typed `(item)` instead
+            // of `(item: Type)`. NULL acts as 'Any' and matches everything!
+            if (expectedType != NULL) {
+              if (IS_INSTANCE(args[j])) {
+                // It's an object! Does it match the blueprint?
+                if (AS_INSTANCE(args[j])->type != expectedType) {
+                  isMatch = false;
+                  break;
+                }
+              } else {
+                // It's a raw primitive (Number/List), which doesn't match a
+                // custom Object Blueprint
+                isMatch = false;
+                break;
+              }
+            }
+          }
+          // 3. We found a valid match! Stop searching.
+          if (isMatch) {
+            matchedMethod = multi->methods[i];
+            break;
+          }
+        }
+        // 4. No matching signature found? Throw a clean error.
+        if (matchedMethod == NULL) {
+          runtimeError("No matching signature found for this phrasal function "
+                       "based on the provided arguments.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        // 5. The Routing is complete. Execute the matched method!
+        if (vm.frameCount == FRAMES_MAX) {
+          runtimeError("Stack overflow.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        frame->ip = ip;
+        CallFrame *newFrame = &vm.frames[vm.frameCount++];
+        newFrame->function = matchedMethod;
+        newFrame->ip = matchedMethod->chunk.code;
+        newFrame->slots = vm.stackTop - argCount - 1;
+        frame = newFrame;
+        ip = frame->ip;
+        break;
+      }
+      runtimeError("Can only call functions, multi-functions, and classes.");
+      return INTERPRET_RUNTIME_ERROR;
+    }
+    case OP_RETURN: {
+      Value result = pop();
+      vm.frameCount--;
+      if (vm.frameCount == 0) {
+        pop();
+        return INTERPRET_OK;
+      }
+      vm.stackTop = frame->slots;
+      push(result);
+      // 1. SWITCH: Go back to caller
+      frame = &vm.frames[vm.frameCount - 1];
+      // 2. LOAD: Restore caller's instruction pointer
+      ip = frame->ip;
+      break;
+    }
+    }
+  }
+#undef READ_BYTE
+#undef READ_CONSTANT
+#undef BINARY_OP
+}
+InterpretResult interpret(const char *source) {
+  // 1. Compile returns a Function now (we will update compiler.c next)
+  ObjFunction *function = compile(source);
+  if (function == NULL)
+    return INTERPRET_COMPILE_ERROR;
+  vm.stackTop = vm.stack;
+  vm.frameCount = 0;
+  // Push the script function to stack so GC doesn't eat it
+  push(OBJ_VAL(function));
+  // 2. Set up the first Call Frame (The "Main" script)
+  CallFrame *frame = &vm.frames[vm.frameCount++];
+  frame->function = function;
+  frame->ip = function->chunk.code;
+  // The script's locals start at the bottom of the stack
+  frame->slots = vm.stack;
+  // 3. Go!
+  return run();
+}

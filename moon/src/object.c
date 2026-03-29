@@ -12,7 +12,7 @@
 #define ALLOCATE_OBJ(type, objectType)                                         \
   (type *)allocateObject(sizeof(type), objectType)
 
-static Obj *allocateObject(size_t size, ObjType type) {
+static Obj *allocateObject(size_t size, ObjKind type) {
   Obj *object = (Obj *)reallocate(NULL, 0, size);
   object->type = type;
 
@@ -106,25 +106,26 @@ void printObject(Value value) {
   case OBJ_RANGE: {
     ObjRange *range = AS_RANGE(value);
     // We print using %.14g to strip trailing zeros (1.0 -> 1)
-    printf("%.14g to %.14g", range->start, range->end);
+    printf("<%.14g to %.14g>", range->start, range->end);
     break;
   }
 
   case OBJ_LIST: {
-    ObjList *list = AS_LIST(value);
-    printf("[");
-    for (int i = 0; i < list->count; i++) {
-      printValue(list->items[i]);
-      if (i < list->count - 1)
-        printf(", ");
-    }
-
-    printf("]");
+    printf("%s", "<list>");
+    // ObjList *list = AS_LIST(value);
+    // printf("[");
+    // for (int i = 0; i < list->count; i++) {
+    //   printValue(list->items[i]);
+    //   if (i < list->count - 1)
+    //     printf(", ");
+    // }
+    //
+    // printf("]");
     break;
   }
 
   case OBJ_STRING:
-    printf("\"%s\"", AS_CSTRING(value));
+    printf("%s", AS_CSTRING(value));
     break;
 
   case OBJ_FUNCTION: {
@@ -136,8 +137,24 @@ void printObject(Value value) {
     break;
   }
 
+  case OBJ_TYPE_BLUEPRINT:
+    printf("<type %s>", AS_TYPE(value)->name->chars);
+    break;
+
+  case OBJ_INSTANCE:
+    printf("<%s instance>", AS_INSTANCE(value)->type->name->chars);
+    break;
+
+  case OBJ_MULTI_FUNCTION:
+    printf("<multi-fn %s>", AS_MULTI_FUNCTION(value)->name->chars);
+    break;
+
   case OBJ_NATIVE:
     printf("<native fn>");
+    break;
+
+  default:
+    printf("<unknown>");
     break;
   }
 }
@@ -206,6 +223,32 @@ ObjRange *newRange(double start, double end, double step) {
   range->end = end;
   range->step = step;
   return range;
+}
+
+ObjType *newType(ObjString *name) {
+  ObjType *type = ALLOCATE_OBJ(ObjType, OBJ_TYPE_BLUEPRINT);
+  type->name = name;
+  initTable(&type->properties);
+  type->isNative = false;
+  return type;
+}
+
+ObjInstance *newInstance(ObjType *type) {
+  ObjInstance *instance = ALLOCATE_OBJ(ObjInstance, OBJ_INSTANCE);
+  instance->type = type;
+  initTable(&instance->fields); // Boot up the empty hash table for data!
+  return instance;
+}
+
+ObjMultiFunction *newMultiFunction(ObjString *name, int arity) {
+  ObjMultiFunction *multi = ALLOCATE_OBJ(ObjMultiFunction, OBJ_MULTI_FUNCTION);
+  multi->name = name;
+  multi->arity = arity;
+  multi->methodCount = 0;
+  multi->methodCapacity = 0;
+  multi->methods = NULL;
+  multi->signatures = NULL;
+  return multi;
 }
 
 ObjString *valueToString(Value value) {

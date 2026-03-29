@@ -27,4 +27,24 @@ let sorted (list):
   give merge (sorted left) with (sorted right)
 end
 
-show sorted [10 to 1]
+let quick sort of (list: List):
+  if list's length < 2 give list
+
+  let pivot be list.1
+  let rest be list[2 to end]
+
+  let less, greater be []
+  for each item in rest:
+    add item to less if item <= pivot
+    add item to greater if item > pivot
+  end
+
+  let result be quick sort of less
+  add pivot, quick sort of greater to result
+
+  give result
+end
+
+let a be [10, 9, 3, 2, 4, 11, 30, 15, 27, 18]
+set a to quick sort of a
+for i in a show i

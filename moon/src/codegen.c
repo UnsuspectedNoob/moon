@@ -440,14 +440,16 @@ static void walkNode(Node *node) {
   }
 
   case NODE_PROPERTY: {
+    // 1. Push the target object to the stack
     walkNode(node->as.property.target);
 
-    // THE FIX: Directly emit the constant value dynamically!
-    Value nameVal = OBJ_VAL(copyString(node->as.property.name.start,
-                                       node->as.property.name.length));
-    emitConstant(nameVal);
+    // 2. Convert the literal token into a 16-bit Constant Index
+    uint16_t nameConst = identifierConstant(&node->as.property.name);
 
-    emitByte(OP_GET_SUBSCRIPT);
+    // 3. Emit the instruction + the 16-bit index!
+    emitByte(OP_GET_PROPERTY);
+    emitByte((nameConst >> 8) & 0xff);
+    emitByte(nameConst & 0xff);
     break;
   }
 
@@ -463,13 +465,7 @@ static void walkNode(Node *node) {
         walkNode(target->as.subscript.index);
       } else if (target->type == NODE_PROPERTY) {
         walkNode(target->as.property.target);
-
-        // THE FIX: Directly emit the constant value dynamically!
-        Value nameVal = OBJ_VAL(copyString(target->as.property.name.start,
-                                           target->as.property.name.length));
-        emitConstant(nameVal);
       }
-      // Variables don't have an address to evaluate on the stack.
     }
 
     // --- PHASE 2: Evaluate RHS Values (Left-to-Right) ---
@@ -495,11 +491,16 @@ static void walkNode(Node *node) {
           emitByte(globalName & 0xff);
         }
         emitByte(OP_POP);
-      } else if (target->type == NODE_SUBSCRIPT ||
-                 target->type == NODE_PROPERTY) {
+      } else if (target->type == NODE_SUBSCRIPT) {
         emitByte(OP_SET_SUBSCRIPT);
-        emitByte(
-            OP_POP); // OP_SET_SUBSCRIPT leaves the value, so we pop it here
+        emitByte(OP_POP);
+        // OP_SET_SUBSCRIPT leaves the value, so we pop it here
+      } else if (target->type == NODE_PROPERTY) {
+        uint16_t nameConst = identifierConstant(&target->as.property.name);
+        emitByte(OP_SET_PROPERTY);
+        emitByte((nameConst >> 8) & 0xff);
+        emitByte(nameConst & 0xff);
+        emitByte(OP_POP);
       }
     }
     break;
@@ -583,20 +584,72 @@ static void walkNode(Node *node) {
     // 4. Close the compiler and get the finished object
     ObjFunction *fn = endCompiler();
 
-    // 5. Back in the parent scope, define the function variable
+    // 1. Push the Expected Types to the Stack!
+    // Because we bootstrapped "Number", "String", and "Any" into globals,
+    // OP_GET_GLOBAL will flawlessly fetch their blueprints!
+    for (int i = 0; i < node->as.function.paramCount; i++) {
+      uint16_t typeName = identifierConstant(&node->as.function.paramTypes[i]);
+      emitByte(OP_GET_GLOBAL);
+      emitByte((typeName >> 8) & 0xff);
+      emitByte(typeName & 0xff);
+    }
+
+    // 2. Push the compiled function chunk itself
     uint8_t fnConstant = makeConstant(OBJ_VAL(fn));
     emitBytes(OP_CONSTANT, fnConstant);
 
-    if (current->scopeDepth > 0) {
-      addLocal(node->as.function.name);
-      markInitialized();
-    } else {
-      uint16_t globalName = identifierConstant(&node->as.function.name);
-      emitByte(OP_DEFINE_GLOBAL);
-      emitByte((globalName >> 8) & 0xff);
-      emitByte(globalName & 0xff);
-      emitByte(OP_POP);
+    // 3. Emit the Injector Opcode!
+    uint16_t globalName = identifierConstant(&node->as.function.name);
+    emitByte(OP_DEFINE_METHOD);
+    emitByte((globalName >> 8) & 0xff);
+    emitByte(globalName & 0xff);
+
+    // (Note: We skip the local scope logic for methods. Multiple Dispatch
+    // methods must be globally accessible).
+    break;
+  }
+
+  case NODE_TYPE_DECL: {
+    for (int i = 0; i < node->as.typeDecl.count; i++) {
+      // 1. Push the property name as a String Constant
+      Value nameVal =
+          OBJ_VAL(copyString(node->as.typeDecl.propertyNames[i].start,
+                             node->as.typeDecl.propertyNames[i].length));
+      emitConstant(nameVal);
+      // 2. Push the default value expression
+      walkNode(node->as.typeDecl.defaultValues[i]);
     }
+
+    // 3. Emit the opcode, the Type's Name, and the Property Count
+    uint16_t typeName = identifierConstant(&node->as.typeDecl.name);
+    emitByte(OP_TYPE_DEF);
+    emitByte((typeName >> 8) & 0xff);
+    emitByte(typeName & 0xff);
+
+    uint16_t count = (uint16_t)node->as.typeDecl.count;
+    emitByte((count >> 8) & 0xff);
+    emitByte(count & 0xff);
+    break;
+  }
+
+  case NODE_INSTANTIATE: {
+    // 1. Evaluate the left side (pushes the Blueprint to the stack)
+    walkNode(node->as.instantiate.target);
+
+    // 2. Evaluate the custom overrides
+    for (int i = 0; i < node->as.instantiate.count; i++) {
+      Value nameVal =
+          OBJ_VAL(copyString(node->as.instantiate.propertyNames[i].start,
+                             node->as.instantiate.propertyNames[i].length));
+      emitConstant(nameVal);
+      walkNode(node->as.instantiate.values[i]);
+    }
+
+    // 3. Emit the instruction
+    emitByte(OP_INSTANTIATE);
+    uint16_t count = (uint16_t)node->as.instantiate.count;
+    emitByte((count >> 8) & 0xff);
+    emitByte(count & 0xff);
     break;
   }
 

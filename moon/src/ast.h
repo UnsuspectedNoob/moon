@@ -31,6 +31,8 @@ typedef enum {
   NODE_DICT,
   NODE_LET,
   NODE_FUNCTION,
+  NODE_TYPE_DECL,
+  NODE_INSTANTIATE,
   NODE_END,
 } NodeType;
 
@@ -135,9 +137,24 @@ typedef struct {
 typedef struct {
   Token name;
   Token *parameters;
+  Token *paramTypes;
   int paramCount;
   Node *body;
 } FunctionPayload;
+
+typedef struct {
+  Token name;
+  Token *propertyNames;
+  Node **defaultValues;
+  int count;
+} TypeDeclPayload;
+
+typedef struct {
+  Node *target; // The expression evaluating to the Blueprint (e.g., 'Player')
+  Token *propertyNames; // ["name", "health"]
+  Node **values;        // ["Harry", 30]
+  int count;
+} InstantiatePayload;
 
 // --- The Master Node ---
 struct sNode {
@@ -166,6 +183,8 @@ struct sNode {
     ListPayload list;
     DictPayload dictExpr;
     SubscriptPayload subscript;
+    TypeDeclPayload typeDecl;
+    InstantiatePayload instantiate;
   } as;
 };
 
@@ -204,8 +223,13 @@ Node *newRangeNode(Node *start, Node *end, Node *step, int line);
 Node *newPropertyNode(Node *target, Token name, int line);
 
 Node *newCallNode(Node *callee, Node **arguments, int argCount, int line);
-Node *newFunctionNode(Token name, Token *parameters, int paramCount, Node *body,
-                      int line);
+Node *newFunctionNode(Token name, Token *parameters, Token *paramTypes,
+                      int paramCount, Node *body, int line);
+
+Node *newTypeNode(Token name, Token *propertyNames, Node **defaultValues,
+                  int count, int line);
+Node *newInstantiateNode(Node *target, Token *propertyNames, Node **values,
+                         int count, int line);
 
 void freeNode(Node *node);
 

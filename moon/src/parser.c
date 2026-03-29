@@ -122,10 +122,16 @@ void hoistPhrases(const char *source) {
                    next.type != TOKEN_NEWLINE) {
               if (next.type == TOKEN_LEFT_PAREN) {
                 int arity = 0;
-                while (scanToken().type != TOKEN_RIGHT_PAREN) {
-                  arity++;
-                  if (arity > 1)
-                    scanToken();
+                Token peek = scanToken();
+                if (peek.type != TOKEN_RIGHT_PAREN) {
+                  arity = 1; // If it's not empty, there's at least 1 argument!
+                  while (peek.type != TOKEN_RIGHT_PAREN &&
+                         peek.type != TOKEN_EOF) {
+                    if (peek.type == TOKEN_COMMA) {
+                      arity++; // Only increment arity when we see a comma!
+                    }
+                    peek = scanToken();
+                  }
                 }
                 char buf[16];
                 sprintf(buf, "$%d", arity);
@@ -711,6 +717,68 @@ static Node *dict() {
   return node;
 }
 
+static Node *instantiate(Node *left) {
+  int line = parser.previous.line;
+  TokenArray propNames;
+  initTokenArray(&propNames);
+  NodeArray values;
+  initNodeArray(&values);
+
+  groupingDepth++; // Protect from blindfolds
+  if (!check(TOKEN_RIGHT_BRACE)) {
+    do {
+      ignoreNewlines();
+      if (check(TOKEN_RIGHT_BRACE))
+        break;
+
+      consume(TOKEN_IDENTIFIER, "Expect property name.");
+      writeTokenArray(&propNames, parser.previous);
+      consume(TOKEN_COLON, "Expect ':' after property name.");
+      writeNodeArray(&values, expression());
+    } while (match(TOKEN_COMMA));
+  }
+  groupingDepth--;
+
+  ignoreNewlines();
+  consume(TOKEN_RIGHT_BRACE, "Expect '}' after instance properties.");
+
+  Node *node = newInstantiateNode(left, propNames.items, values.items,
+                                  propNames.count, line);
+  freeTokenArray(&propNames);
+  freeNodeArray(&values);
+  return node;
+}
+
+static Node *instantiateWith(Node *left) {
+  int line = parser.previous.line;
+  TokenArray propNames;
+  initTokenArray(&propNames);
+  NodeArray values;
+  initNodeArray(&values);
+
+  if (!check(TOKEN_END)) {
+    do {
+      ignoreNewlines();
+      if (check(TOKEN_END))
+        break;
+
+      consume(TOKEN_IDENTIFIER, "Expect property name.");
+      writeTokenArray(&propNames, parser.previous);
+      consume(TOKEN_COLON, "Expect ':' after property name.");
+      writeNodeArray(&values, expression());
+    } while (match(TOKEN_COMMA));
+  }
+
+  ignoreNewlines();
+  consume(TOKEN_END, "Expect 'end' after 'with' block.");
+
+  Node *node = newInstantiateNode(left, propNames.items, values.items,
+                                  propNames.count, line);
+  freeTokenArray(&propNames);
+  freeNodeArray(&values);
+  return node;
+}
+
 static Node *subscript(Node *left) {
   int line = parser.previous.line;
 
@@ -1071,6 +1139,49 @@ static Node *skipStatement() {
   return newSkipNode(parser.previous.line);
 }
 
+static Node *typeDeclaration() {
+  int line = parser.previous.line;
+  consume(TOKEN_IDENTIFIER, "Expect type name.");
+  Token name = parser.previous;
+  consume(TOKEN_COLON, "Expect ':' after type name.");
+
+  TokenArray propertyNames;
+  initTokenArray(&propertyNames);
+  NodeArray defaultValues;
+  initNodeArray(&defaultValues);
+
+  ignoreNewlines();
+
+  if (!check(TOKEN_END)) {
+    do {
+      ignoreNewlines();
+      if (check(TOKEN_END))
+        break; // Allow trailing commas before 'end'
+
+      consume(TOKEN_IDENTIFIER, "Expect property name.");
+      writeTokenArray(&propertyNames, parser.previous);
+
+      // If they type `be 300`, parse the 300. Otherwise, silently default to
+      // `nil`.
+      if (match(TOKEN_BE)) {
+        writeNodeArray(&defaultValues, expression());
+      } else {
+        writeNodeArray(&defaultValues,
+                       newLiteralNode(NIL_VAL, parser.previous.line));
+      }
+    } while (match(TOKEN_COMMA));
+  }
+
+  ignoreNewlines();
+  consume(TOKEN_END, "Expect 'end' after type declaration.");
+
+  Node *node = newTypeNode(name, propertyNames.items, defaultValues.items,
+                           propertyNames.count, line);
+  freeTokenArray(&propertyNames);
+  freeNodeArray(&defaultValues);
+  return node;
+}
+
 static Node *statement() {
   currentStickySubject = NULL;
   ignoreNewlines();
@@ -1152,6 +1263,8 @@ static Node *letDeclaration() {
     int line = rootName.line;
     TokenArray parameters;
     initTokenArray(&parameters);
+    TokenArray paramTypes;       // NEW
+    initTokenArray(&paramTypes); // NEW
 
     char mangled[1024] = {0};
     strncat(mangled, rootName.start, rootName.length);
@@ -1166,6 +1279,21 @@ static Node *letDeclaration() {
             do {
               consume(TOKEN_IDENTIFIER, "Expect parameter name.");
               writeTokenArray(&parameters, parser.previous);
+
+              // --- NEW: THE TYPE EXTRACTION ---
+              if (match(TOKEN_COLON)) {
+                consume(TOKEN_IDENTIFIER, "Expect type name after ':'.");
+                writeTokenArray(&paramTypes, parser.previous);
+              } else {
+                // If no type is provided, insert a dummy 'Any' token
+                Token anyToken = {.type = TOKEN_IDENTIFIER,
+                                  .start = "Any",
+                                  .length = 3,
+                                  .line = parser.previous.line};
+                writeTokenArray(&paramTypes, anyToken);
+              }
+              // --------------------------------
+
               segmentArity++;
             } while (match(TOKEN_COMMA));
           }
@@ -1192,9 +1320,11 @@ static Node *letDeclaration() {
       finalName.length = strlen(mangled);
     }
 
-    Node *node = newFunctionNode(finalName, parameters.items, parameters.count,
-                                 body, line);
+    // Pass paramTypes.items into the constructor!
+    Node *node = newFunctionNode(finalName, parameters.items, paramTypes.items,
+                                 parameters.count, body, line);
     freeTokenArray(&parameters);
+    freeTokenArray(&paramTypes); // Free the temp buffer!
     freeTokenArray(&names);
     return node;
   }
@@ -1245,12 +1375,13 @@ static Node *call(Node *callee) {
 
 static Node *declaration() {
   ignoreNewlines();
-
   if (check(TOKEN_EOF))
     return NULL;
 
   Node *decl;
-  if (match(TOKEN_LET)) {
+  if (match(TOKEN_TYPE)) {    // <--- NEW
+    decl = typeDeclaration(); // <--- NEW
+  } else if (match(TOKEN_LET)) {
     decl = letDeclaration();
   } else {
     decl = statement();
@@ -1258,7 +1389,6 @@ static Node *declaration() {
 
   if (parser.panicMode)
     synchronize();
-
   return decl;
 }
 
@@ -1268,7 +1398,8 @@ static Node *declaration() {
 
 ParseRule rules[] = {
     [TOKEN_LEFT_PAREN] = {grouping, call, PREC_CALL},
-    [TOKEN_LEFT_BRACE] = {dict, NULL, PREC_NONE},
+    [TOKEN_LEFT_BRACE] = {dict, instantiate, PREC_CALL}, // <--- Updated!
+    [TOKEN_WITH] = {NULL, instantiateWith, PREC_CALL},   // <--- New!
     [TOKEN_MINUS] = {unary, binary, PREC_TERM},
     [TOKEN_PLUS] = {NULL, binary, PREC_TERM},
     [TOKEN_SLASH] = {NULL, binary, PREC_FACTOR},
@@ -1298,6 +1429,7 @@ ParseRule rules[] = {
     [TOKEN_DOT] = {NULL, dot, PREC_CALL},
     [TOKEN_POSSESSIVE] = {NULL, possessive, PREC_CALL},
     [TOKEN_END] = {endKeyword, NULL, PREC_NONE},
+
     [TOKEN_EOF] = {NULL, NULL, PREC_NONE},
 };
 

@@ -306,18 +306,58 @@ Node *newCallNode(Node *callee, Node **arguments, int argCount, int line) {
   return node;
 }
 
-Node *newFunctionNode(Token name, Token *parameters, int paramCount, Node *body,
-                      int line) {
+Node *newFunctionNode(Token name, Token *parameters, Token *paramTypes,
+                      int paramCount, Node *body, int line) {
   Node *node = allocateNode(NODE_FUNCTION, line);
   node->as.function.name = name;
   node->as.function.paramCount = paramCount;
   node->as.function.parameters = ALLOCATE(Token, paramCount);
+  node->as.function.paramTypes = ALLOCATE(Token, paramCount); // NEW
+
   for (int i = 0; i < paramCount; i++) {
     node->as.function.parameters[i] = parameters[i];
+    node->as.function.paramTypes[i] = paramTypes[i]; // NEW
   }
   node->as.function.body = body;
   if (body != NULL)
     body->parent = node;
+  return node;
+}
+
+Node *newTypeNode(Token name, Token *propertyNames, Node **defaultValues,
+                  int count, int line) {
+  Node *node = allocateNode(NODE_TYPE_DECL, line);
+  node->as.typeDecl.name = name;
+  node->as.typeDecl.count = count;
+  node->as.typeDecl.propertyNames = ALLOCATE(Token, count);
+  node->as.typeDecl.defaultValues = ALLOCATE(Node *, count);
+
+  for (int i = 0; i < count; i++) {
+    node->as.typeDecl.propertyNames[i] = propertyNames[i];
+    node->as.typeDecl.defaultValues[i] = defaultValues[i];
+    if (defaultValues[i] != NULL)
+      defaultValues[i]->parent = node;
+  }
+  return node;
+}
+
+Node *newInstantiateNode(Node *target, Token *propertyNames, Node **values,
+                         int count, int line) {
+  Node *node = allocateNode(NODE_INSTANTIATE, line);
+  node->as.instantiate.target = target;
+  node->as.instantiate.count = count;
+  node->as.instantiate.propertyNames = ALLOCATE(Token, count);
+  node->as.instantiate.values = ALLOCATE(Node *, count);
+
+  if (target != NULL)
+    target->parent = node;
+
+  for (int i = 0; i < count; i++) {
+    node->as.instantiate.propertyNames[i] = propertyNames[i];
+    node->as.instantiate.values[i] = values[i];
+    if (values[i] != NULL)
+      values[i]->parent = node;
+  }
   return node;
 }
 
@@ -419,6 +459,8 @@ void freeNode(Node *node) {
   case NODE_FUNCTION: {
     FREE_ARRAY(Token, node->as.function.parameters,
                node->as.function.paramCount);
+    FREE_ARRAY(Token, node->as.function.paramTypes,
+               node->as.function.paramCount); // NEW
     freeNode(node->as.function.body);
     break;
   }
@@ -440,6 +482,27 @@ void freeNode(Node *node) {
   case NODE_EXPRESSION_STMT:
   case NODE_RETURN: {
     freeNode(node->as.singleExpr.expression);
+    break;
+  }
+
+  case NODE_TYPE_DECL: {
+    FREE_ARRAY(Token, node->as.typeDecl.propertyNames, node->as.typeDecl.count);
+    for (int i = 0; i < node->as.typeDecl.count; i++) {
+      freeNode(node->as.typeDecl.defaultValues[i]);
+    }
+    FREE_ARRAY(Node *, node->as.typeDecl.defaultValues,
+               node->as.typeDecl.count);
+    break;
+  }
+
+  case NODE_INSTANTIATE: {
+    freeNode(node->as.instantiate.target);
+    FREE_ARRAY(Token, node->as.instantiate.propertyNames,
+               node->as.instantiate.count);
+    for (int i = 0; i < node->as.instantiate.count; i++) {
+      freeNode(node->as.instantiate.values[i]);
+    }
+    FREE_ARRAY(Node *, node->as.instantiate.values, node->as.instantiate.count);
     break;
   }
   default:

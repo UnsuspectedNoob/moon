@@ -37,6 +37,17 @@ typedef struct {
   bool debugMode; // <--- ADD THIS FLAG
 
   ObjString *charStrings[256];
+
+  // --- THE NATIVE TYPE REGISTRY ---
+  ObjType *anyType;
+  ObjType *numberType;
+  ObjType *stringType;
+  ObjType *listType;
+  ObjType *dictType;
+  ObjType *boolType;
+  ObjType *rangeType;
+  ObjType *functionType;
+  ObjType *nilType;
 } VM;
 
 extern VM vm;
@@ -46,5 +57,6 @@ void freeVM();
 InterpretResult interpret(const char *source);
 void push(Value value);
 Value pop();
+ObjType *getObjType(Value val);
 
 #endif

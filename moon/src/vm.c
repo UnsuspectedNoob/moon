@@ -45,49 +45,6 @@ static void runtimeError(const char *format, ...) {
   resetStack();
 }
 
-// Helper to define natives
-static void defineNative(const char *name, NativeFn function) {
-  push(OBJ_VAL(copyString(name, (int)strlen(name))));
-  push(OBJ_VAL(newNative(function)));
-  tableSet(&vm.globals, vm.stack[0], vm.stack[1]);
-  pop();
-  pop();
-}
-
-static Value clockNative(int argCount, Value *args) {
-  (void)argCount; // Silence warning
-  (void)args;     // Silence warning
-  return NUMBER_VAL((double)clock() / CLOCKS_PER_SEC);
-}
-
-static Value showNative(int argCount, Value *args) {
-  (void)argCount;
-
-  // Phrasal 'show' only expects 1 argument (the evaluated expression)
-  printValue(args[0]);
-  printf("\n"); // Always append the newline
-
-  return NIL_VAL; // Native functions must return something
-}
-
-void initVM() {
-  resetStack();
-  vm.objects = NULL;
-  vm.debugMode = false;
-  initTable(&vm.strings);
-  initTable(&vm.globals);
-
-  for (int i = 0; i < 256; i++) {
-    char c = (char)i;
-    // copyString takes a pointer to the char and the length (1)
-    vm.charStrings[i] = copyString(&c, 1);
-  }
-
-  // Define native function
-  defineNative("clock", clockNative);
-  defineNative("show$1", showNative);
-}
-
 void freeVM() {
   freeTable(&vm.strings);
   freeTable(&vm.globals);
@@ -128,25 +85,143 @@ static void concatenate() {
 
 bool valuesEqual(Value a, Value b) { return a == b; }
 
-static bool getBuiltinProperty(Value object, ObjString *name, Value *result) {
-  // --- List Properties ---
-  if (IS_LIST(object)) {
-    if (strcmp(name->chars, "length") == 0 ||
-        strcmp(name->chars, "count") == 0) {
-      *result = NUMBER_VAL(AS_LIST(object)->count);
-      return true;
-    }
+// Helper to define natives
+static void defineNative(const char *name, NativeFn function) {
+  push(OBJ_VAL(copyString(name, (int)strlen(name))));
+  push(OBJ_VAL(newNative(function)));
+  tableSet(&vm.globals, vm.stack[0], vm.stack[1]);
+  pop();
+  pop();
+}
+
+static Value clockNative(int argCount, Value *args) {
+  (void)argCount; // Silence warning
+  (void)args;     // Silence warning
+  return NUMBER_VAL((double)clock() / CLOCKS_PER_SEC);
+}
+
+static Value showNative(int argCount, Value *args) {
+  (void)argCount;
+
+  // Phrasal 'show' only expects 1 argument (the evaluated expression)
+  printValue(args[0]);
+  printf(" "); // Always append the newline
+
+  return NIL_VAL; // Native functions must return something
+}
+
+// --- NATIVE GETTER LOGIC ---
+static Value listLengthGetter(int argCount, Value *args) {
+  (void)argCount;
+  // 'args[0]' will be the list itself, passed in by the VM later!
+  ObjList *list = AS_LIST(args[0]);
+  return NUMBER_VAL(list->count);
+}
+
+static Value stringLengthGetter(int argCount, Value *args) {
+  (void)argCount;
+  ObjString *str = AS_STRING(args[0]);
+  return NUMBER_VAL(str->length);
+}
+
+// --- BOOTSTRAP HELPERS ---
+static ObjType *defineNativeType(const char *name) {
+  ObjString *nameStr = copyString(name, (int)strlen(name));
+
+  push(OBJ_VAL(nameStr)); // GC Protection
+  ObjType *type = newType(nameStr);
+  type->isNative = true; // Lock it down! No custom instantiation.
+  push(OBJ_VAL(type));   // GC Protection
+
+  // Expose it to MOON scripts!
+  tableSet(&vm.globals, OBJ_VAL(nameStr), OBJ_VAL(type));
+
+  pop(); // pop type
+  pop(); // pop name
+  return type;
+}
+
+static void defineNativeGetter(ObjType *type, const char *propertyName,
+                               NativeFn function) {
+  push(OBJ_VAL(copyString(propertyName, (int)strlen(propertyName))));
+  push(OBJ_VAL(newNative(function)));
+
+  // Drop the C-function directly into the blueprint's property table
+  tableSet(&type->properties, peek(1), peek(0));
+
+  pop(); // pop native function
+  pop(); // pop property name string
+}
+
+void initVM() {
+  resetStack();
+  vm.objects = NULL;
+  vm.debugMode = false;
+  initTable(&vm.strings);
+  initTable(&vm.globals);
+
+  // ==========================================
+  // PHASE 1: BOOTSTRAP THE OBJECT UNIVERSE
+  // ==========================================
+  vm.anyType = defineNativeType("Any");
+  vm.numberType = defineNativeType("Number");
+  vm.stringType = defineNativeType("String");
+  vm.listType = defineNativeType("List");
+  vm.dictType = defineNativeType("Dict");
+  vm.boolType = defineNativeType("Bool");
+  vm.rangeType = defineNativeType("Range");
+  vm.functionType = defineNativeType("Function");
+  vm.nilType = defineNativeType("Nil");
+
+  // Inject Native Getters into the Blueprints!
+  defineNativeGetter(vm.listType, "length", listLengthGetter);
+  defineNativeGetter(vm.listType, "count", listLengthGetter);
+  defineNativeGetter(vm.stringType, "length", stringLengthGetter);
+  defineNativeGetter(vm.stringType, "count", stringLengthGetter);
+
+  for (int i = 0; i < 256; i++) {
+    char c = (char)i;
+    // copyString takes a pointer to the char and the length (1)
+    vm.charStrings[i] = copyString(&c, 1);
   }
-  // --- String Properties ---
-  else if (IS_STRING(object)) {
-    if (strcmp(name->chars, "length") == 0 ||
-        strcmp(name->chars, "count") == 0) {
-      *result = NUMBER_VAL(AS_STRING(object)->length);
-      return true;
+
+  // Define native function
+  defineNative("clock", clockNative);
+  defineNative("show$1", showNative);
+}
+
+ObjType *getObjType(Value val) {
+  if (IS_NUMBER(val))
+    return vm.numberType;
+  if (IS_BOOL(val))
+    return vm.boolType;
+  if (IS_NIL(val))
+    return vm.nilType;
+
+  if (IS_OBJ(val)) {
+    switch (OBJ_TYPE(val)) {
+    case OBJ_STRING:
+      return vm.stringType;
+    case OBJ_LIST:
+      return vm.listType;
+    case OBJ_DICT:
+      return vm.dictType;
+    case OBJ_RANGE:
+      return vm.rangeType;
+    case OBJ_FUNCTION:
+    case OBJ_NATIVE:
+    case OBJ_MULTI_FUNCTION:
+      return vm.functionType;
+    case OBJ_INSTANCE:
+      return AS_INSTANCE(val)->type;
+    case OBJ_TYPE_BLUEPRINT:
+      return vm.anyType; // A blueprint is just an object of type 'Any' for now
+    default:
+      return vm.anyType;
     }
   }
 
-  return false; // Not a recognized built-in property!
+  return vm.anyType; // Absolute fallback
 }
 
 // Run()
@@ -157,8 +232,8 @@ static InterpretResult run() {
 
   // Instead of vm.ip, we look at the TOP frame
   // 2. Update macros to use local 'ip' instead of 'frame->ip'
-#define READ_BYTE() (*ip++)
 #define READ_CONSTANT() (frame->function->chunk.constants.values[READ_BYTE()])
+#define READ_BYTE() (*ip++)
 #define READ_SHORT() (ip += 2, (uint16_t)((ip[-2] << 8) | ip[-1]))
 #define READ_STRING()                                                          \
   AS_STRING(frame->function->chunk.constants.values[READ_SHORT()])
@@ -584,96 +659,188 @@ static InterpretResult run() {
       break;
     }
 
+    case OP_INSTANTIATE: {
+      uint16_t propCount = READ_SHORT();
+
+      // Layout: [Blueprint] [k1] [v1] [k2] [v2] <--- Top
+      Value *itemsStart = vm.stackTop - (propCount * 2);
+      Value targetVal = *(itemsStart - 1);
+
+      if (!IS_TYPE(targetVal)) {
+        runtimeError("Can only instantiate defined types.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+
+      ObjType *type = AS_TYPE(targetVal);
+      ObjInstance *instance = newInstance(type);
+
+      push(OBJ_VAL(instance)); // GC Protection
+
+      // 1. INHERITANCE MERGE: Copy all default properties from the Blueprint
+      tableAddAll(&type->properties, &instance->fields);
+
+      // 2. OVERRIDE MERGE: Apply the user's specific instantiation values
+      for (int i = 0; i < propCount; i++) {
+        Value key = itemsStart[i * 2];
+        Value val = itemsStart[(i * 2) + 1];
+        tableSet(&instance->fields, key, val);
+      }
+
+      // 3. Cleanup: Pop the instance, the props, and the blueprint, then push
+      // the finished instance
+      pop();
+      vm.stackTop -= (propCount * 2) + 1;
+      push(OBJ_VAL(instance));
+      break;
+    }
+
+    case OP_GET_PROPERTY: {
+      ObjString *name = READ_STRING();
+      Value target = peek(0);
+
+      // 1. Identify the target using our Universal Resolver!
+      ObjType *type = getObjType(target);
+      Value value;
+
+      // 2. INSTANCE OVERRIDES: If it's a custom clone, check its personal hash
+      // table first.
+      if (IS_INSTANCE(target)) {
+        ObjInstance *instance = AS_INSTANCE(target);
+        if (tableGet(&instance->fields, OBJ_VAL(name), &value)) {
+          pop();       // Remove target
+          push(value); // Push result
+          break;
+        }
+      }
+
+      // 3. BLUEPRINT LOOKUP: Check the Shared Blueprint!
+      // This automatically catches native C-getters (like list.length),
+      // AND it will catch shared methods for custom types later!
+      if (tableGet(&type->properties, OBJ_VAL(name), &value)) {
+
+        // --- THE NATIVE GETTER FIX ---
+        // If the property is a Native C-Function, execute it instantly!
+        if (IS_NATIVE(value)) {
+          NativeFn native = AS_NATIVE(value);
+
+          // Execute with target as the argument
+          Value result = native(1, &target);
+          pop(); // Remove target
+          push(result);
+          break;
+        }
+
+        pop();       // Remove target
+        push(value); // Push result
+        break;
+      }
+
+      // If we got here, the property doesn't exist anywhere.
+      runtimeError("Undefined property '%s' on type '%s'.", name->chars,
+                   type->name->chars);
+      return INTERPRET_RUNTIME_ERROR;
+    }
+
+    case OP_SET_PROPERTY: {
+      Value value = peek(0);
+      ObjString *name = READ_STRING(); // Reads 16-bit constant from bytecode!
+      Value target = peek(1);
+
+      if (!IS_INSTANCE(target)) {
+        runtimeError("Only object instances have mutable properties.");
+        return INTERPRET_RUNTIME_ERROR;
+      }
+
+      ObjInstance *instance = AS_INSTANCE(target);
+      tableSet(&instance->fields, OBJ_VAL(name), value);
+
+      pop();       // Pop value
+      pop();       // Pop target
+      push(value); // Push value back for chained assignments!
+      break;
+    }
+
     case OP_GET_SUBSCRIPT: {
-      Value indexVal = peek(0);
-      Value seqVal = peek(1);
+      Value indexVal = peek(0); // Popped from stack!
+      Value seqVal = peek(1);   // Popped from stack!
 
       if (IS_LIST(seqVal)) {
         ObjList *list = AS_LIST(seqVal);
 
-        // 1. Check for Built-in Properties (e.g., list's length)
-        if (IS_STRING(indexVal)) {
-          Value result;
-          if (getBuiltinProperty(seqVal, AS_STRING(indexVal), &result)) {
-            pop();        // pop the index
-            pop();        // pop the list
-            push(result); // push the length!
-            break;
-          } else {
-            runtimeError("Lists do not have a property named '%s'.",
-                         AS_STRING(indexVal)->chars);
-            return INTERPRET_RUNTIME_ERROR;
-          }
-        } else if (IS_NUMBER(indexVal)) {
-          // --- Normal Indexing (list[2]) ---
-          int index = (int)AS_NUMBER(indexVal);
-
-          if (index < 1 || index > list->count) {
+        if (IS_NUMBER(indexVal)) {
+          int index = (int)AS_NUMBER(indexVal) - 1; // 1-based indexing
+          if (index < 0 || index >= list->count) {
             runtimeError("List index out of bounds.");
             return INTERPRET_RUNTIME_ERROR;
           }
-
-          pop();                        // Pop index
-          pop();                        // Pop list
-          push(list->items[index - 1]); // 1-based math!
+          pop();
+          pop();
+          push(list->items[index]);
         } else if (IS_RANGE(indexVal)) {
-          // 3. Slicing (list[2 to 4])
+          // ... (Keep your excellent slicing logic exactly the same here) ...
           ObjRange *range = AS_RANGE(indexVal);
           int start = (int)range->start;
           int end = (int)range->end;
 
-          // Adjust for 1-based indexing and negative indexing
           if (start < 0)
             start = list->count + start + 1;
           if (end < 0)
             end = list->count + end + 1;
-
-          // Convert to 0-based C indexes
           start--;
           end--;
 
-          // Allocate the result list
           ObjList *resultList = newList();
-          push(OBJ_VAL(resultList)); // GC Protection
-
-          // THE FIX: Only iterate if the range is mathematically valid!
+          push(OBJ_VAL(resultList));
           if (start <= end && start < list->count && end >= 0) {
-
-            // Clamp out-of-bounds to safely grab "the rest" of the list
             if (start < 0)
               start = 0;
             if (end >= list->count)
               end = list->count - 1;
-
-            // Copy the slice
             for (int i = start; i <= end; i++) {
               appendList(resultList, list->items[i]);
             }
           }
-
-          pop();                     // pop resultList
-          pop();                     // pop index
-          pop();                     // pop list
-          push(OBJ_VAL(resultList)); // push final slice
-          break;
+          pop();
+          pop();
+          pop();
+          push(OBJ_VAL(resultList));
         } else {
           runtimeError("List index must be a number or a range.");
           return INTERPRET_RUNTIME_ERROR;
         }
       } else if (IS_DICT(seqVal)) {
         ObjDict *dict = AS_DICT(seqVal);
-
+        if (!IS_STRING(indexVal)) {
+          runtimeError("Dictionary keys must be strings.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
         Value result;
         if (tableGet(&dict->fields, indexVal, &result)) {
-          pop(); // index
-          pop(); // dict
+          pop();
+          pop();
           push(result);
         } else {
-          // Safely convert the unknown key to a string for the error message!
           pop();
           pop();
-          push(NIL_VAL);
+          push(NIL_VAL); // Safe cache miss!
         }
+      }
+      // NEW: Add native string indexing! `string[2]`
+      else if (IS_STRING(seqVal)) {
+        if (!IS_NUMBER(indexVal)) {
+          runtimeError("String index must be a number.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        ObjString *str = AS_STRING(seqVal);
+        int index = (int)AS_NUMBER(indexVal) - 1;
+        if (index < 0 || index >= str->length) {
+          runtimeError("String index out of bounds.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        uint8_t charByte = (uint8_t)str->chars[index];
+        pop();
+        pop();
+        push(OBJ_VAL(vm.charStrings[charByte]));
       } else {
         runtimeError("Type is not subscriptable.");
         return INTERPRET_RUNTIME_ERROR;
@@ -682,72 +849,41 @@ static InterpretResult run() {
     }
 
     case OP_SET_SUBSCRIPT: {
-      // Stack Layout: [Collection] [Index] [Value] <--- Top
       Value value = peek(0);
       Value indexVal = peek(1);
-      Value collectionVal = peek(2); // We renamed this from listVal
+      Value collectionVal = peek(2);
 
-      // ==========================================
-      // PATH 1: DICTIONARY ASSIGNMENT
-      // ==========================================
       if (IS_DICT(collectionVal)) {
         ObjDict *dict = AS_DICT(collectionVal);
-
-        // Set or Overwrite the value in the hash map (O(1) time!)
+        if (!IS_STRING(indexVal)) {
+          runtimeError("Dictionary keys must be strings.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
         tableSet(&dict->fields, indexVal, value);
-
-        // Cleanup: Leave the VALUE on the stack so chained assignments work
-        pop(); // value
-        pop(); // index
-        pop(); // dict
+        pop();
+        pop();
+        pop();
         push(value);
-      }
-
-      // ==========================================
-      // PATH 2: LIST ASSIGNMENT (Your existing code!)
-      // ==========================================
-      else if (IS_LIST(collectionVal)) {
+      } else if (IS_LIST(collectionVal)) {
         ObjList *list = AS_LIST(collectionVal);
-
         if (!IS_NUMBER(indexVal)) {
           runtimeError("List index must be a number.");
           return INTERPRET_RUNTIME_ERROR;
         }
-
-        int index = (int)AS_NUMBER(indexVal);
-
-        // Adjust for 1-based indexing
-        if (index < 0) {
-          index = list->count + index + 1;
-        }
-
-        // Convert to 0-based C array index
-        index--;
-
-        // Bounds Check
+        int index = (int)AS_NUMBER(indexVal) - 1;
         if (index < 0 || index >= list->count) {
           runtimeError("List index out of bounds.");
           return INTERPRET_RUNTIME_ERROR;
         }
-
-        // Store the value
         list->items[index] = value;
-
-        // Cleanup
-        pop(); // value
-        pop(); // index
-        pop(); // list
+        pop();
+        pop();
+        pop();
         push(value);
-      }
-
-      // ==========================================
-      // PATH 3: ERROR
-      // ==========================================
-      else {
-        runtimeError("Can only subscript lists and dictionaries.");
+      } else {
+        runtimeError("Can only assign to lists and dictionaries.");
         return INTERPRET_RUNTIME_ERROR;
       }
-
       break;
     }
 
@@ -934,10 +1070,174 @@ static InterpretResult run() {
         // 3. LOAD: Update local 'ip' from the new frame
         ip = frame->ip;
         break;
+      } else if (IS_MULTI_FUNCTION(callee)) {
+        ObjMultiFunction *multi = AS_MULTI_FUNCTION(callee);
+
+        if (argCount != multi->arity) {
+          runtimeError("Expected %d arguments but got %d.", multi->arity,
+                       argCount);
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        // Pointer to the first argument on the stack
+        Value *args = vm.stackTop - argCount;
+
+        // --- THE SYMMETRIC SCORING ENGINE ---
+        ObjFunction *bestMethod = NULL;
+        int bestScore = -1;
+        bool isAmbiguous = false;
+
+        for (int i = 0; i < multi->methodCount; i++) {
+          ObjType **signature = multi->signatures[i];
+          bool isMatch = true;
+          int currentScore = 0;
+
+          // Check every argument against the signature
+          for (int j = 0; j < argCount; j++) {
+            ObjType *expectedType = signature[j];
+            ObjType *actualType =
+                getObjType(args[j]); // <--- THE UNIVERSAL RESOLVER!
+
+            if (expectedType == actualType) {
+              currentScore += 2; // EXACT MATCH: 2 Points
+            } else if (expectedType == NULL || expectedType == vm.anyType) {
+              currentScore += 1; // ANY WILDCARD: 1 Point
+            } else {
+              isMatch = false; // TYPE MISMATCH: Hard fail
+              break;
+            }
+          }
+
+          // If the signature is mathematically valid, score it!
+          if (isMatch) {
+            if (currentScore > bestScore) {
+              bestScore = currentScore;
+              bestMethod = multi->methods[i];
+              isAmbiguous = false; // We have a clear winner (for now)
+            } else if (currentScore == bestScore) {
+              isAmbiguous =
+                  true; // A perfect tie! We have an intersection collision.
+            }
+          }
+        }
+
+        // --- RESOLUTION & THE INTERSECTION MANDATE ---
+        if (bestMethod == NULL) {
+          runtimeError(
+              "No matching signature found for this phrasal function.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        if (isAmbiguous) {
+          runtimeError("AMBIGUOUS DISPATCH ERROR: Multiple methods match this "
+                       "call with the exact same specificity. "
+                       "Please define a tie-breaker intersection method to "
+                       "clarify your intent.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        // --- EXECUTE THE WINNING METHOD ---
+        if (vm.frameCount == FRAMES_MAX) {
+          runtimeError("Stack overflow.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        frame->ip = ip;
+        CallFrame *newFrame = &vm.frames[vm.frameCount++];
+        newFrame->function = bestMethod;
+        newFrame->ip = bestMethod->chunk.code;
+        newFrame->slots = vm.stackTop - argCount - 1;
+        frame = newFrame;
+        ip = frame->ip;
+
+        break;
       }
 
-      runtimeError("Can only call functions and classes.");
+      runtimeError("Can only call functions, multi-functions, and classes.");
       return INTERPRET_RUNTIME_ERROR;
+    }
+
+    case OP_TYPE_DEF: {
+      ObjString *name = READ_STRING();
+      uint16_t propertyCount = READ_SHORT();
+
+      // 1. Construct the Blueprint!
+      ObjType *type = newType(name);
+
+      // GC Protection: We push it before we loop through the stack
+      push(OBJ_VAL(type));
+
+      // 2. Extract properties from the stack
+      // Stack Layout: [key1] [val1] [key2] [val2] ... [type] <--- Top
+      Value *itemsStart = vm.stackTop - 1 - (propertyCount * 2);
+
+      for (int i = 0; i < propertyCount; i++) {
+        Value key = itemsStart[i * 2];
+        Value val = itemsStart[(i * 2) + 1];
+
+        // Save the default value into the Blueprint's dictionary!
+        tableSet(&type->properties, key, val);
+      }
+
+      // 3. Save the finished Blueprint to Global Variables so the language
+      // knows it exists!
+      tableSet(&vm.globals, OBJ_VAL(name), OBJ_VAL(type));
+
+      // 4. Clean up the stack
+      pop();                              // Pop the protected ObjType
+      vm.stackTop -= (propertyCount * 2); // Pop all keys and values
+
+      break;
+    }
+
+    case OP_DEFINE_METHOD: {
+      ObjString *name = READ_STRING();
+      ObjFunction *method =
+          AS_FUNCTION(peek(0)); // The compiled method is at the top!
+      int arity = method->arity;
+
+      // The types are sitting right below the method on the stack
+      Value *typesStart = vm.stackTop - 1 - arity;
+
+      // 1. Extract the Expected Types
+      ObjType **signatures = ALLOCATE(ObjType *, arity);
+      for (int i = 0; i < arity; i++) {
+        if (!IS_TYPE(typesStart[i])) {
+          runtimeError(
+              "Type annotation must resolve to a valid Type Blueprint.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        signatures[i] = AS_TYPE(typesStart[i]);
+      }
+
+      // 2. Does the MultiFunction folder already exist in globals?
+      Value existing;
+      ObjMultiFunction *multi = NULL;
+      if (tableGet(&vm.globals, OBJ_VAL(name), &existing) &&
+          IS_MULTI_FUNCTION(existing)) {
+        multi = AS_MULTI_FUNCTION(existing); // Yes, open the folder!
+      } else {
+        multi = newMultiFunction(name, arity); // No, create a brand new folder!
+        tableSet(&vm.globals, OBJ_VAL(name), OBJ_VAL(multi));
+      }
+
+      // 3. Slide the method and signature into the arrays
+      if (multi->methodCapacity < multi->methodCount + 1) {
+        int oldCap = multi->methodCapacity;
+        multi->methodCapacity = GROW_CAPACITY(oldCap);
+        multi->methods = GROW_ARRAY(ObjFunction *, multi->methods, oldCap,
+                                    multi->methodCapacity);
+        multi->signatures = GROW_ARRAY(ObjType **, multi->signatures, oldCap,
+                                       multi->methodCapacity);
+      }
+      multi->methods[multi->methodCount] = method;
+      multi->signatures[multi->methodCount] = signatures;
+      multi->methodCount++;
+
+      // 4. Clean up the stack (Pop the method and the types)
+      pop();
+      vm.stackTop -= arity;
+      break;
     }
 
     case OP_RETURN: {

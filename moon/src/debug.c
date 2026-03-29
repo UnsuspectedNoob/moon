@@ -70,6 +70,17 @@ static int constantLongInstruction(const char *name, Chunk *chunk, int offset) {
   return offset + 3;
 }
 
+static int typeInstruction(const char *name, Chunk *chunk, int offset) {
+  uint16_t nameConst =
+      (uint16_t)(chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
+  uint16_t count =
+      (uint16_t)(chunk->code[offset + 3] << 8) | chunk->code[offset + 4];
+  printf("%-16s %4d '", name, nameConst);
+  printValue(chunk->constants.values[nameConst]);
+  printf("' (%d properties)\n", count);
+  return offset + 5;
+}
+
 int disassembleInstruction(Chunk *chunk, int offset) {
   printf("%04d ", offset);
   if (offset > 0 && chunk->lines[offset] == chunk->lines[offset - 1]) {
@@ -140,7 +151,11 @@ int disassembleInstruction(Chunk *chunk, int offset) {
   case OP_CALL:
     return shortInstruction("OP_CALL", chunk, offset);
 
-    // ...
+  case OP_GET_PROPERTY:
+    return constantLongInstruction("OP_GET_PROPERTY", chunk, offset);
+  case OP_SET_PROPERTY:
+    return constantLongInstruction("OP_SET_PROPERTY", chunk, offset);
+
   case OP_GET_SUBSCRIPT:
     return simpleInstruction("OP_GET_SUBSCRIPT", offset);
   case OP_SET_SUBSCRIPT:
@@ -156,6 +171,13 @@ int disassembleInstruction(Chunk *chunk, int offset) {
   case OP_GET_ITER: // <--- Add this
     return simpleInstruction("OP_GET_ITER", offset);
 
+  case OP_TYPE_DEF:
+    return typeInstruction("OP_TYPE_DEF", chunk, offset);
+  case OP_INSTANTIATE:
+    return shortInstruction("OP_INSTANTIATE", chunk, offset);
+  case OP_DEFINE_METHOD:
+    return constantLongInstruction("OP_DEFINE_METHOD", chunk, offset);
+
   case OP_RETURN:
     return simpleInstruction("OP_RETURN", offset);
 
@@ -169,16 +191,14 @@ void printAST(Node *node, int indent) {
   if (node == NULL)
     return;
 
-  // 1. Print the indentation branches
   for (int i = 0; i < indent; i++) {
     printf((i == indent - 1) ? " ├─ " : " │  ");
   }
 
-  // 2. Print the Node Type and its specific Data
   switch (node->type) {
   case NODE_LITERAL:
     printf("[LITERAL: ");
-    printValue(node->as.literal.value); // Let the VM print the raw value!
+    printValue(node->as.literal.value);
     printf("]\n");
     break;
 
@@ -268,14 +288,9 @@ void printAST(Node *node, int indent) {
   case NODE_DICT:
     printf("[DICTIONARY: %d pairs]\n", node->as.dictExpr.count);
     for (int i = 0; i < node->as.dictExpr.count; i++) {
-
-      // 1. Print the artificial [PAIR] grouping
-      for (int j = 0; j < indent + 1; j++) {
-        printf(" |  "); // Match your specific tree branch spacing here!
-      }
+      for (int j = 0; j < indent + 1; j++)
+        printf(" |  ");
       printf("├─ [PAIR]\n");
-
-      // 2. Print the actual nodes nested one level deeper
       printAST(node->as.dictExpr.keys[i], indent + 2);
       printAST(node->as.dictExpr.values[i], indent + 2);
     }
@@ -304,13 +319,15 @@ void printAST(Node *node, int indent) {
   case NODE_FUNCTION:
     printf("[FUNCTION: %.*s]\n", node->as.function.name.length,
            node->as.function.name.start);
-    // Print the parameters
     for (int i = 0; i < node->as.function.paramCount; i++) {
-      printf("%*s ├─ Param: %.*s\n", indent * 4, "",
+      // THE UPGRADE: It prints both the parameter name AND its extracted Type
+      // Annotation!
+      printf("%*s ├─ Param: %.*s (Type: %.*s)\n", indent * 4, "",
              node->as.function.parameters[i].length,
-             node->as.function.parameters[i].start);
+             node->as.function.parameters[i].start,
+             node->as.function.paramTypes[i].length,
+             node->as.function.paramTypes[i].start);
     }
-    // Print the body
     printf("%*s ├─ [BODY]\n", indent * 4, "");
     printAST(node->as.function.body, indent + 2);
     break;
@@ -358,6 +375,29 @@ void printAST(Node *node, int indent) {
       printAST(node->as.interpolation.parts[i], indent + 1);
     }
     break;
+
+  case NODE_TYPE_DECL:
+    printf("[TYPE BLUEPRINT: %.*s]\n", node->as.typeDecl.name.length,
+           node->as.typeDecl.name.start);
+    for (int i = 0; i < node->as.typeDecl.count; i++) {
+      printf("%*s ├─ Property: %.*s\n", indent * 4, "",
+             node->as.typeDecl.propertyNames[i].length,
+             node->as.typeDecl.propertyNames[i].start);
+      printAST(node->as.typeDecl.defaultValues[i], indent + 2);
+    }
+    break;
+
+  case NODE_INSTANTIATE:
+    printf("[INSTANTIATE CLONE]\n");
+    printAST(node->as.instantiate.target, indent + 1);
+    for (int i = 0; i < node->as.instantiate.count; i++) {
+      printf("%*s ├─ Override: %.*s\n", indent * 4, "",
+             node->as.instantiate.propertyNames[i].length,
+             node->as.instantiate.propertyNames[i].start);
+      printAST(node->as.instantiate.values[i], indent + 2);
+    }
+    break;
+
   default:
     printf("[UNKNOWN NODE TYPE: %d]\n", node->type);
     break;

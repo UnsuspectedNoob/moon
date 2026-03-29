@@ -3,6 +3,7 @@
 #include <stdlib.h>
 
 #include "memory.h"
+#include "object.h"
 #include "vm.h"
 
 void *reallocate(void *pointer, size_t oldSize, size_t newSize) {
@@ -56,6 +57,42 @@ void freeObject(Obj *object) {
 
   case OBJ_NATIVE: {
     FREE(ObjNative, object);
+    break;
+  }
+
+  case OBJ_TYPE_BLUEPRINT: {
+    ObjType *type = (ObjType *)object;
+    freeTable(&type->properties);
+    FREE(ObjType, object);
+    break;
+  }
+
+  case OBJ_INSTANCE: {
+    ObjInstance *instance = (ObjInstance *)object;
+    freeTable(&instance->fields); // Free the hash table!
+    FREE(ObjInstance, object);
+    break;
+  }
+
+  case OBJ_MULTI_FUNCTION: {
+    ObjMultiFunction *multi = (ObjMultiFunction *)object;
+
+    // Free the 2D signatures array
+    if (multi->signatures != NULL) {
+      for (int i = 0; i < multi->methodCount; i++) {
+        if (multi->signatures[i] != NULL) {
+          FREE_ARRAY(ObjType *, multi->signatures[i], multi->arity);
+        }
+      }
+      FREE_ARRAY(ObjType **, multi->signatures, multi->methodCapacity);
+    }
+
+    // Free the methods array
+    if (multi->methods != NULL) {
+      FREE_ARRAY(ObjFunction *, multi->methods, multi->methodCapacity);
+    }
+
+    FREE(ObjMultiFunction, object);
     break;
   }
   }

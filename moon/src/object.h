@@ -14,10 +14,13 @@ typedef enum {
   OBJ_DICT,
   OBJ_FUNCTION,
   OBJ_NATIVE,
-} ObjType;
+  OBJ_TYPE_BLUEPRINT,
+  OBJ_INSTANCE,
+  OBJ_MULTI_FUNCTION,
+} ObjKind;
 
 typedef struct Obj {
-  ObjType type;
+  ObjKind type;
   struct Obj *next; // Intrusion pointer for GC (we'll use this later)
 } Obj;
 
@@ -87,8 +90,35 @@ typedef struct {
   double step;
 } ObjRange;
 
+// --- THE BLUEPRINT (e.g., "Player", "Stack") ---
+typedef struct ObjType {
+  Obj obj;
+  ObjString *name;
+  Table properties;
+  bool isNative;
+} ObjType;
+
+// --- THE CLONE (The physical object in memory) ---
+typedef struct {
+  Obj obj;
+  ObjType *type; // The invisible pointer back to its Blueprint!
+  Table fields;  // The dictionary holding its actual data (health, name)
+} ObjInstance;
+
+// --- THE DISPATCHER (The container for overloaded methods) ---
+typedef struct {
+  Obj obj;
+  ObjString *name; // The mangled name: "push$1_to$1"
+  int arity;       // How many arguments this phrase takes
+  int methodCount;
+  int methodCapacity;
+  ObjFunction **methods; // Array of actual compiled bytecode chunks
+  ObjType ***signatures; // 2D Array! [Method Index][Argument Index] -> Points
+                         // to ObjType
+} ObjMultiFunction;
+
 // Helper to check type
-static inline bool isObjType(Value value, ObjType type) {
+static inline bool isObjType(Value value, ObjKind type) {
   return IS_OBJ(value) && AS_OBJ(value)->type == type;
 }
 
@@ -110,6 +140,9 @@ void deleteList(ObjList *list, int index);
 uint32_t hashString(const char *key, int length);
 
 ObjRange *newRange(double start, double end, double step);
+ObjType *newType(ObjString *name);
+ObjInstance *newInstance(ObjType *type);
+ObjMultiFunction *newMultiFunction(ObjString *name, int arity);
 
 ObjString *valueToString(Value value);
 

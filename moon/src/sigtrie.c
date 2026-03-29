@@ -1,5 +1,5 @@
 #include "sigtrie.h"
-#include "object.h"
+#include "object.h" // For hashString
 #include <stdlib.h>
 #include <string.h>
 
@@ -14,9 +14,8 @@ typedef struct {
   TrieNode *trieRoot;
 } RegistryEntry;
 
-#define TABLE_MAX 255
-static RegistryEntry phrasalTable[TABLE_MAX];
-static int tableCount = 0;
+#define TABLE_CAPACITY 1024
+static RegistryEntry phrasalTable[TABLE_CAPACITY];
 
 // --- UTILS ---
 static char *my_strdup(const char *s) {
@@ -41,11 +40,11 @@ static TrieNode *newNode(PhraseNodeType type) {
   return node;
 }
 
-static void freeNode(TrieNode *node) {
+static void freeTrieNode(TrieNode *node) {
   if (node == NULL)
     return;
   for (int i = 0; i < node->childCount; i++) {
-    freeNode(node->children[i]);
+    freeTrieNode(node->children[i]);
   }
   if (node->children != NULL)
     FREE_TRIE(node->children);
@@ -57,59 +56,64 @@ static void freeNode(TrieNode *node) {
 // --- PUBLIC API ---
 
 void initSignatureTable() {
-  tableCount = 0;
-  for (int i = 0; i < TABLE_MAX; i++) {
-    phrasalTable[i].rootHash = 0;
-    phrasalTable[i].rootWord = NULL;
-    phrasalTable[i].trieRoot = NULL;
+  for (int i = 0; i < TABLE_CAPACITY; i++) {
+    phrasalTable[i].rootWord = NULL; // NULL means empty bucket
   }
 }
 
 void freeSignatureTable() {
-  for (int i = 0; i < tableCount; i++) {
-    FREE_TRIE(phrasalTable[i].rootWord);
-    freeNode(phrasalTable[i].trieRoot);
+  for (int i = 0; i < TABLE_CAPACITY; i++) {
+    if (phrasalTable[i].rootWord != NULL) {
+      FREE_TRIE(phrasalTable[i].rootWord);
+      freeTrieNode(phrasalTable[i].trieRoot);
+      phrasalTable[i].rootWord = NULL;
+    }
   }
-  tableCount = 0;
 }
 
 TrieNode *getSignatureTrie(const char *rootWord) {
   uint32_t hash = hashString(rootWord, strlen(rootWord));
+  uint32_t index = hash % TABLE_CAPACITY;
 
-  for (int i = 0; i < tableCount; i++) {
-    if (phrasalTable[i].rootHash == hash) {
-      return phrasalTable[i].trieRoot;
+  // O(1) Lookup with Linear Probing for collisions!
+  for (;;) {
+    RegistryEntry *entry = &phrasalTable[index];
+    if (entry->rootWord == NULL)
+      return NULL; // Not found
+    if (entry->rootHash == hash && strcmp(entry->rootWord, rootWord) == 0) {
+      return entry->trieRoot; // Found it!
     }
+    index = (index + 1) % TABLE_CAPACITY;
   }
-  return NULL;
 }
 
 void insertSignature(const char *rootWord, const char *mangledName) {
-  // 1. Find or create the root entry in the Hash Table
   uint32_t rHash = hashString(rootWord, strlen(rootWord));
+  uint32_t index = rHash % TABLE_CAPACITY;
   TrieNode *current = NULL;
 
-  for (int i = 0; i < tableCount; i++) {
-    if (phrasalTable[i].rootHash == rHash) {
-      current = phrasalTable[i].trieRoot;
+  // Find the exact bucket or an empty one
+  for (;;) {
+    RegistryEntry *entry = &phrasalTable[index];
+    if (entry->rootWord == NULL) {
+      // Empty bucket, claim it!
+      entry->rootHash = rHash;
+      entry->rootWord = my_strdup(rootWord);
+      entry->trieRoot = newNode(NODE_LABEL);
+      current = entry->trieRoot;
+      break;
+    } else if (entry->rootHash == rHash &&
+               strcmp(entry->rootWord, rootWord) == 0) {
+      // Found existing root!
+      current = entry->trieRoot;
       break;
     }
-  }
-
-  if (current == NULL) {
-    if (tableCount >= TABLE_MAX)
-      return; // Table full
-    phrasalTable[tableCount].rootHash = rHash;
-    phrasalTable[tableCount].rootWord = my_strdup(rootWord);
-    phrasalTable[tableCount].trieRoot = newNode(NODE_LABEL); // Dummy root
-    current = phrasalTable[tableCount].trieRoot;
-    tableCount++;
+    index = (index + 1) % TABLE_CAPACITY;
   }
 
   // 2. Walk the mangled string and build the DFA branches
   const char *cursor = mangledName + strlen(rootWord);
 
-  // If there is nothing after the root (e.g., "greet$0")
   if (*cursor == '$') {
     cursor++;
     int arity = atoi(cursor);
@@ -122,7 +126,6 @@ void insertSignature(const char *rootWord, const char *mangledName) {
     }
   }
 
-  // Reset cursor to parse actual branches
   cursor = mangledName + strlen(rootWord);
 
   while (*cursor != '\0') {
@@ -153,7 +156,6 @@ void insertSignature(const char *rootWord, const char *mangledName) {
       continue;
     }
 
-    // Do we already have this child?
     TrieNode *nextNode = NULL;
     for (int i = 0; i < current->childCount; i++) {
       TrieNode *child = current->children[i];
@@ -169,7 +171,6 @@ void insertSignature(const char *rootWord, const char *mangledName) {
       }
     }
 
-    // If not, create it!
     if (nextNode == NULL) {
       nextNode = newNode(nextType);
       nextNode->labelHash = nextHash;
@@ -184,10 +185,9 @@ void insertSignature(const char *rootWord, const char *mangledName) {
       current->children[current->childCount++] = nextNode;
     }
 
-    current = nextNode; // Move down the tree
+    current = nextNode;
   }
 
-  // 3. Mark the finish line
   current->isTerminal = true;
   if (current->mangledName)
     FREE_TRIE(current->mangledName);
