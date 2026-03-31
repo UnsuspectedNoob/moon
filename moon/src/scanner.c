@@ -257,14 +257,19 @@ static TokenType identifierType() {
   case 'u': {
     if (scanner.current - scanner.start > 1) {
       switch (scanner.start[1]) {
-      case 'n':
+      case 'n': {
         if (scanner.start[2] == 'l')
           return checkKeyword(3, 3, "ess", TOKEN_UNLESS); // unless
         if (scanner.start[2] == 't')
           return checkKeyword(3, 2, "il", TOKEN_UNTIL); // until
         break;
       }
+
+      case 'p':
+        return checkKeyword(2, 4, "date", TOKEN_UPDATE);
+      }
     }
+
     break;
   }
 

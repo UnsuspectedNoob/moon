@@ -76,6 +76,19 @@ static bool canStartExpression(TokenType type) {
   }
 }
 
+bool isMathOperator(Token opToken) {
+  switch (opToken.type) {
+  case TOKEN_PLUS:
+  case TOKEN_MINUS:
+  case TOKEN_STAR:
+  case TOKEN_SLASH:
+  case TOKEN_MOD:
+    return true;
+  default:
+    return false;
+  }
+}
+
 void hoistPhrases(const char *source) {
   initSignatureTable();
   initScanner(source);
@@ -1283,6 +1296,64 @@ static Node *typeDeclaration() {
   return node;
 }
 
+static Node *updateStatement() {
+  int line = parser.previous.line;
+
+  // 1. The Target (L-Value)
+  // Parses things like 'score', 'player's health', or 'list[0]'
+  Node *target = parseLValue();
+
+  // 2. The Operator
+
+  Token opToken = parser.previous;
+
+  if (isMathOperator(opToken)) {
+    errorCurrentHint(ERR_SYNTAX, "I was expecting a math operator here.",
+                     "The update statement requires a math operator (+, -, *, "
+                     "/, or %). e.g., 'update score * 2'");
+    return NULL;
+  }
+
+  // OPTIMIZATION: If it's a plus, swap to our specialized inplace token!
+  if (opToken.type == TOKEN_PLUS) {
+    opToken.type = TOKEN_ADD_INPLACE;
+  }
+
+  // 3. The Value (R-Value)
+  Node *value = expression();
+
+  // 4. THE DESUGARING
+  // We clone the target so we can put it on the right side of the binary node
+  Node *accumulator = cloneNode(target);
+  if (accumulator == NULL) {
+    errorHint(ERR_SYNTAX, "This isn't a valid target for 'update'.",
+              "You can only update variables, subscripts, or properties.");
+    return NULL;
+  }
+
+  // Build the math operation: (Target OP Value)
+  Node *binaryMath = newBinaryNode(accumulator, opToken, value, line);
+
+  // Wrap it in a SET assignment: Target = (Target OP Value)
+  Node *targets[1] = {target};
+  Node *setValues[1] = {binaryMath};
+
+  Node *updateNode = newSetNode(targets, 1, setValues, 1, line);
+
+  // --- OPTIONAL: AST INVERSION (Statement Modifiers) ---
+  if (match(TOKEN_IF)) {
+    Node *cond = expression();
+    return newIfNode(cond, updateNode, NULL, line);
+  } else if (match(TOKEN_UNLESS)) {
+    Node *cond = expression();
+    Token notToken = {TOKEN_NOT, "not", 3, line, 0};
+    Node *invertedCond = newUnaryNode(notToken, cond, line);
+    return newIfNode(invertedCond, updateNode, NULL, line);
+  }
+
+  return updateNode;
+}
+
 static Node *statement() {
   currentStickySubject = NULL;
   ignoreNewlines();
@@ -1312,6 +1383,8 @@ static Node *statement() {
     stmt = addStatement();
   } else if (match(TOKEN_GIVE)) {
     stmt = giveStatement();
+  } else if (match(TOKEN_UPDATE)) {
+    stmt = updateStatement();
   } else {
     stmt = expressionStatement();
   }
