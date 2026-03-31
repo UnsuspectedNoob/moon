@@ -332,8 +332,8 @@ TARGET_OP_ADD: {
   // --- RULE 2: THE COERCER (String + Any) ---
   else if (IS_STRING(a)) {
     ObjString *leftStr = AS_STRING(a);
-    ObjString *rightStr =
-        valueToString(b); // Dynamically stringify the right side!
+    // Dynamically stringify the right side!
+    ObjString *rightStr = valueToString(b);
 
     // Clean the stack
     pop(); // Pop b
@@ -728,8 +728,14 @@ TARGET_OP_INSTANTIATE: {
   }
 
   ObjType *type = AS_TYPE(targetVal);
+  // --- THE NATIVE LOCKDOWN FIX ---
+  if (type->isNative) {
+    runtimeError("Cannot instantiate native types (like '%s') directly.",
+                 type->name->chars);
+    return INTERPRET_RUNTIME_ERROR;
+  }
+  // -------------------------------
   ObjInstance *instance = newInstance(type);
-
   push(OBJ_VAL(instance)); // GC Protection
 
   // 1. INHERITANCE MERGE: Copy all default properties from the Blueprint
@@ -769,6 +775,18 @@ TARGET_OP_GET_PROPERTY: {
     }
   }
 
+  // --- THE DICTIONARY FIX ---
+  else if (IS_DICT(target)) {
+    ObjDict *dict = AS_DICT(target);
+    if (tableGet(&dict->fields, OBJ_VAL(name), &value)) {
+      pop();
+      push(value);
+      DISPATCH();
+    }
+    // If it's not a key, we fall through to check if it's a native
+    // dictionary method on the Blueprint (like dict.keys)
+  }
+
   // 3. BLUEPRINT LOOKUP: Check the Shared Blueprint!
   // This automatically catches native C-getters (like list.length),
   // AND it will catch shared methods for custom types later!
@@ -799,16 +817,23 @@ TARGET_OP_GET_PROPERTY: {
 
 TARGET_OP_SET_PROPERTY: {
   Value value = peek(0);
-  ObjString *name = READ_STRING(); // Reads 16-bit constant from bytecode!
+  ObjString *name = READ_STRING();
   Value target = peek(1);
 
-  if (!IS_INSTANCE(target)) {
-    runtimeError("Only object instances have mutable properties.");
-    return INTERPRET_RUNTIME_ERROR;
+  if (IS_INSTANCE(target)) {
+    ObjInstance *instance = AS_INSTANCE(target);
+    tableSet(&instance->fields, OBJ_VAL(name), value);
   }
 
-  ObjInstance *instance = AS_INSTANCE(target);
-  tableSet(&instance->fields, OBJ_VAL(name), value);
+  // --- THE DICTIONARY FIX ---
+  else if (IS_DICT(target)) {
+    ObjDict *dict = AS_DICT(target);
+    tableSet(&dict->fields, OBJ_VAL(name), value);
+  } else {
+    runtimeError(
+        "Only object instances and dictionaries have mutable properties.");
+    return INTERPRET_RUNTIME_ERROR;
+  }
 
   pop();       // Pop value
   pop();       // Pop target
@@ -975,7 +1000,7 @@ TARGET_OP_GET_END_INDEX: {
   for (Value *ptr = vm.stackTop - 1; ptr >= vm.stack; ptr--) {
     if (IS_LIST(*ptr) || IS_STRING(*ptr)) {
       seq = *ptr;
-      DISPATCH();
+      break;
     }
   }
 
@@ -1184,7 +1209,7 @@ TARGET_OP_CALL: {
           currentScore += 1; // ANY WILDCARD: 1 Point
         } else {
           isMatch = false; // TYPE MISMATCH: Hard fail
-          DISPATCH();
+          break;
         }
       }
 
