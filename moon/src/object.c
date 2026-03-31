@@ -279,9 +279,74 @@ ObjString *valueToString(Value value) {
   }
 
   if (IS_DICT(value)) {
-    // For now, just print the type. We can write a full JSON stringifier later!
-    return copyString("<dict>", 6);
+    ObjDict *dict = AS_DICT(value);
+
+    // Start with a reasonable buffer capacity
+    int capacity = 64;
+    int length = 0;
+    char *buffer = malloc(capacity);
+
+    buffer[length++] = '{';
+    buffer[length++] = ' ';
+
+    bool firstItem = true;
+
+    // Loop through the internal hash table array
+    for (int i = 0; i < dict->fields.capacity; i++) {
+      Entry *entry = &dict->fields.entries[i];
+
+      // Skip empty slots and tombstones
+      if (IS_EMPTY(entry->key) || IS_TOMB(entry->key)) {
+        continue;
+      }
+
+      // 1. Recursively stringify the key and value!
+      ObjString *keyStr = valueToString(entry->key);
+      push(OBJ_VAL(keyStr)); // Protect from GC
+
+      ObjString *valStr = valueToString(entry->value);
+      push(OBJ_VAL(valStr)); // Protect from GC
+
+      // 2. Ensure the buffer is large enough for: key + ": " + val + ", } \0"
+      while (length + keyStr->length + valStr->length + 6 > capacity) {
+        capacity *= 2;
+        buffer = realloc(buffer, capacity);
+      }
+
+      // 3. Add the comma separator (if it's not the first item)
+      if (!firstItem) {
+        buffer[length++] = ',';
+        buffer[length++] = ' ';
+      }
+      firstItem = false;
+
+      // 4. Copy the Key
+      memcpy(buffer + length, keyStr->chars, keyStr->length);
+      length += keyStr->length;
+
+      // 5. Add the Colon
+      buffer[length++] = ':';
+      buffer[length++] = ' ';
+
+      // 6. Copy the Value
+      memcpy(buffer + length, valStr->chars, valStr->length);
+      length += valStr->length;
+
+      pop(); // Pop valStr
+      pop(); // Pop keyStr
+    }
+
+    buffer[length++] = ' ';
+    buffer[length++] = '}';
+    buffer[length] = '\0'; // Null terminator
+
+    // Transfer the raw C string into the VM's managed memory pool!
+    ObjString *result = copyString(buffer, length);
+    free(buffer);
+
+    return result;
   }
+
   // --- LIST FORMATTING ---
   if (IS_LIST(value)) {
     ObjList *list = AS_LIST(value);

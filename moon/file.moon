@@ -1,7 +1,7 @@
-
-let person be {
-  name: "Munachi",
-  age: 30
+let player be {
+  "inventory": ["Sword", "Shield", "Potion"],
+  "name": "Munachi",
+  "level": 42,
 }
 
-show person
+show player

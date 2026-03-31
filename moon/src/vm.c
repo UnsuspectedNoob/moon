@@ -128,12 +128,13 @@ static Value clockNative(int argCount, Value *args) {
 static Value showNative(int argCount, Value *args) {
   (void)argCount;
 
-  // Phrasal 'show' only expects 1 argument (the evaluated expression)
-  printValue(args[0]);
-  printf(" "); // Always append the newline
-  printf("%s", "\n");
+  // 1. Send the value through our robust, recursive stringifier!
+  ObjString *stringified = valueToString(args[0]);
 
-  return NIL_VAL; // Native functions must return something
+  // 2. Print the actual formatted characters to the terminal
+  printf("%s\n", stringified->chars);
+
+  return NIL_VAL;
 }
 
 // --- NATIVE GETTER LOGIC ---
