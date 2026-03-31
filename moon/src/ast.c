@@ -96,14 +96,14 @@ Node *newListNode(Node **items, int count, int line) {
 }
 
 Node *newDictNode(Node **keys, Node **values, int count, int line) {
-  Node *node = malloc(sizeof(Node));
-  node->type = NODE_DICT;
-  node->line = line;
-  node->parent = NULL;
+  // 1. Use the unified AST allocator
+  Node *node = allocateNode(NODE_DICT, line);
 
   node->as.dictExpr.count = count;
-  node->as.dictExpr.keys = malloc(sizeof(Node *) * count);
-  node->as.dictExpr.values = malloc(sizeof(Node *) * count);
+
+  // 2. Use the VM's memory macros so the GC tracks these bytes!
+  node->as.dictExpr.keys = ALLOCATE(Node *, count);
+  node->as.dictExpr.values = ALLOCATE(Node *, count);
 
   for (int i = 0; i < count; i++) {
     node->as.dictExpr.keys[i] = keys[i];
@@ -426,13 +426,14 @@ void freeNode(Node *node) {
     FREE_ARRAY(Node *, node->as.list.items, node->as.list.count);
     break;
   }
+
   case NODE_DICT: {
     for (int i = 0; i < node->as.dictExpr.count; i++) {
       freeNode(node->as.dictExpr.keys[i]);
       freeNode(node->as.dictExpr.values[i]);
     }
-    free(node->as.dictExpr.keys); // You used standard malloc here originally
-    free(node->as.dictExpr.values);
+    FREE_ARRAY(Node *, node->as.dictExpr.keys, node->as.dictExpr.count);
+    FREE_ARRAY(Node *, node->as.dictExpr.values, node->as.dictExpr.count);
     break;
   }
   case NODE_INTERPOLATION: {
