@@ -11,6 +11,7 @@
 
 #include "compiler.h"
 #include "debug.h"
+#include "error.h"
 #include "memory.h"
 #include "object.h"
 #include "value.h"
@@ -19,29 +20,48 @@ VM vm; // Define the global VM instance here
 
 static void resetStack() { vm.stackTop = vm.stack; }
 
-static void runtimeError(const char *format, ...) {
+// ==========================================
+// THE ORDEAL RUNTIME ERROR ENGINE
+// ==========================================
+
+// The Master Runtime Error function that talks to error.c
+static void runtimeErrorDetailed(ErrorType type, const char *hint,
+                                 const char *format, ...) {
+  // 1. Safely format the dynamic message into a string buffer
+  char message[1024];
   va_list args;
   va_start(args, format);
-  vfprintf(stderr, format, args);
+  vsnprintf(message, sizeof(message), format, args);
   va_end(args);
-  fputs("\n", stderr);
 
-  // Walk the stack trace from top to bottom
+  // 2. Extract the exact line number where the VM crashed
+  CallFrame *frame = &vm.frames[vm.frameCount - 1];
+  ObjFunction *function = frame->function;
+
+  // The IP points to the *next* instruction. We step back by 1 to find the one
+  // that failed.
+  size_t instruction = frame->ip - function->chunk.code - 1;
+  int line = function->chunk.lines[instruction];
+
+  // 3. Call the beautiful Error Engine!
+  reportRuntimeError(line, type, message, hint);
+
+  // 4. Print the modernized Stack Trace
+  fprintf(stderr, "Stack Trace:\n");
   for (int i = vm.frameCount - 1; i >= 0; i--) {
-    CallFrame *frame = &vm.frames[i];
-    ObjFunction *function = frame->function;
+    CallFrame *traceFrame = &vm.frames[i];
+    ObjFunction *traceFunc = traceFrame->function;
+    size_t traceInst = traceFrame->ip - traceFunc->chunk.code - 1;
+    int traceLine = traceFunc->chunk.lines[traceInst];
 
-    // The instruction pointer is currently pointing to the NEXT instruction.
-    // We want the previous one (the one that failed).
-    size_t instruction = frame->ip - function->chunk.code - 1;
-    fprintf(stderr, "[line %d] in ", function->chunk.lines[instruction]);
-
-    if (function->name == NULL) {
-      fprintf(stderr, "script\n");
+    fprintf(stderr, "  > [line %d] in ", traceLine);
+    if (traceFunc->name == NULL) {
+      fprintf(stderr, "main script\n");
     } else {
-      fprintf(stderr, "%s()\n", function->name->chars);
+      fprintf(stderr, "function %s\n", traceFunc->name->chars);
     }
   }
+  fprintf(stderr, "\n");
 
   resetStack();
 }
@@ -280,8 +300,10 @@ static InterpretResult run() {
 #define BINARY_OP(valueType, op)                                               \
   do {                                                                         \
     if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) {                          \
-      runtimeError("Operands must be numbers.");                               \
-      return INTERPRET_RUNTIME_ERROR;                                          \
+      THROW_ERROR(ERR_TYPE,                                                    \
+                  "Math operations require numbers. Check if you "             \
+                  "accidentally used a string or a list here.",                \
+                  "Operands must be numbers.");                                \
     }                                                                          \
     double b = AS_NUMBER(pop());                                               \
     double a = AS_NUMBER(pop());                                               \
@@ -299,6 +321,15 @@ static InterpretResult run() {
     }                                                                          \
     instruction = READ_BYTE();                                                 \
     goto *dispatchTable[instruction];                                          \
+  } while (false)
+
+  // --- ADD THIS NEW MACRO ---
+  // 3. THE ERROR SYNC MACRO
+#define THROW_ERROR(type, hint, ...)                                           \
+  do {                                                                         \
+    frame->ip = ip; /* Sync the fast local register back to memory! */         \
+    runtimeErrorDetailed(type, hint, __VA_ARGS__);                             \
+    return INTERPRET_RUNTIME_ERROR;                                            \
   } while (false)
 
   // 3. PRIME THE PUMP
@@ -379,9 +410,10 @@ TARGET_OP_ADD: {
 
   // --- RULE 5: THE REJECTOR ---
   else {
-    runtimeError("Invalid '+' operation. Must be Number+Number, "
-                 "String+Any, or List+Any.");
-    return INTERPRET_RUNTIME_ERROR;
+    THROW_ERROR(ERR_TYPE,
+                "You can only add Number+Number, String+Any, or List+Any. "
+                "Check the types of the variables you are combining.",
+                "Invalid '+' operation.");
   }
   DISPATCH();
 }
@@ -427,8 +459,10 @@ TARGET_OP_ADD_INPLACE: {
   }
 
   else {
-    runtimeError("Invalid 'add' operation.");
-    return INTERPRET_RUNTIME_ERROR;
+    THROW_ERROR(ERR_TYPE,
+                "You can only use 'add' with Numbers, Lists, or Strings. Check "
+                "the types of your variables.",
+                "Invalid 'add' operation.");
   }
   DISPATCH();
 }
@@ -450,16 +484,17 @@ TARGET_OP_DIVIDE: {
 
 TARGET_OP_MOD: {
   if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) {
-    runtimeError("Operands must be numbers.");
-    return INTERPRET_RUNTIME_ERROR;
+    THROW_ERROR(ERR_TYPE, "The modulo operator only works on numbers.",
+                "Operands must be numbers.");
   }
 
   double b = AS_NUMBER(pop());
   double a = AS_NUMBER(pop());
 
   if (b == 0.0) {
-    runtimeError("Modulo by zero.");
-    return INTERPRET_RUNTIME_ERROR;
+    THROW_ERROR(ERR_RUNTIME,
+                "You cannot divide or modulo by zero. Check your math logic.",
+                "Modulo by zero.");
   }
 
   // --- THE FAST PATH ---
@@ -479,8 +514,9 @@ TARGET_OP_MOD: {
 
 TARGET_OP_NEGATE: {
   if (!IS_NUMBER(peek(0))) {
-    runtimeError("Operand must be a number.");
-    return INTERPRET_RUNTIME_ERROR;
+    THROW_ERROR(ERR_TYPE,
+                "You can only use the negative sign (-) on numeric values.",
+                "Operand must be a number.");
   }
   push(NUMBER_VAL(-AS_NUMBER(pop())));
   DISPATCH();
@@ -516,8 +552,10 @@ TARGET_OP_GET_GLOBAL: {
   ObjString *name = READ_STRING();
   Value value;
   if (!tableGet(&vm.globals, OBJ_VAL(name), &value)) {
-    runtimeError("Undefined variable '%s'.", name->chars);
-    return INTERPRET_RUNTIME_ERROR;
+    THROW_ERROR(ERR_REFERENCE,
+                "Did you misspell the variable name, or forget to declare it "
+                "with 'let'?",
+                "Undefined variable '%s'.", name->chars);
   }
 
   push(value);
@@ -530,8 +568,10 @@ TARGET_OP_SET_GLOBAL: {
     // tableSet returns true if it's a NEW key.
     // 'set' is only for EXISTING keys. Delete it and error.
     tableDelete(&vm.globals, OBJ_VAL(name));
-    runtimeError("Undefined variable '%s'.", name->chars);
-    return INTERPRET_RUNTIME_ERROR;
+    THROW_ERROR(ERR_REFERENCE,
+                "Did you misspell the variable name, or forget to declare it "
+                "with 'let'?",
+                "Undefined variable '%s'.", name->chars);
   }
 
   DISPATCH();
@@ -723,16 +763,20 @@ TARGET_OP_INSTANTIATE: {
   Value targetVal = *(itemsStart - 1);
 
   if (!IS_TYPE(targetVal)) {
-    runtimeError("Can only instantiate defined types.");
-    return INTERPRET_RUNTIME_ERROR;
+    THROW_ERROR(ERR_TYPE,
+                "Make sure the name belongs to a Blueprint you created using "
+                "the 'type' keyword.",
+                "Can only instantiate defined types.");
   }
 
   ObjType *type = AS_TYPE(targetVal);
   // --- THE NATIVE LOCKDOWN FIX ---
   if (type->isNative) {
-    runtimeError("Cannot instantiate native types (like '%s') directly.",
-                 type->name->chars);
-    return INTERPRET_RUNTIME_ERROR;
+    THROW_ERROR(ERR_TYPE,
+                "Use standard syntax (like '[]' for Lists, or '\"\"' for "
+                "Strings) to create native objects.",
+                "Cannot instantiate native types (like '%s') directly.",
+                type->name->chars);
   }
   // -------------------------------
   ObjInstance *instance = newInstance(type);
@@ -810,9 +854,11 @@ TARGET_OP_GET_PROPERTY: {
   }
 
   // If we got here, the property doesn't exist anywhere.
-  runtimeError("Undefined property '%s' on type '%s'.", name->chars,
-               type->name->chars);
-  return INTERPRET_RUNTIME_ERROR;
+  THROW_ERROR(ERR_REFERENCE,
+              "Check your spelling, or verify this property exists on the "
+              "object's Blueprint.",
+              "Undefined property '%s' on type '%s'.", name->chars,
+              type->name->chars);
 }
 
 TARGET_OP_SET_PROPERTY: {
@@ -830,9 +876,11 @@ TARGET_OP_SET_PROPERTY: {
     ObjDict *dict = AS_DICT(target);
     tableSet(&dict->fields, OBJ_VAL(name), value);
   } else {
-    runtimeError(
+    THROW_ERROR(
+        ERR_TYPE,
+        "You cannot set properties on primitive values like Numbers or "
+        "Strings.",
         "Only object instances and dictionaries have mutable properties.");
-    return INTERPRET_RUNTIME_ERROR;
   }
 
   pop();       // Pop value
@@ -851,15 +899,19 @@ TARGET_OP_GET_SUBSCRIPT: {
     if (IS_NUMBER(indexVal)) {
       int userIndex = (int)AS_NUMBER(indexVal);
       if (userIndex == 0) {
-        runtimeError("List index cannot be 0. MOON uses 1-based indexing.");
-        return INTERPRET_RUNTIME_ERROR;
+        THROW_ERROR(ERR_RUNTIME,
+                    "You tried to access an index that doesn't exist. "
+                    "Remember, MOON lists start at index 1!",
+                    "Index out of bounds.");
       }
 
       int index = userIndex > 0 ? userIndex - 1 : list->count + userIndex;
 
       if (index < 0 || index >= list->count) {
-        runtimeError("List index out of bounds.");
-        return INTERPRET_RUNTIME_ERROR;
+        THROW_ERROR(ERR_RUNTIME,
+                    "You tried to access an index that doesn't exist. "
+                    "Remember, MOON lists start at index 1!",
+                    "Index out of bounds.");
       }
 
       pop();
@@ -894,14 +946,18 @@ TARGET_OP_GET_SUBSCRIPT: {
       pop();
       push(OBJ_VAL(resultList));
     } else {
-      runtimeError("List index must be a number or a range.");
-      return INTERPRET_RUNTIME_ERROR;
+      THROW_ERROR(
+          ERR_TYPE,
+          "Check what type of value you are passing into the brackets [].",
+          "Invalid index type for this collection.");
     }
   } else if (IS_DICT(seqVal)) {
     ObjDict *dict = AS_DICT(seqVal);
     if (!IS_STRING(indexVal)) {
-      runtimeError("Dictionary keys must be strings.");
-      return INTERPRET_RUNTIME_ERROR;
+      THROW_ERROR(
+          ERR_TYPE,
+          "Check what type of value you are passing into the brackets [].",
+          "Invalid index type for this collection.");
     }
     Value result;
     if (tableGet(&dict->fields, indexVal, &result)) {
@@ -917,21 +973,27 @@ TARGET_OP_GET_SUBSCRIPT: {
   // NEW: Add native string indexing! `string[2]`
   else if (IS_STRING(seqVal)) {
     if (!IS_NUMBER(indexVal)) {
-      runtimeError("String index must be a number.");
-      return INTERPRET_RUNTIME_ERROR;
+      THROW_ERROR(
+          ERR_TYPE,
+          "Check what type of value you are passing into the brackets [].",
+          "Invalid index type for this collection.");
     }
     ObjString *str = AS_STRING(seqVal);
     int userIndex = (int)AS_NUMBER(indexVal);
 
     if (userIndex == 0) {
-      runtimeError("Like we've said, you have been rescued. First item is 1.");
-      return INTERPRET_RUNTIME_ERROR;
+      THROW_ERROR(ERR_RUNTIME,
+                  "You tried to access an index that doesn't exist. Remember, "
+                  "MOON lists start at index 1!",
+                  "Index out of bounds.");
     }
     int index = userIndex > 0 ? userIndex - 1 : str->length + userIndex;
 
     if (index < 0 || index >= str->length) {
-      runtimeError("String index out of bounds.");
-      return INTERPRET_RUNTIME_ERROR;
+      THROW_ERROR(ERR_RUNTIME,
+                  "You tried to access an index that doesn't exist. Remember, "
+                  "MOON lists start at index 1!",
+                  "Index out of bounds.");
     }
 
     uint8_t charByte = (uint8_t)str->chars[index];
@@ -939,8 +1001,10 @@ TARGET_OP_GET_SUBSCRIPT: {
     pop();
     push(OBJ_VAL(vm.charStrings[charByte]));
   } else {
-    runtimeError("Type is not subscriptable.");
-    return INTERPRET_RUNTIME_ERROR;
+    THROW_ERROR(ERR_TYPE,
+                "You can only use brackets [] to access items in Lists, "
+                "Dictionaries, or Strings.",
+                "Type is not subscriptable.");
   }
   DISPATCH();
 }
@@ -953,8 +1017,10 @@ TARGET_OP_SET_SUBSCRIPT: {
   if (IS_DICT(collectionVal)) {
     ObjDict *dict = AS_DICT(collectionVal);
     if (!IS_STRING(indexVal)) {
-      runtimeError("Dictionary keys must be strings.");
-      return INTERPRET_RUNTIME_ERROR;
+      THROW_ERROR(ERR_TYPE,
+                  "Dictionaries require string keys. Did you accidentally use "
+                  "a number or variable without quotes?",
+                  "Dictionary keys must be strings.");
     }
     tableSet(&dict->fields, indexVal, value);
     pop();
@@ -964,22 +1030,28 @@ TARGET_OP_SET_SUBSCRIPT: {
   } else if (IS_LIST(collectionVal)) {
     ObjList *list = AS_LIST(collectionVal);
     if (!IS_NUMBER(indexVal)) {
-      runtimeError("List index must be a number.");
-      return INTERPRET_RUNTIME_ERROR;
+      THROW_ERROR(ERR_TYPE,
+                  "List indices must be numbers. Check if you accidentally "
+                  "passed a string or another type inside the brackets.",
+                  "List index must be a number.");
     }
     // --- THE NEGATIVE INDEX FIX (SET) ---
     int userIndex = (int)AS_NUMBER(indexVal);
 
     if (userIndex == 0) {
-      runtimeError("List index cannot be 0. MOON uses 1-based indexing.");
-      return INTERPRET_RUNTIME_ERROR;
+      THROW_ERROR(ERR_RUNTIME,
+                  "You tried to access an index that doesn't exist. Remember, "
+                  "MOON lists start at index 1!",
+                  "Index out of bounds.");
     }
 
     int index = userIndex > 0 ? userIndex - 1 : list->count + userIndex;
 
     if (index < 0 || index >= list->count) {
-      runtimeError("List index out of bounds.");
-      return INTERPRET_RUNTIME_ERROR;
+      THROW_ERROR(ERR_RUNTIME,
+                  "You tried to access an index that doesn't exist. Remember, "
+                  "MOON lists start at index 1!",
+                  "Index out of bounds.");
     }
     list->items[index] = value;
     pop();
@@ -987,8 +1059,10 @@ TARGET_OP_SET_SUBSCRIPT: {
     pop();
     push(value);
   } else {
-    runtimeError("Can only assign to lists and dictionaries.");
-    return INTERPRET_RUNTIME_ERROR;
+    THROW_ERROR(ERR_TYPE,
+                "You can only use bracket assignment (like set target[key] to "
+                "value) to modify Lists and Dictionaries.",
+                "Can only assign to lists and dictionaries.");
   }
   DISPATCH();
 }
@@ -1011,16 +1085,20 @@ TARGET_OP_GET_END_INDEX: {
     // 1-BASED INDEXING: The last index is exactly the length!
     push(NUMBER_VAL(AS_STRING(seq)->length));
   } else {
-    runtimeError("Cannot use 'end' outside of a list or string subscript.");
-    return INTERPRET_RUNTIME_ERROR;
+    THROW_ERROR(ERR_SYNTAX,
+                "The 'end' keyword can only be used inside brackets (like "
+                "list[1 to end]) to represent the final item.",
+                "Cannot use 'end' index here.");
   }
   DISPATCH();
 }
 
 TARGET_OP_RANGE: {
   if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1)) || !IS_NUMBER(peek(2))) {
-    runtimeError("Range operands must be numbers.");
-    return INTERPRET_RUNTIME_ERROR;
+    THROW_ERROR(ERR_TYPE,
+                "Ranges (like 1 to 5 by 2) require numbers for the start, end, "
+                "and step.",
+                "Range operands must be numbers.");
   }
 
   double step = AS_NUMBER(pop());
@@ -1029,8 +1107,11 @@ TARGET_OP_RANGE: {
 
   // Protect against infinite loops and negative steps
   if (step <= 0) {
-    runtimeError("Range step must be a positive number greater than 0.");
-    return INTERPRET_RUNTIME_ERROR;
+    THROW_ERROR(ERR_RUNTIME,
+                "When creating a range with a 'by' step, the step size must be "
+                "greater than zero.\nThe VM will automatically handle counting "
+                "up or down for you.",
+                "Range step must be a positive number greater than 0.");
   }
 
   ObjRange *range = newRange(start, end, step);
@@ -1046,8 +1127,9 @@ TARGET_OP_GET_ITER: {
   if (IS_LIST(seq) || IS_RANGE(seq) || IS_STRING(seq)) {
     push(NUMBER_VAL(-1));
   } else {
-    runtimeError("Can only loop over lists, ranges, and strings.");
-    return INTERPRET_RUNTIME_ERROR;
+    THROW_ERROR(ERR_TYPE,
+                "The 'for' loop needs a sequence it can step through.",
+                "Can only iterate over ranges, lists, or strings.");
   }
   DISPATCH();
 }
@@ -1130,8 +1212,9 @@ TARGET_OP_FOR_ITER: {
       ip += offset;
     }
   } else {
-    runtimeError("Can only iterate over ranges, lists, or strings.");
-    return INTERPRET_RUNTIME_ERROR;
+    THROW_ERROR(ERR_TYPE,
+                "The 'for' loop needs a sequence it can step through.",
+                "Can only iterate over ranges, lists, or strings.");
   }
   DISPATCH();
 }
@@ -1150,14 +1233,17 @@ TARGET_OP_CALL: {
   } else if (IS_FUNCTION(callee)) {
     ObjFunction *function = AS_FUNCTION(callee);
     if (argCount != function->arity) {
-      runtimeError("Expected %d arguments but got %d.", function->arity,
-                   argCount);
-      return INTERPRET_RUNTIME_ERROR;
+      THROW_ERROR(
+          ERR_RUNTIME,
+          "Check the function signature to see how many values it requires.",
+          "Expected %d arguments but got %d.", function->arity, argCount);
     }
 
     if (vm.frameCount == FRAMES_MAX) {
-      runtimeError("Stack overflow.");
-      return INTERPRET_RUNTIME_ERROR;
+      THROW_ERROR(ERR_RUNTIME,
+                  "You have too many nested function calls. Do you have "
+                  "infinite recursion?",
+                  "Stack overflow.");
     }
 
     // 1. SAVE: Store current instruction pointer back to current frame
@@ -1180,8 +1266,10 @@ TARGET_OP_CALL: {
     ObjMultiFunction *multi = AS_MULTI_FUNCTION(callee);
 
     if (argCount != multi->arity) {
-      runtimeError("Expected %d arguments but got %d.", multi->arity, argCount);
-      return INTERPRET_RUNTIME_ERROR;
+      THROW_ERROR(
+          ERR_RUNTIME,
+          "Check the function signature to see how many values it requires.",
+          "Expected %d arguments but got %d.", multi->arity, argCount);
     }
 
     // Pointer to the first argument on the stack
@@ -1228,22 +1316,25 @@ TARGET_OP_CALL: {
 
     // --- RESOLUTION & THE INTERSECTION MANDATE ---
     if (bestMethod == NULL) {
-      runtimeError("No matching signature found for this phrasal function.");
-      return INTERPRET_RUNTIME_ERROR;
+      THROW_ERROR(ERR_REFERENCE,
+                  "The arguments you passed don't match any overloaded version "
+                  "of this function.",
+                  "No matching signature found.");
     }
 
     if (isAmbiguous) {
-      runtimeError("AMBIGUOUS DISPATCH ERROR: Multiple methods match this "
-                   "call with the exact same specificity. "
-                   "Please define a tie-breaker intersection method to "
-                   "clarify your intent.");
-      return INTERPRET_RUNTIME_ERROR;
+      THROW_ERROR(ERR_RUNTIME,
+                  "Multiple methods match this call with the exact same "
+                  "specificity. Define an intersection method to clarify.",
+                  "Ambiguous Dispatch Error.");
     }
 
     // --- EXECUTE THE WINNING METHOD ---
     if (vm.frameCount == FRAMES_MAX) {
-      runtimeError("Stack overflow.");
-      return INTERPRET_RUNTIME_ERROR;
+      THROW_ERROR(ERR_RUNTIME,
+                  "You have too many nested function calls. Do you have "
+                  "infinite recursion?",
+                  "Stack overflow.");
     }
 
     frame->ip = ip;
@@ -1257,8 +1348,9 @@ TARGET_OP_CALL: {
     DISPATCH();
   }
 
-  runtimeError("Can only call functions, multi-functions, and classes.");
-  return INTERPRET_RUNTIME_ERROR;
+  THROW_ERROR(ERR_TYPE,
+              "You appended parentheses to a value that isn't executable.",
+              "Can only call functions or types.");
 }
 
 TARGET_OP_TYPE_DEF: {
@@ -1307,8 +1399,10 @@ TARGET_OP_DEFINE_METHOD: {
   ObjType **signatures = ALLOCATE(ObjType *, arity);
   for (int i = 0; i < arity; i++) {
     if (!IS_TYPE(typesStart[i])) {
-      runtimeError("Type annotation must resolve to a valid Type Blueprint.");
-      return INTERPRET_RUNTIME_ERROR;
+      THROW_ERROR(ERR_TYPE,
+                  "Make sure the type you specified is defined before using it "
+                  "as a parameter type.",
+                  "Type annotation must resolve to a valid Type Blueprint.");
     }
     signatures[i] = AS_TYPE(typesStart[i]);
   }
@@ -1372,6 +1466,9 @@ TARGET_OP_RETURN: {
 }
 
 InterpretResult interpret(const char *source) {
+  // Give the error engine the raw string BEFORE compilation begins!
+  initErrorEngine(source);
+
   // 1. Compile returns a Function now (we will update compiler.c next)
   ObjFunction *function = compile(source);
 

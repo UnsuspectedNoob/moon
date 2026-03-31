@@ -10,6 +10,7 @@ typedef struct {
   const char *start;
   const char *current;
   int line;
+  int column;
   int interpolationDepth;
 } Scanner;
 
@@ -19,6 +20,7 @@ void initScanner(const char *source) {
   scanner.start = source;
   scanner.current = source;
   scanner.line = 1;
+  scanner.column = 1;
   scanner.interpolationDepth = 0;
 }
 
@@ -34,6 +36,7 @@ static bool isAtEnd() { return *scanner.current == '\0'; }
 
 static char advance() {
   scanner.current++;
+  scanner.column++;
   return scanner.current[-1];
 }
 
@@ -62,6 +65,7 @@ static Token makeToken(TokenType type) {
   token.start = scanner.start;
   token.length = (int)(scanner.current - scanner.start);
   token.line = scanner.line;
+  token.column = scanner.column - token.length;
   return token;
 }
 
@@ -71,6 +75,7 @@ static Token errorToken(const char *message) {
   token.start = message;
   token.length = (int)strlen(message);
   token.line = scanner.line;
+  token.column = scanner.column - token.length;
   return token;
 }
 
@@ -84,9 +89,9 @@ static void skipWhitespace() {
       advance();
       break;
 
-    // Handle Comments (@@)
-    case '@':
-      if (peekNext() == '@') {
+    // Handle Comments (##)
+    case '#':
+      if (peekNext() == '#') {
         // Consume until end of line
         while (peek() != '\n' && !isAtEnd())
           advance();
@@ -343,8 +348,10 @@ static Token string() {
       return makeToken(TOKEN_STRING_OPEN);
     }
 
-    if (c == '\n')
+    if (c == '\n') {
       scanner.line++;
+      scanner.column = 1;
+    }
     advance();
   }
 }
@@ -367,6 +374,7 @@ Token scanToken() {
 
   if (c == '\n') {
     scanner.line++;
+    scanner.column = 1;
     return makeToken(TOKEN_NEWLINE);
   }
 

@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "ast.h"
+#include "error.h"
 #include "object.h"
 #include "parser.h"
 #include "scanner.h"
@@ -25,29 +26,6 @@ static int expectedLabelCount = 0;
 static int groupingDepth = 0; // Tracks if we are inside () or []
 static Node *currentStickySubject = NULL;
 static int loopingDepth = 0;
-
-// Safely clones an AST node so we don't double-free memory!
-static Node *cloneNode(Node *original) {
-  if (!original)
-    return NULL;
-
-  switch (original->type) {
-  case NODE_VARIABLE:
-    return newVariableNode(original->as.variable.name, original->line);
-  case NODE_LITERAL:
-    return newLiteralNode(original->as.literal.value, original->line);
-  case NODE_PROPERTY:
-    return newPropertyNode(cloneNode(original->as.property.target),
-                           original->as.property.name, original->line);
-  case NODE_SUBSCRIPT:
-    return newSubscriptNode(cloneNode(original->as.subscript.left),
-                            cloneNode(original->as.subscript.index),
-                            original->line);
-  default:
-    error("Cannot use a complex expression as a sticky subject.");
-    return NULL;
-  }
-}
 
 static bool isExpectedLabel() {
   if (expectedLabelCount == 0)
@@ -164,24 +142,49 @@ void hoistPhrases(const char *source) {
 // 3. ERROR HANDLING
 // ==========================================
 
-void errorAt(Token *token, const char *message) {
+// The Master Error function that talks to error.c
+void errorAtDetailed(Token *token, ErrorType type, const char *message,
+                     const char *hint) {
   if (parser.panicMode)
     return;
   parser.panicMode = true;
-  fprintf(stderr, "[line %d] Error", token->line);
 
-  if (token->type == TOKEN_EOF) {
-    fprintf(stderr, " at end");
-  } else if (token->type != TOKEN_ERROR) {
-    fprintf(stderr, " at '%.*s'", token->length, token->start);
-  }
+  reportCompileError(token, type, message, hint);
 
-  fprintf(stderr, ": %s\n", message);
   parser.hadError = true;
 }
 
+// Legacy Wrappers (Keeps the rest of parser.c compiling!)
+void errorAt(Token *token, const char *message) {
+  errorAtDetailed(token, ERR_SYNTAX, message, NULL);
+}
 void error(const char *message) { errorAt(&parser.previous, message); }
 void errorAtCurrent(const char *message) { errorAt(&parser.current, message); }
+void consume(TokenType type, const char *message) {
+  if (parser.current.type == type) {
+    advance();
+    return;
+  }
+  errorAtCurrent(message);
+}
+
+// --- THE NEW ORDEAL UX WRAPPERS ---
+void errorHint(ErrorType type, const char *message, const char *hint) {
+  errorAtDetailed(&parser.previous, type, message, hint);
+}
+
+void consumeHint(TokenType type, ErrorType errType, const char *message,
+                 const char *hint) {
+  if (parser.current.type == type) {
+    advance();
+    return;
+  }
+  errorAtDetailed(&parser.current, errType, message, hint);
+}
+
+void errorCurrentHint(ErrorType type, const char *message, const char *hint) {
+  errorAtDetailed(&parser.current, type, message, hint);
+}
 
 void synchronize() {
   parser.panicMode = false;
@@ -214,14 +217,6 @@ void advance() {
       break;
     errorAtCurrent(parser.current.start);
   }
-}
-
-void consume(TokenType type, const char *message) {
-  if (parser.current.type == type) {
-    advance();
-    return;
-  }
-  errorAtCurrent(message);
 }
 
 bool check(TokenType type) { return parser.current.type == type; }
@@ -283,7 +278,9 @@ static Node *parsePrecedence(Precedence precedence) {
   PrefixFn prefixRule = getRule(parser.previous.type)->prefix;
 
   if (prefixRule == NULL) {
-    error("Expect expression.");
+    errorHint(ERR_SYNTAX, "I was expecting an expression here.",
+              "An expression evaluates to a value (like a number, a string, or "
+              "math). Did you leave a trailing operator?");
     return NULL;
   }
 
@@ -326,8 +323,7 @@ static Node *expression() {
     Node *cond = expression();
 
     // Invert the condition for 'unless'
-    Token notToken = {
-        .type = TOKEN_NOT, .start = "not", .length = 3, .line = line};
+    Token notToken = {TOKEN_NOT, "not", 3, line, 0};
     cond = newUnaryNode(notToken, cond, line);
 
     if (match(TOKEN_THEN)) {
@@ -377,7 +373,11 @@ static Node *interpolation() {
       writeNodeArray(&parts, extractInterpolationString(parser.previous));
       break;
     } else {
-      errorAtCurrent("Expect end of string interpolation (` or \").");
+      errorCurrentHint(
+          ERR_SYNTAX,
+          "I was expecting the end of the string interpolation here.",
+          "Make sure to close your interpolation block with another backtick "
+          "(`) or end the string with a double quote (\")");
       break;
     }
   }
@@ -516,7 +516,10 @@ static Node *variable() {
 
   if (lastGoodState != NULL) {
     if (currentNode != lastGoodState) {
-      error("Incomplete phrasal function. Missing expected labels.");
+      errorHint(
+          ERR_SYNTAX, "This phrasal function looks incomplete.",
+          "You started a phrase but didn't finish it. Check the function's "
+          "signature to see what words or arguments are missing.");
       freeNodeArray(&args);
       return newVariableNode(rootToken, rootToken.line);
     }
@@ -532,7 +535,9 @@ static Node *variable() {
   }
 
   if (currentNode != startNode) {
-    error("Invalid phrasing. Did not match any known function signature.");
+    errorHint(
+        ERR_REFERENCE, "I don't recognize this phrasal function.",
+        "Did you misspell a word, or forget to define this function earlier?");
   }
 
   freeNodeArray(&args);
@@ -551,9 +556,38 @@ static Node *unary() {
   return newUnaryNode(opToken, right, opToken.line);
 }
 
+// Safely clones an AST node so we don't double-free memory!
+static Node *cloneNode(Node *original) {
+  if (!original)
+    return NULL;
+
+  switch (original->type) {
+  case NODE_VARIABLE:
+    return newVariableNode(original->as.variable.name, original->line);
+  case NODE_LITERAL:
+    return newLiteralNode(original->as.literal.value, original->line);
+  case NODE_PROPERTY:
+    return newPropertyNode(cloneNode(original->as.property.target),
+                           original->as.property.name, original->line);
+  case NODE_SUBSCRIPT:
+    return newSubscriptNode(cloneNode(original->as.subscript.left),
+                            cloneNode(original->as.subscript.index),
+                            original->line);
+  default:
+    errorHint(ERR_SYNTAX,
+              "I can't use a complex expression as a sticky subject.",
+              "A sticky subject must be a simple variable, property, or "
+              "subscript (e.g., 'player' or 'player's health').");
+    return NULL;
+  }
+}
+
 static Node *stickyPrefix() {
   if (currentStickySubject == NULL) {
-    error("Missing left operand, and no sticky subject is active.");
+    errorHint(ERR_SYNTAX, "This operator is missing its left side.",
+              "It looks like you used an operator (like '<', '>=', or 'is') "
+              "without providing a value on its left, and there is no active "
+              "subject to attach it to.");
     return NULL;
   }
 
@@ -573,7 +607,7 @@ static Node *stickyPrefix() {
                                    right, opToken.line);
 
   if (invert) {
-    Token notToken = {TOKEN_NOT, "not", 3, opToken.line};
+    Token notToken = {TOKEN_NOT, "not", 3, opToken.line, 0};
     return newUnaryNode(notToken, stickyNode, opToken.line);
   }
 
@@ -617,7 +651,7 @@ static Node *binary(Node *left) {
 
   // If we caught a 'not', wrap the whole binary expression!
   if (invert) {
-    Token notToken = {TOKEN_NOT, "not", 3, opToken.line};
+    Token notToken = {TOKEN_NOT, "not", 3, opToken.line, 0};
     return newUnaryNode(notToken, binNode, opToken.line);
   }
 
@@ -653,7 +687,10 @@ static Node *list() {
   groupingDepth--; // Coming back out!
 
   ignoreNewlines();
-  consume(TOKEN_RIGHT_BRACKET, "Expect a ']' after list.");
+  consumeHint(TOKEN_RIGHT_BRACKET, ERR_SYNTAX,
+              "I couldn't find the closing bracket ']' for this list.",
+              "Make sure your list ends with ']' and that all items inside are "
+              "separated by commas.");
 
   Node *node = newListNode(items->items, items->count, line);
   freeNodeArray(items);
@@ -690,12 +727,17 @@ static Node *dict() {
             copyString(parser.previous.start + 1, parser.previous.length - 2);
         keyNode = newLiteralNode(OBJ_VAL(keyStr), parser.previous.line);
       } else {
-        error("Expect property name (identifier or string) in dictionary.");
+        errorHint(ERR_SYNTAX,
+                  "I was expecting a property name for this dictionary item.",
+                  "Dictionary keys should be words or strings (e.g., 'name:' "
+                  "or '\"age\":').");
         break;
       }
 
       // 2. The Colon
-      consume(TOKEN_COLON, "Expect ':' after property name.");
+      consumeHint(TOKEN_COLON, ERR_SYNTAX, "I was expecting a colon ':' here.",
+                  "In dictionaries and blueprints, properties must be followed "
+                  "by a colon (e.g., 'name: \"Munachi\"').");
 
       // 3. The Value
       Node *valueNode = expression();
@@ -708,7 +750,9 @@ static Node *dict() {
   groupingDepth--; // Coming back out!
 
   ignoreNewlines();
-  consume(TOKEN_RIGHT_BRACE, "Expect '}' after dictionary properties.");
+  consumeHint(TOKEN_RIGHT_BRACE, ERR_SYNTAX,
+              "I couldn't find the closing brace '}' for this dictionary.",
+              "Make sure your dictionary ends with '}'.");
 
   Node *node = newDictNode(keys.items, values.items, keys.count, line);
   freeNodeArray(&keys);
@@ -730,16 +774,24 @@ static Node *instantiate(Node *left) {
       if (check(TOKEN_RIGHT_BRACE))
         break;
 
-      consume(TOKEN_IDENTIFIER, "Expect property name.");
+      consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
+                  "I was expecting a property name here.",
+                  "When instantiating a type, you need to list its properties "
+                  "(e.g., 'health: 100').");
+
       writeTokenArray(&propNames, parser.previous);
-      consume(TOKEN_COLON, "Expect ':' after property name.");
+      consumeHint(
+          TOKEN_COLON, ERR_SYNTAX, "I was expecting a colon ':' here.",
+          "Provide a colon after the property name to assign its value.");
       writeNodeArray(&values, expression());
     } while (match(TOKEN_COMMA));
   }
   groupingDepth--;
 
   ignoreNewlines();
-  consume(TOKEN_RIGHT_BRACE, "Expect '}' after instance properties.");
+  consumeHint(TOKEN_RIGHT_BRACE, ERR_SYNTAX,
+              "I couldn't find the closing brace '}' for this instance.",
+              "Make sure your instance block ends with '}'.");
 
   Node *node = newInstantiateNode(left, propNames.items, values.items,
                                   propNames.count, line);
@@ -761,15 +813,24 @@ static Node *instantiateWith(Node *left) {
       if (check(TOKEN_END))
         break;
 
-      consume(TOKEN_IDENTIFIER, "Expect property name.");
+      consumeHint(
+          TOKEN_IDENTIFIER, ERR_SYNTAX, "I was expecting a property name here.",
+          "When overriding properties, you need to list them explicitly.");
+
       writeTokenArray(&propNames, parser.previous);
-      consume(TOKEN_COLON, "Expect ':' after property name.");
+
+      consumeHint(
+          TOKEN_COLON, ERR_SYNTAX, "I was expecting a colon ':' here.",
+          "Provide a colon after the property name to assign its value.");
+
       writeNodeArray(&values, expression());
     } while (match(TOKEN_COMMA));
   }
 
   ignoreNewlines();
-  consume(TOKEN_END, "Expect 'end' after 'with' block.");
+  consumeHint(TOKEN_END, ERR_SYNTAX,
+              "I was expecting 'end' to close this 'with' block.",
+              "Blocks opened with 'with' must be properly closed with 'end'.");
 
   Node *node = newInstantiateNode(left, propNames.items, values.items,
                                   propNames.count, line);
@@ -785,7 +846,10 @@ static Node *subscript(Node *left) {
   Node *index = expression();
   groupingDepth--; // Coming back out!
 
-  consume(TOKEN_RIGHT_BRACKET, "Expect ']' after index.");
+  consumeHint(TOKEN_RIGHT_BRACKET, ERR_SYNTAX,
+              "I couldn't find the closing bracket ']' for this index.",
+              "When accessing an item by its index, close the brackets (e.g., "
+              "'list[1]').");
   return newSubscriptNode(left, index, line);
 }
 
@@ -824,7 +888,10 @@ static Node *possessive(Node *left) {
 
   // Moon's Property Accessor!
   // e.g. `player's health`
-  consume(TOKEN_IDENTIFIER, "Expect property name after 's.");
+  consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
+              "I was expecting a property name after the possessive 's.",
+              "Provide the name of the property you want to access (e.g., "
+              "'user's age').");
   Token name = parser.previous;
 
   return newPropertyNode(left, name, line);
@@ -861,7 +928,7 @@ static Node *ifStatement(bool invert) {
   Node *condition = expression();
 
   if (invert) {
-    Token notToken = {TOKEN_NOT, "not", 3, line};
+    Token notToken = {TOKEN_NOT, "not", 3, line, 0};
     condition = newUnaryNode(notToken, condition, line);
   }
 
@@ -882,12 +949,18 @@ static Node *ifStatement(bool invert) {
       } else if (match(TOKEN_COLON)) {
         TokenType elseEnds[] = {TOKEN_END};
         elseBranch = block(elseEnds, 1);
-        consume(TOKEN_END, "Expect 'end' after block.");
+        consumeHint(TOKEN_END, ERR_SYNTAX,
+                    "I couldn't find the 'end' keyword for this block.",
+                    "Control flow blocks, functions, and types must be closed "
+                    "with the 'end' keyword.");
       } else {
         elseBranch = statement();
       }
     } else {
-      consume(TOKEN_END, "Expect 'end' after block.");
+      consumeHint(TOKEN_END, ERR_SYNTAX,
+                  "I couldn't find the 'end' keyword for this block.",
+                  "Control flow blocks, functions, and types must be closed "
+                  "with the 'end' keyword.");
     }
   } else {
     // Single-statement branches
@@ -914,7 +987,7 @@ static Node *whileLogic(bool invert) {
   Node *condition = expression();
 
   if (invert) {
-    Token notToken = {TOKEN_NOT, "not", 3, line};
+    Token notToken = {TOKEN_NOT, "not", 3, line, 0};
     condition = newUnaryNode(notToken, condition, line);
   }
 
@@ -924,7 +997,10 @@ static Node *whileLogic(bool invert) {
   if (match(TOKEN_COLON)) {
     TokenType terminators[] = {TOKEN_END};
     body = block(terminators, 1);
-    consume(TOKEN_END, "Expect 'end' after loop.");
+    consumeHint(TOKEN_END, ERR_SYNTAX,
+                "I couldn't find the 'end' keyword for this block.",
+                "Control flow blocks, functions, and types must be closed with "
+                "the 'end' keyword.");
   } else {
     body = statement();
   }
@@ -940,7 +1016,10 @@ static Node *forStatement() {
     advance();
 
   Token iteratorName = parser.current;
-  consume(TOKEN_IDENTIFIER, "Expect variable name.");
+  consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
+              "I was expecting a variable name here.",
+              "Provide a valid name for your loop iterator (e.g., 'for each "
+              "item in list:').");
 
   if (check(TOKEN_IN))
     advance();
@@ -954,7 +1033,10 @@ static Node *forStatement() {
   if (match(TOKEN_COLON)) {
     TokenType terminators[] = {TOKEN_END};
     body = block(terminators, 1);
-    consume(TOKEN_END, "Expect 'end' after loop.");
+    consumeHint(TOKEN_END, ERR_SYNTAX,
+                "I couldn't find the 'end' keyword for this block.",
+                "Control flow blocks, functions, and types must be closed with "
+                "the 'end' keyword.");
   } else {
     body = statement();
   }
@@ -965,7 +1047,10 @@ static Node *forStatement() {
 
 static Node *parseLValue() {
   // Base Case: The root must be an identifier
-  consume(TOKEN_IDENTIFIER, "Expect variable name for assignment.");
+  consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
+              "I was expecting a variable name to assign to.",
+              "Assignments need a target, like 'set score to 10'.");
+
   Node *lvalue = newVariableNode(parser.previous, parser.previous.line);
 
   // The Recursive Modifier Loop: [ <expr> ] | . <expr> | 's <id>
@@ -1006,7 +1091,8 @@ static Node *addStatement() {
   // -------------------------
 
   // 2. The Bridge
-  consume(TOKEN_TO, "Expect 'to' after expressions to add.");
+  consumeHint(TOKEN_TO, ERR_SYNTAX, "I was expecting the 'to' keyword here.",
+              "The 'add' statement is formatted as 'add <value> to <target>'.");
 
   // 3. The Target (L-Value)
   Node *target = parseLValue();
@@ -1014,7 +1100,9 @@ static Node *addStatement() {
   // 4. THE DESUGARING (Build the Accumulator)
   Node *accumulator = cloneNode(target);
   if (accumulator == NULL) {
-    error("Invalid target for 'add' statement.");
+    errorHint(ERR_SYNTAX, "This isn't a valid target for 'add'.",
+              "You can only add to variables, subscripts, or properties (e.g., "
+              "'add 5 to player's score').");
     return NULL;
   }
 
@@ -1039,7 +1127,7 @@ static Node *addStatement() {
     return newIfNode(cond, addNode, NULL, line);
   } else if (match(TOKEN_UNLESS)) {
     Node *cond = expression();
-    Token notToken = {TOKEN_NOT, "not", 3, line};
+    Token notToken = {TOKEN_NOT, "not", 3, line, 0};
     Node *invertedCond = newUnaryNode(notToken, cond, line);
     return newIfNode(invertedCond, addNode, NULL, line);
   }
@@ -1058,7 +1146,8 @@ static Node *setStatement() {
     writeNodeArray(&targets, parseLValue());
   } while (match(TOKEN_COMMA));
 
-  consume(TOKEN_TO, "Expect 'to' after target(s).");
+  consumeHint(TOKEN_TO, ERR_SYNTAX, "I was expecting the 'to' keyword here.",
+              "The 'set' statement is formatted as 'set <target> to <value>'.");
 
   do {
     writeNodeArray(&values, expression());
@@ -1126,23 +1215,31 @@ static Node *expressionStatement() {
 
 static Node *breakStatement() {
   if (loopingDepth == 0) {
-    error("Cannot use 'break' or 'quit' outside of a loop.");
+    errorHint(ERR_SYNTAX, "I found a 'break' or 'quit' outside of a loop.",
+              "These keywords can only be used inside 'while' or 'for' loops "
+              "to exit them early.");
   }
   return newBreakNode(parser.previous.line);
 }
 
 static Node *skipStatement() {
   if (loopingDepth == 0) {
-    error("Cannot use 'skip' outside of a loop.");
+    errorHint(ERR_SYNTAX, "I found a 'skip' outside of a loop.",
+              "The 'skip' keyword can only be used inside loops to jump to the "
+              "next iteration.");
   }
   return newSkipNode(parser.previous.line);
 }
 
 static Node *typeDeclaration() {
   int line = parser.previous.line;
-  consume(TOKEN_IDENTIFIER, "Expect type name.");
+  consumeHint(
+      TOKEN_IDENTIFIER, ERR_SYNTAX, "I was expecting a name for this type.",
+      "When defining a type, you must give it a name (e.g., 'type Player:').");
   Token name = parser.previous;
-  consume(TOKEN_COLON, "Expect ':' after type name.");
+  consumeHint(TOKEN_COLON, ERR_SYNTAX,
+              "I was expecting a colon ':' after the type name.",
+              "Type definitions begin with a colon before listing properties.");
 
   TokenArray propertyNames;
   initTokenArray(&propertyNames);
@@ -1157,12 +1254,14 @@ static Node *typeDeclaration() {
       if (check(TOKEN_END))
         break; // Allow trailing commas before 'end'
 
-      consume(TOKEN_IDENTIFIER, "Expect property name.");
+      consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
+                  "I was expecting a property name here.",
+                  "List the properties that belong to this type.");
       writeTokenArray(&propertyNames, parser.previous);
 
       // If they type `be 300`, parse the 300. Otherwise, silently default to
       // `nil`.
-      if (match(TOKEN_BE)) {
+      if (match(TOKEN_COLON)) {
         writeNodeArray(&defaultValues, expression());
       } else {
         writeNodeArray(&defaultValues,
@@ -1172,7 +1271,10 @@ static Node *typeDeclaration() {
   }
 
   ignoreNewlines();
-  consume(TOKEN_END, "Expect 'end' after type declaration.");
+  consumeHint(TOKEN_END, ERR_SYNTAX,
+              "I couldn't find the 'end' keyword for this block.",
+              "Control flow blocks, functions, and types must be closed with "
+              "the 'end' keyword.");
 
   Node *node = newTypeNode(name, propertyNames.items, defaultValues.items,
                            propertyNames.count, line);
@@ -1222,7 +1324,11 @@ static Node *letDeclaration() {
   initTokenArray(&names);
 
   do {
-    consume(TOKEN_IDENTIFIER, "Expect variable name.");
+    // THE UX UPGRADE
+    consumeHint(
+        TOKEN_IDENTIFIER, ERR_SYNTAX, "I was expecting a variable name here.",
+        "Variables need a name to identify them. e.g., 'let count be 10'");
+
     writeTokenArray(&names, parser.previous);
   } while (match(TOKEN_COMMA));
 
@@ -1236,10 +1342,16 @@ static Node *letDeclaration() {
 
     Node *lastVal = exprs.items[exprs.count - 1];
     if (lastVal->type == NODE_IF && lastVal->as.ifStmt.elseBranch == NULL) {
-      error("Cannot use statement modifiers on 'let' declarations.");
+      errorHint(
+          ERR_SYNTAX,
+          "Statement modifiers aren't allowed on 'let' declarations.",
+          "Try using a standard if-block, or a ternary (if...else) instead.");
     }
     if (exprs.count != 1 && exprs.count != names.count) {
-      error("Expression count must be 1, or exactly match variables.");
+      errorHint(
+          ERR_SYNTAX, "Mismatch in assignment counts.",
+          "When declaring multiple variables, you must provide exactly 1 value "
+          "(to copy to all), or exactly match the number of variables.");
     }
 
     Node *node = newLetNode(names.items, names.count, exprs.items, exprs.count,
@@ -1251,10 +1363,14 @@ static Node *letDeclaration() {
 
   Token rootName = names.items[0];
 
+  // Only trigger function parsing if the next token is a valid word, keyword,
+  // or punctuation!
   if (check(TOKEN_LEFT_PAREN) || check(TOKEN_COLON) ||
-      (!check(TOKEN_BE) && !check(TOKEN_COMMA))) {
+      check(TOKEN_IDENTIFIER) ||
+      (parser.current.type >= TOKEN_ADD && parser.current.type <= TOKEN_WITH)) {
     if (names.count > 1) {
-      error("Cannot declare multiple functions on the same line.");
+      errorHint(ERR_SYNTAX, "I can't declare multiple functions at once.",
+                "Function declarations must happen one at a time.");
       freeTokenArray(&names);
       return NULL;
     }
@@ -1271,17 +1387,24 @@ static Node *letDeclaration() {
     if (check(TOKEN_COLON)) {
       strcat(mangled, "$0");
     } else {
-      while (!check(TOKEN_COLON) && !check(TOKEN_EOF)) {
+      while (!check(TOKEN_COLON) && !check(TOKEN_EOF) &&
+             !check(TOKEN_NEWLINE)) {
         if (match(TOKEN_LEFT_PAREN)) {
           int segmentArity = 0;
           if (!check(TOKEN_RIGHT_PAREN)) {
             do {
-              consume(TOKEN_IDENTIFIER, "Expect parameter name.");
+              consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
+                          "I was expecting a parameter name here.",
+                          "Provide a name for the function parameter.");
               writeTokenArray(&parameters, parser.previous);
 
               // --- NEW: THE TYPE EXTRACTION ---
               if (match(TOKEN_COLON)) {
-                consume(TOKEN_IDENTIFIER, "Expect type name after ':'.");
+                consumeHint(TOKEN_IDENTIFIER, ERR_TYPE,
+                            "I was expecting a type name here.",
+                            "Type annotations must specify a valid blueprint "
+                            "type (e.g., 'name: String').");
+
                 writeTokenArray(&paramTypes, parser.previous);
               } else {
                 // If no type is provided, insert a dummy 'Any' token
@@ -1296,7 +1419,9 @@ static Node *letDeclaration() {
               segmentArity++;
             } while (match(TOKEN_COMMA));
           }
-          consume(TOKEN_RIGHT_PAREN, "Expect ')'.");
+          consumeHint(TOKEN_RIGHT_PAREN, ERR_SYNTAX,
+                      "I couldn't find the closing parenthesis ')'.",
+                      "Make sure to close your parameter list.");
           char buf[16];
           sprintf(buf, "$%d", segmentArity);
           strcat(mangled, buf);
@@ -1308,10 +1433,16 @@ static Node *letDeclaration() {
       }
     }
 
-    consume(TOKEN_COLON, "Expect ':' before function body.");
+    consumeHint(
+        TOKEN_COLON, ERR_SYNTAX, "I was expecting a colon ':' here.",
+        "Function signatures must end with a colon before the body begins.");
+
     TokenType terminators[] = {TOKEN_END};
     Node *body = block(terminators, 1);
-    consume(TOKEN_END, "Expect 'end' after function body.");
+    consumeHint(TOKEN_END, ERR_SYNTAX,
+                "I couldn't find the 'end' keyword for this block.",
+                "Control flow blocks, functions, and types must be closed with "
+                "the 'end' keyword.");
 
     Token finalName = rootName;
     finalName.start = my_strdup(mangled);
@@ -1326,7 +1457,10 @@ static Node *letDeclaration() {
     return node;
   }
 
-  error("Expect 'be' for variables or a valid function signature.");
+  errorHint(ERR_SYNTAX, "This declaration is confusing me.",
+            "Use 'let x be 10' for variables, or provide a valid function "
+            "signature (e.g., 'let jump():').");
+
   freeTokenArray(&names);
   return NULL;
 }
@@ -1346,7 +1480,10 @@ static Node *grouping() {
 
   groupingDepth--; // Coming back out!
 
-  consume(TOKEN_RIGHT_PAREN, "Expect ')' after expression.");
+  consumeHint(TOKEN_RIGHT_PAREN, ERR_SYNTAX,
+              "I couldn't find the closing parenthesis ')'.",
+              "Make sure you close any opened parentheses in your math, logic, "
+              "or function calls.");
   return expr;
 }
 
@@ -1363,7 +1500,10 @@ static Node *call(Node *callee) {
   }
   groupingDepth--; // Coming back out!
 
-  consume(TOKEN_RIGHT_PAREN, "Expect ')' after arguments.");
+  consumeHint(TOKEN_RIGHT_PAREN, ERR_SYNTAX,
+              "I couldn't find the closing parenthesis ')'.",
+              "Make sure you close any opened parentheses in your math, logic, "
+              "or function calls.");
 
   Node *node = newCallNode(callee, args.items, args.count, line);
   freeNodeArray(&args);

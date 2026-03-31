@@ -61,6 +61,13 @@ static void walkNode(Node *node) {
   if (node == NULL)
     return;
 
+  // --- THE SYNCHRONIZATION FIX ---
+  // Lock the emitter's line number to the current AST node's line number!
+  if (node->line > 0) {
+    currentLine = node->line;
+  }
+  // -------------------------------
+
   switch (node->type) {
 
     // --- 1. LITERALS & MATH (Post-Order Traversal) ---

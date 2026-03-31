@@ -29,6 +29,7 @@ typedef struct Compiler {
 } Compiler;
 
 extern Compiler *current;
+extern int currentLine;
 
 // ==========================================
 // PUBLIC API

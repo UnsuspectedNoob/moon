@@ -81,6 +81,7 @@ typedef struct {
   const char *start; // Pointer to the start of the token in source
   int length;        // Length of the token
   int line;          // Line number for error reporting
+  int column;        // Track horizontal positioning
 } Token;
 
 // Initialize the scanner with the source code string

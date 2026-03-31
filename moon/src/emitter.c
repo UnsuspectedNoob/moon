@@ -9,6 +9,7 @@
 // ==========================================
 
 Compiler *current = NULL;
+int currentLine = 0;
 
 // ==========================================
 // COMPILER INITIALIZATION
@@ -156,9 +157,7 @@ Chunk *currentChunk() { return current->chunk; }
 // BYTECODE EMISSION
 // ==========================================
 
-void emitByte(uint8_t byte) {
-  writeChunk(currentChunk(), byte, parser.previous.line);
-}
+void emitByte(uint8_t byte) { writeChunk(currentChunk(), byte, currentLine); }
 
 void emitBytes(uint8_t byte1, uint8_t byte2) {
   emitByte(byte1);
