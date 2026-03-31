@@ -31,5 +31,6 @@ void tableAddAll(Table *from, Table *to);
 // We keep this specific to strings for our intern pool!
 ObjString *tableFindString(Table *table, const char *chars, int length,
                            uint32_t hash);
+void tableRemoveWhite(Table *table);
 
 #endif

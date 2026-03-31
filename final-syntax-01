@@ -48,7 +48,7 @@ add 5 to (x if x < 10 else y)
 
 @@ Post-Fix Guard Clauses (The "Clean" Style)
 @@ Replaces: if age > 100: quit end
-quit() if age > 100
+quit if age > 100
 give null unless is_student
 
 @@ Standard Loops
@@ -136,7 +136,7 @@ reverse numbers
 
 
 @@ Instantiation
-let user be Person("Munachi", 22)
+let user be Person { "Munachi", 22 }
 
 @@ Property Access
 show user's name        @@ "Munachi"

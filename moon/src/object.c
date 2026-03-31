@@ -15,6 +15,7 @@
 static Obj *allocateObject(size_t size, ObjKind type) {
   Obj *object = (Obj *)reallocate(NULL, 0, size);
   object->type = type;
+  object->isMarked = false;
 
   // Link to the VM's list of objects (for future GC)
   object->next = vm.objects;
@@ -40,7 +41,10 @@ static ObjString *allocateString(char *chars, int length, uint32_t hash) {
   string->hash = hash;
 
   //  FIX: Add the new string to the interned set immediately
+  //  and push string to vm stack, to synchronize with GC
+  push(OBJ_VAL(string));
   tableSet(&vm.strings, OBJ_VAL(string), NIL_VAL);
+  pop();
 
   return string;
 }
@@ -293,6 +297,8 @@ ObjString *valueToString(Value value) {
       // 1. Recursively convert the item into a string!
       ObjString *itemStr = valueToString(list->items[i]);
 
+      push(OBJ_VAL(itemStr)); // to protect from GC
+
       // 2. Ensure the buffer is large enough for the item + ", ]\0"
       while (length + itemStr->length + 4 > capacity) {
         capacity *= 2;
@@ -308,6 +314,8 @@ ObjString *valueToString(Value value) {
         buffer[length++] = ',';
         buffer[length++] = ' ';
       }
+
+      pop();
     }
 
     buffer[length++] = ']'; // Closing bracket

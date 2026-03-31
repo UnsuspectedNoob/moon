@@ -1,5 +1,5 @@
 
-let merge (left) with (right):
+let merge (left: List) with (right: List):
   let result be []
   let i, j be 1
 
@@ -18,7 +18,7 @@ let merge (left) with (right):
   give result
 end
 
-let sorted (list):
+let sorted (list: List):
   if list's length < 2 give list
 
   let left be list[1 to end / 2]
@@ -46,5 +46,5 @@ let quick sort of (list: List):
 end
 
 let a be [10, 9, 3, 2, 4, 11, 30, 15, 27, 18]
-set a to quick sort of a
-for i in a show i
+for i in quick sort of a show i
+for i in sorted a show i

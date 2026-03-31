@@ -11,5 +11,6 @@
 // toggle for printing debug info during execution
 // #define DEBUG_PRINT_CODE
 // #define DEBUG_TRACE_EXECUTION
+#define DEBUG_FUNCTION_NAME
 
 #endif

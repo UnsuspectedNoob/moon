@@ -21,6 +21,7 @@ typedef enum {
 
 typedef struct Obj {
   ObjKind type;
+  bool isMarked;
   struct Obj *next; // Intrusion pointer for GC (we'll use this later)
 } Obj;
 

@@ -454,6 +454,7 @@ void freeNode(Node *node) {
       freeNode(node->as.phrasalCall.arguments[i]);
     FREE_ARRAY(Node *, node->as.phrasalCall.arguments,
                node->as.phrasalCall.argCount);
+    free((void *)node->as.phrasalCall.mangledName.start);
     break;
   }
   case NODE_FUNCTION: {
@@ -462,6 +463,7 @@ void freeNode(Node *node) {
     FREE_ARRAY(Token, node->as.function.paramTypes,
                node->as.function.paramCount); // NEW
     freeNode(node->as.function.body);
+    free((void *)node->as.function.name.start);
     break;
   }
   case NODE_SUBSCRIPT: {

@@ -48,6 +48,14 @@ typedef struct {
   ObjType *rangeType;
   ObjType *functionType;
   ObjType *nilType;
+
+  // --- GARBAGE COLLECTOR STATE ---
+  size_t bytesAllocated;
+  size_t nextGC;
+  Obj **grayStack; // The array of objects we need to trace
+  int grayCount;
+  int grayCapacity;
+  bool allowGC; // Protects the AST during compilation
 } VM;
 
 extern VM vm;

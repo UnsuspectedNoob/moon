@@ -1,11 +1,8 @@
 #include <string.h>
 
+#include "debug.h"
 #include "emitter.h"
 #include "parser.h" // We will create this next!
-
-#ifdef DEBUG_PRINT_CODE
-#include "debug.h"
-#endif
 
 // ==========================================
 // GLOBAL STATE
@@ -45,8 +42,8 @@ ObjFunction *endCompiler() {
 
   ObjFunction *function = current->function;
 
-#ifdef DEBUG_PRINT_CODE
-  if (!parser.hadError) {
+#ifdef DEBUG_FUNCTION_NAME
+  if (vm.debugMode && !parser.hadError) {
     disassembleChunk(currentChunk(), function->name != NULL
                                          ? function->name->chars
                                          : "<script>");

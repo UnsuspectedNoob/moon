@@ -92,7 +92,6 @@ static bool canStartExpression(TokenType type) {
   case TOKEN_UNLESS:
   case TOKEN_THEN:
   case TOKEN_BY:
-    // REMOVED: TOKEN_END is gone! We've allowed it to start an expression!
     return false;
   default:
     return true;
@@ -1127,7 +1126,7 @@ static Node *expressionStatement() {
 
 static Node *breakStatement() {
   if (loopingDepth == 0) {
-    error("Cannot use 'break' outside of a loop.");
+    error("Cannot use 'break' or 'quit' outside of a loop.");
   }
   return newBreakNode(parser.previous.line);
 }
@@ -1201,7 +1200,7 @@ static Node *statement() {
   // --- 2. Action Statements ---
   Node *stmt = NULL;
 
-  if (match(TOKEN_BREAK)) {
+  if (match(TOKEN_BREAK) || match(TOKEN_QUIT)) {
     stmt = breakStatement();
   } else if (match(TOKEN_SKIP)) {
     stmt = skipStatement();
@@ -1315,10 +1314,8 @@ static Node *letDeclaration() {
     consume(TOKEN_END, "Expect 'end' after function body.");
 
     Token finalName = rootName;
-    if (strlen(mangled) > (size_t)rootName.length) {
-      finalName.start = my_strdup(mangled);
-      finalName.length = strlen(mangled);
-    }
+    finalName.start = my_strdup(mangled);
+    finalName.length = strlen(mangled);
 
     // Pass paramTypes.items into the constructor!
     Node *node = newFunctionNode(finalName, parameters.items, paramTypes.items,

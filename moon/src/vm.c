@@ -1,5 +1,6 @@
 // vm.c
 
+#include "vm.h"
 #include <math.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -49,6 +50,7 @@ void freeVM() {
   freeTable(&vm.strings);
   freeTable(&vm.globals);
   freeObjects();
+  free(vm.grayStack);
 }
 
 void push(Value value) {
@@ -70,8 +72,8 @@ static bool isFalsey(Value value) {
 
 // FIX: Add concatenate() function for strings
 static void concatenate() {
-  ObjString *b = AS_STRING(pop());
-  ObjString *a = AS_STRING(pop());
+  ObjString *b = AS_STRING(peek(0));
+  ObjString *a = AS_STRING(peek(1));
 
   int length = a->length + b->length;
   char *chars = ALLOCATE(char, length + 1);
@@ -80,6 +82,9 @@ static void concatenate() {
   chars[length] = '\0';
 
   ObjString *result = takeString(chars, length);
+
+  pop();
+  pop();
   push(OBJ_VAL(result));
 }
 
@@ -106,6 +111,7 @@ static Value showNative(int argCount, Value *args) {
   // Phrasal 'show' only expects 1 argument (the evaluated expression)
   printValue(args[0]);
   printf(" "); // Always append the newline
+  printf("%s", "\n");
 
   return NIL_VAL; // Native functions must return something
 }
@@ -157,6 +163,16 @@ void initVM() {
   resetStack();
   vm.objects = NULL;
   vm.debugMode = false;
+
+  // --- NEW GC INIT ---
+  vm.bytesAllocated = 0;
+  vm.nextGC = 1024 * 1024; // Start with a 1MB threshold
+  vm.grayStack = NULL;
+  vm.grayCount = 0;
+  vm.grayCapacity = 0;
+  vm.allowGC = false; // <--- GC is asleep until execution begins!
+  // -------------------
+
   initTable(&vm.strings);
   initTable(&vm.globals);
 
@@ -165,8 +181,8 @@ void initVM() {
   // ==========================================
   vm.anyType = defineNativeType("Any");
   vm.numberType = defineNativeType("Number");
-  vm.stringType = defineNativeType("String");
   vm.listType = defineNativeType("List");
+  vm.stringType = defineNativeType("String");
   vm.dictType = defineNativeType("Dict");
   vm.boolType = defineNativeType("Bool");
   vm.rangeType = defineNativeType("Range");
@@ -768,11 +784,19 @@ static InterpretResult run() {
         ObjList *list = AS_LIST(seqVal);
 
         if (IS_NUMBER(indexVal)) {
-          int index = (int)AS_NUMBER(indexVal) - 1; // 1-based indexing
+          int userIndex = (int)AS_NUMBER(indexVal);
+          if (userIndex == 0) {
+            runtimeError("List index cannot be 0. MOON uses 1-based indexing.");
+            return INTERPRET_RUNTIME_ERROR;
+          }
+
+          int index = userIndex > 0 ? userIndex - 1 : list->count + userIndex;
+
           if (index < 0 || index >= list->count) {
             runtimeError("List index out of bounds.");
             return INTERPRET_RUNTIME_ERROR;
           }
+
           pop();
           pop();
           push(list->items[index]);
@@ -832,11 +856,20 @@ static InterpretResult run() {
           return INTERPRET_RUNTIME_ERROR;
         }
         ObjString *str = AS_STRING(seqVal);
-        int index = (int)AS_NUMBER(indexVal) - 1;
+        int userIndex = (int)AS_NUMBER(indexVal);
+
+        if (userIndex == 0) {
+          runtimeError(
+              "Like we've said, you have been rescued. First item is 1.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+        int index = userIndex > 0 ? userIndex - 1 : str->length + userIndex;
+
         if (index < 0 || index >= str->length) {
           runtimeError("String index out of bounds.");
           return INTERPRET_RUNTIME_ERROR;
         }
+
         uint8_t charByte = (uint8_t)str->chars[index];
         pop();
         pop();
@@ -870,7 +903,16 @@ static InterpretResult run() {
           runtimeError("List index must be a number.");
           return INTERPRET_RUNTIME_ERROR;
         }
-        int index = (int)AS_NUMBER(indexVal) - 1;
+        // --- THE NEGATIVE INDEX FIX (SET) ---
+        int userIndex = (int)AS_NUMBER(indexVal);
+
+        if (userIndex == 0) {
+          runtimeError("List index cannot be 0. MOON uses 1-based indexing.");
+          return INTERPRET_RUNTIME_ERROR;
+        }
+
+        int index = userIndex > 0 ? userIndex - 1 : list->count + userIndex;
+
         if (index < 0 || index >= list->count) {
           runtimeError("List index out of bounds.");
           return INTERPRET_RUNTIME_ERROR;
@@ -1218,7 +1260,10 @@ static InterpretResult run() {
         multi = AS_MULTI_FUNCTION(existing); // Yes, open the folder!
       } else {
         multi = newMultiFunction(name, arity); // No, create a brand new folder!
+
+        push(OBJ_VAL(multi));
         tableSet(&vm.globals, OBJ_VAL(name), OBJ_VAL(multi));
+        pop();
       }
 
       // 3. Slide the method and signature into the arrays
@@ -1287,6 +1332,8 @@ InterpretResult interpret(const char *source) {
 
   // The script's locals start at the bottom of the stack
   frame->slots = vm.stack;
+
+  vm.allowGC = true;
 
   // 3. Go!
   return run();

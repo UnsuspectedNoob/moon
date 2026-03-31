@@ -22,6 +22,9 @@
 
 void *reallocate(void *pointer, size_t oldSize, size_t newSize);
 void freeObjects();
+void markValue(Value value);
+void markObject(Obj *object);
+void collectGarbage();
 
 // --- DYNAMIC ARRAY GENERATORS ---
 

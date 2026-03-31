@@ -156,3 +156,18 @@ ObjString *tableFindString(Table *table, const char *chars, int length,
     index = (index + 1) % table->capacity;
   }
 }
+
+void tableRemoveWhite(Table *table) {
+  for (int i = 0; i < table->capacity; i++) {
+    Entry *entry = &table->entries[i];
+
+    // If there is a valid string key in this slot...
+    if (!IS_EMPTY(entry->key) && !IS_TOMB(entry->key)) {
+      // And the Garbage Collector did NOT mark it...
+      if (IS_OBJ(entry->key) && !AS_OBJ(entry->key)->isMarked) {
+        // Delete it from the hash table before the object gets destroyed!
+        tableDelete(table, entry->key);
+      }
+    }
+  }
+}
