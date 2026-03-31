@@ -1,49 +1,36 @@
-show "--- INITIATING GC STRESS TEST ---"
+show "--- HASH TABLE BENCHMARK START ---"
 
-@@ 1. Define a custom Blueprint
-type Particle:
-  id,
-  payload
+let start_time be clock()
+
+@@ 1. INSERTION STRESS
+@@ We force the table to constantly dynamically resize and handle collisions
+let map be {}
+for i in 1 to 100000:
+  let key be "k_`i`"
+  set map[key] to i
 end
 
-@@ 2. Define a phrasal function to encapsulate scope
-let process (n) times:
-    let accumulator be []
+let mid_time be clock()
 
-    for i in 1 to n:
-        @@ 3. Thrash the string intern pool and force concatenations
-        let junkStr be "entropy_hash_`i`_`clock()`"
-
-        @@ 4. Thrash the Dictionary allocator with the dynamic string
-        let data be {
-          "cycle": i,
-          "signature": junkStr
-        }
-
-        @@ 5. Thrash the Instance allocator
-        let p be Particle with
-          id: i,
-          payload: data
-        end
-
-        @@ 6. Force OP_ADD_INPLACE to trigger list array reallocations
-        add p to accumulator
-
-        @@ At the end of every loop iteration, 'junkStr', 'data', and 'p' 
-        @@ fall out of local scope. But because 'p' is appended to the 
-        @@ accumulator, it survives. The GC has to perfectly trace the 
-        @@ surviving graph while incinerating the intermediate temporary strings.
-    end
-
-    give accumulator
+@@ 2. LOOKUP STRESS
+@@ We force the table to probe for existing keys thousands of times
+let sum be 0
+for i in 1 to 100000:
+    let key be "k_`i`"
+    add map[key] to sum
 end
 
-let n be 150000
-show "Allocating `n` nested structures..."
+let end_time be clock()
 
-@@ Fire the engine. 15,000 iterations should comfortably push 
-@@ vm.bytesAllocated way past the 1MB threshold, triggering multiple GC cycles.
-let result be process n times
+show "1. Insertion Time (Seconds):"
+show mid_time - start_time
 
-show "Stress test complete. Survived with item count:"
-show result's count
+show "2. Lookup Time (Seconds):"
+show end_time - mid_time
+
+show "3. Total Execution Time:"
+show end_time - start_time
+
+show "Verification Sum (Should be 5000050000): `sum`"
+
+show "--- BENCHMARK END ---"

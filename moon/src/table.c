@@ -7,7 +7,7 @@
 #include "table.h"
 #include "value.h"
 
-#define TABLE_MAX_LOAD 0.75
+#define TABLE_MAX_LOAD 0.60
 
 // Extern definition so we can access valuesEqual and hashValue
 extern bool valuesEqual(Value a, Value b);
@@ -26,7 +26,7 @@ void freeTable(Table *table) {
 
 static Entry *findEntry(Entry *entries, int capacity, Value key) {
   // Use our new universal hash integer scrambler!
-  uint32_t index = hashValue(key) % capacity;
+  uint32_t index = hashValue(key) & (capacity - 1);
   Entry *tombstone = NULL;
 
   for (;;) {
@@ -44,7 +44,7 @@ static Entry *findEntry(Entry *entries, int capacity, Value key) {
       return entry;
     }
 
-    index = (index + 1) % capacity;
+    index = (index + 1) & (capacity - 1);
   }
 }
 
@@ -136,7 +136,7 @@ ObjString *tableFindString(Table *table, const char *chars, int length,
   if (table->count == 0)
     return NULL;
 
-  uint32_t index = hash % table->capacity;
+  uint32_t index = hash & (table->capacity - 1);
   for (;;) {
     Entry *entry = &table->entries[index];
 
@@ -153,7 +153,7 @@ ObjString *tableFindString(Table *table, const char *chars, int length,
       }
     }
 
-    index = (index + 1) % table->capacity;
+    index = (index + 1) & (table->capacity - 1);
   }
 }
 

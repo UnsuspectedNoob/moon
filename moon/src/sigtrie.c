@@ -73,7 +73,7 @@ void freeSignatureTable() {
 
 TrieNode *getSignatureTrie(const char *rootWord) {
   uint32_t hash = hashString(rootWord, strlen(rootWord));
-  uint32_t index = hash % TABLE_CAPACITY;
+  uint32_t index = hash & (TABLE_CAPACITY - 1);
 
   // O(1) Lookup with Linear Probing for collisions!
   for (;;) {
@@ -83,13 +83,13 @@ TrieNode *getSignatureTrie(const char *rootWord) {
     if (entry->rootHash == hash && strcmp(entry->rootWord, rootWord) == 0) {
       return entry->trieRoot; // Found it!
     }
-    index = (index + 1) % TABLE_CAPACITY;
+    index = (index + 1) & (TABLE_CAPACITY - 1);
   }
 }
 
 void insertSignature(const char *rootWord, const char *mangledName) {
   uint32_t rHash = hashString(rootWord, strlen(rootWord));
-  uint32_t index = rHash % TABLE_CAPACITY;
+  uint32_t index = rHash & (TABLE_CAPACITY - 1);
   TrieNode *current = NULL;
 
   // Find the exact bucket or an empty one
@@ -108,7 +108,7 @@ void insertSignature(const char *rootWord, const char *mangledName) {
       current = entry->trieRoot;
       break;
     }
-    index = (index + 1) % TABLE_CAPACITY;
+    index = (index + 1) & (TABLE_CAPACITY - 1);
   }
 
   // 2. Walk the mangled string and build the DFA branches
