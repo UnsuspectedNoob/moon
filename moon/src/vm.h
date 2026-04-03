@@ -59,6 +59,11 @@ typedef struct {
   bool allowGC; // Protects the AST during compilation
 } VM;
 
+typedef struct {
+  const char *name;
+  NativeFn function;
+} NativeDef;
+
 extern VM vm;
 
 void initVM();

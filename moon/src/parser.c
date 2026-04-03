@@ -90,7 +90,6 @@ bool isMathOperator(Token opToken) {
 }
 
 void hoistPhrases(const char *source) {
-  initSignatureTable();
   initScanner(source);
 
   Token token = scanToken();
@@ -1754,10 +1753,6 @@ static ParseRule *getRule(TokenType type) { return &rules[type]; }
 
 Node *parseSource(const char *source) {
   hoistPhrases(source);
-  insertSignature("show", "show$1");
-  insertSignature("clock", "clock$0");
-  insertSignature("floor", "floor_of$1");
-  insertSignature("ask", "ask$1");
 
   parser.hadError = false;
   parser.panicMode = false;
@@ -1770,7 +1765,6 @@ Node *parseSource(const char *source) {
     writeNodeArray(&statements, declaration());
   }
 
-  freeSignatureTable();
   Node *node = (parser.hadError)
                    ? NULL
                    : newBlockNode(statements.items, statements.count, 0);

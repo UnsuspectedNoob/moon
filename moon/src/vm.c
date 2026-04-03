@@ -1,6 +1,8 @@
 // vm.c
 
 #include "vm.h"
+#include "core.h"
+#include "sigtrie.h"
 #include <math.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -71,6 +73,7 @@ void freeVM() {
   freeTable(&vm.globals);
   freeObjects();
   free(vm.grayStack);
+  freeSignatureTable();
 }
 
 void push(Value value) {
@@ -219,10 +222,22 @@ static Value askNative(int argCount, Value *args) {
   return OBJ_VAL(copyString("", 0));
 }
 
+// The hidden C primitives that power the MOON Standard Library
+static NativeDef corePrimitives[] = {
+    {"__show", showNative},
+    {"__ask", askNative},
+    {"__clock", clockNative},
+    {"__floor", floorNative},
+    // Future C functions go here!
+    {NULL, NULL} // Sentinel value: Tells the boot loop exactly when to stop
+};
+
 void initVM() {
   resetStack();
   vm.objects = NULL;
   vm.debugMode = false;
+
+  initSignatureTable();
 
   // --- NEW GC INIT ---
   vm.bytesAllocated = 0;
@@ -262,11 +277,10 @@ void initVM() {
     vm.charStrings[i] = copyString(&c, 1);
   }
 
-  // Define native function
-  defineNative("clock$0", clockNative);
-  defineNative("show$1", showNative);
-  defineNative("floor_of$1", floorNative);
-  defineNative("ask$1", askNative);
+  // Boot up all internal C primitives!
+  for (int i = 0; corePrimitives[i].name != NULL; i++) {
+    defineNative(corePrimitives[i].name, corePrimitives[i].function);
+  }
 }
 
 ObjType *getObjType(Value val) {
@@ -1672,11 +1686,43 @@ TARGET_OP_RETURN: {
 #undef BINARY_OP
 }
 
+static void bootstrapCore() {
+  // 1. Temporarily disable debug tracing so the core loads invisibly
+  bool previousDebug = vm.debugMode;
+  vm.debugMode = false;
+
+  // 2. Compile the embedded standard library
+  ObjFunction *coreFunc = compile(coreLibrary);
+
+  // 3. If it compiles successfully, run it!
+  if (coreFunc != NULL) {
+    push(OBJ_VAL(coreFunc));
+    CallFrame *frame = &vm.frames[vm.frameCount++];
+    frame->function = coreFunc;
+    frame->ip = coreFunc->chunk.code;
+    frame->slots = vm.stackTop - 1;
+
+    run(); // Execute the bytecode silently
+  }
+
+  // 4. Restore the user's debug preferences
+  vm.debugMode = previousDebug;
+}
+
+static bool isCoreBootstrapped = false;
+
 InterpretResult interpret(const char *source) {
+  // --- THE BOOTSTRAP GUARD ---
+  if (!isCoreBootstrapped) {
+    initErrorEngine(coreLibrary); // Point errors to the embedded string
+    bootstrapCore();              // Compile & run the core
+    isCoreBootstrapped = true;    // Lock the door!
+  }
+
   // Give the error engine the raw string BEFORE compilation begins!
   initErrorEngine(source);
 
-  // 1. Compile returns a Function now (we will update compiler.c next)
+  // Compile the user's actual script
   ObjFunction *function = compile(source);
 
   if (function == NULL)
