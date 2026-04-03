@@ -137,6 +137,17 @@ static Value showNative(int argCount, Value *args) {
   return NIL_VAL;
 }
 
+static Value floorNative(int argCount, Value *args) {
+  (void)argCount; // Silence compiler warning
+
+  // If they pass a non-number, just safely return nil
+  if (!IS_NUMBER(args[0]))
+    return NIL_VAL;
+
+  // Use the standard C math library's floor function!
+  return NUMBER_VAL(floor(AS_NUMBER(args[0])));
+}
+
 // --- NATIVE GETTER LOGIC ---
 static Value listLengthGetter(int argCount, Value *args) {
   (void)argCount;
@@ -180,6 +191,34 @@ static void defineNativeGetter(ObjType *type, const char *propertyName,
   pop(); // pop property name string
 }
 
+static Value askNative(int argCount, Value *args) {
+  (void)argCount;
+
+  // 1. Print the prompt string
+  ObjString *prompt = valueToString(args[0]);
+  printf("%s", prompt->chars);
+  fflush(stdout); // CRITICAL: Force the OS to print to the terminal before
+                  // waiting!
+
+  // 2. Wait for the user to type
+  char buffer[1024];
+  if (fgets(buffer, sizeof(buffer), stdin) != NULL) {
+
+    // 3. Strip the invisible newline character (\n) from the end
+    size_t length = strlen(buffer);
+    if (length > 0 && buffer[length - 1] == '\n') {
+      buffer[length - 1] = '\0';
+      length--;
+    }
+
+    // 4. Send the string into MOON's managed memory
+    return OBJ_VAL(copyString(buffer, (int)length));
+  }
+
+  // If input fails (like an EOF signal), safely return an empty string
+  return OBJ_VAL(copyString("", 0));
+}
+
 void initVM() {
   resetStack();
   vm.objects = NULL;
@@ -201,6 +240,7 @@ void initVM() {
   // PHASE 1: BOOTSTRAP THE OBJECT UNIVERSE
   // ==========================================
   vm.anyType = defineNativeType("Any");
+  vm.typeType = defineNativeType("Type");
   vm.numberType = defineNativeType("Number");
   vm.listType = defineNativeType("List");
   vm.stringType = defineNativeType("String");
@@ -223,8 +263,10 @@ void initVM() {
   }
 
   // Define native function
-  defineNative("clock", clockNative);
+  defineNative("clock$0", clockNative);
   defineNative("show$1", showNative);
+  defineNative("floor_of$1", floorNative);
+  defineNative("ask$1", askNative);
 }
 
 ObjType *getObjType(Value val) {
@@ -252,7 +294,7 @@ ObjType *getObjType(Value val) {
     case OBJ_INSTANCE:
       return AS_INSTANCE(val)->type;
     case OBJ_TYPE_BLUEPRINT:
-      return vm.anyType; // A blueprint is just an object of type 'Any' for now
+      return vm.typeType; // <-- A Blueprint is an object of type 'Type'!
     default:
       return vm.anyType;
     }
@@ -290,7 +332,7 @@ static InterpretResult run() {
       &&TARGET_OP_FOR_ITER,      &&TARGET_OP_GET_ITER,
       &&TARGET_OP_CALL,          &&TARGET_OP_TYPE_DEF,
       &&TARGET_OP_INSTANTIATE,   &&TARGET_OP_DEFINE_METHOD,
-      &&TARGET_OP_RETURN};
+      &&TARGET_OP_CAST,          &&TARGET_OP_RETURN};
 
 #define READ_BYTE() (*ip++)
 #define READ_CONSTANT() (frame->function->chunk.constants.values[READ_BYTE()])
@@ -1438,6 +1480,170 @@ TARGET_OP_DEFINE_METHOD: {
   // 4. Clean up the stack (Pop the method and the types)
   pop();
   vm.stackTop -= arity;
+  DISPATCH();
+}
+
+TARGET_OP_CAST: {
+  Value typeVal = pop(); // The Target Blueprint
+  Value val = pop();     // The Raw Data
+
+  if (!IS_TYPE(typeVal)) {
+    THROW_ERROR(ERR_TYPE,
+                "You can only cast to a valid Type Blueprint (like Number, "
+                "String, or a custom type).",
+                "Invalid cast target.");
+  }
+  ObjType *targetType = AS_TYPE(typeVal);
+
+  // GROUP 0: Reflection (The typeof operator)
+  if (targetType == vm.typeType) {
+    push(OBJ_VAL(getObjType(val)));
+  }
+  // GROUP 1: To String (Universal)
+  else if (targetType == vm.stringType) {
+    push(OBJ_VAL(valueToString(val)));
+  }
+  // GROUP 2: To Bool
+  else if (targetType == vm.boolType) {
+    if (IS_STRING(val)) {
+      ObjString *s = AS_STRING(val);
+      if (strcmp(s->chars, "true") == 0)
+        push(BOOL_VAL(true));
+      else if (strcmp(s->chars, "false") == 0)
+        push(BOOL_VAL(false));
+      else
+        THROW_ERROR(ERR_TYPE, "String must be exactly 'true' or 'false'.",
+                    "Invalid string to bool cast.");
+    } else {
+      push(BOOL_VAL(!isFalsey(val)));
+    }
+  }
+  // GROUP 3: To Number
+  else if (targetType == vm.numberType) {
+    if (IS_STRING(val)) {
+      ObjString *s = AS_STRING(val);
+      char *end;
+      double num = strtod(s->chars, &end);
+      if (*end != '\0')
+        THROW_ERROR(ERR_TYPE, "String does not contain a valid number.",
+                    "Invalid string to number cast.");
+      push(NUMBER_VAL(num));
+    } else if (IS_BOOL(val)) {
+      push(NUMBER_VAL(AS_BOOL(val) ? 1.0 : 0.0));
+    } else {
+      THROW_ERROR(ERR_TYPE, "Can only cast Strings and Bools to Numbers.",
+                  "Invalid cast to Number.");
+    }
+  }
+  // GROUP 4a: To List
+  else if (targetType == vm.listType) {
+    if (IS_RANGE(val)) {
+      ObjRange *r = AS_RANGE(val);
+      ObjList *l = newList();
+      push(OBJ_VAL(l));
+      if (r->start <= r->end) {
+        for (double i = r->start; i <= r->end; i += r->step)
+          appendList(l, NUMBER_VAL(i));
+      } else {
+        for (double i = r->start; i >= r->end; i -= r->step)
+          appendList(l, NUMBER_VAL(i));
+      }
+      pop();
+      push(OBJ_VAL(l));
+    } else if (IS_STRING(val)) {
+      ObjString *s = AS_STRING(val);
+      ObjList *l = newList();
+      push(OBJ_VAL(l));
+      for (int i = 0; i < s->length; i++) {
+        appendList(l, OBJ_VAL(vm.charStrings[(uint8_t)s->chars[i]]));
+      }
+      pop();
+      push(OBJ_VAL(l));
+    } else if (IS_DICT(val)) {
+      ObjDict *d = AS_DICT(val);
+      ObjList *l = newList();
+      push(OBJ_VAL(l));
+      for (int i = 0; i < d->fields.capacity; i++) {
+        Entry *e = &d->fields.entries[i];
+        if (!IS_EMPTY(e->key) && !IS_TOMB(e->key)) {
+          ObjList *pair = newList();
+          push(OBJ_VAL(pair));
+          appendList(pair, e->key);
+          appendList(pair, e->value);
+          pop();
+          appendList(l, OBJ_VAL(pair));
+        }
+      }
+      pop();
+      push(OBJ_VAL(l));
+    } else {
+      THROW_ERROR(ERR_TYPE, "Cannot cast this type to a List.",
+                  "Invalid cast to List.");
+    }
+  }
+  // GROUP 4b: To Dict
+  else if (targetType == vm.dictType) {
+    if (IS_LIST(val)) {
+      ObjList *l = AS_LIST(val);
+      ObjDict *d = newDict();
+      push(OBJ_VAL(d));
+      for (int i = 0; i < l->count; i++) {
+        if (!IS_LIST(l->items[i]))
+          THROW_ERROR(ERR_TYPE,
+                      "List items must be key-value pairs (lists of 2) to cast "
+                      "to Dict.",
+                      "Invalid list to dict cast.");
+        ObjList *pair = AS_LIST(l->items[i]);
+        if (pair->count != 2)
+          THROW_ERROR(ERR_TYPE, "Pairs must have exactly 2 items.",
+                      "Invalid list to dict cast.");
+        tableSet(&d->fields, pair->items[0], pair->items[1]);
+      }
+      pop();
+      push(OBJ_VAL(d));
+    } else if (IS_INSTANCE(val)) {
+      ObjInstance *inst = AS_INSTANCE(val);
+      ObjDict *d = newDict();
+      push(OBJ_VAL(d));
+      tableAddAll(&inst->fields, &d->fields);
+      pop();
+      push(OBJ_VAL(d));
+    } else {
+      THROW_ERROR(ERR_TYPE, "Cannot cast this type to a Dict.",
+                  "Invalid cast to Dict.");
+    }
+  }
+  // GROUP 5: Hydration (Dict to Custom Type)
+  else if (!targetType->isNative) {
+    if (!IS_DICT(val))
+      THROW_ERROR(ERR_TYPE, "Can only hydrate a Blueprint using a Dictionary.",
+                  "Invalid hydration cast.");
+    ObjDict *d = AS_DICT(val);
+    ObjInstance *inst = newInstance(targetType);
+    push(OBJ_VAL(inst));
+
+    tableAddAll(&targetType->properties, &inst->fields); // Load defaults
+
+    // Apply overrides and enforce strictness
+    for (int i = 0; i < d->fields.capacity; i++) {
+      Entry *e = &d->fields.entries[i];
+      if (!IS_EMPTY(e->key) && !IS_TOMB(e->key)) {
+        Value dummy;
+        if (!tableGet(&targetType->properties, e->key, &dummy)) {
+          THROW_ERROR(ERR_TYPE,
+                      "Dictionary contains a key not present on the Blueprint.",
+                      "Strict hydration failure.");
+        }
+        tableSet(&inst->fields, e->key, e->value);
+      }
+    }
+    pop();
+    push(OBJ_VAL(inst));
+  } else {
+    THROW_ERROR(ERR_TYPE, "Cannot cast to this native type directly.",
+                "Invalid cast target.");
+  }
+
   DISPATCH();
 }
 

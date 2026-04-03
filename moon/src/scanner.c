@@ -124,11 +124,13 @@ static TokenType identifierType() {
     if (scanner.current - scanner.start > 1) {
       switch (scanner.start[1]) {
       case 'd':
-        return checkKeyword(2, 1, "d", TOKEN_ADD); // add
+        return checkKeyword(2, 1, "d", TOKEN_ADD);
       case 'n':
-        return checkKeyword(2, 1, "d", TOKEN_AND); // and
+        return checkKeyword(2, 1, "d", TOKEN_AND);
       case 's':
-        return checkKeyword(2, 1, "k", TOKEN_ASK); // ask
+        // --- THE NEW SPLIT ---
+        if (scanner.current - scanner.start == 2)
+          return TOKEN_AS;
       }
     }
     break;

@@ -6,8 +6,8 @@
 #include "table.h"
 #include "value.h"
 
-#define FRAMES_MAX 256
-#define STACK_MAX (FRAMES_MAX * 256)
+#define FRAMES_MAX 2048
+#define STACK_MAX 256 * 256
 
 // Represents one running function call
 typedef struct {
@@ -40,6 +40,7 @@ typedef struct {
 
   // --- THE NATIVE TYPE REGISTRY ---
   ObjType *anyType;
+  ObjType *typeType;
   ObjType *numberType;
   ObjType *stringType;
   ObjType *listType;

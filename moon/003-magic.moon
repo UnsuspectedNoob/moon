@@ -1,7 +1,5 @@
 show "--- INITIALIZING MAGIC SYSTEM ---"
 
-@@ 1. Define the Blueprints
-
 type Mage:
   name: "Unknown",
   essencePool: 100
@@ -12,13 +10,13 @@ type Spell:
   cost: 10
 end
 
-@@ 2. Phrasal Functions with Multiple Dispatch
-@@ The fallback method for generic inputs
+## 2. Phrasal Functions with Multiple Dispatch
+## The fallback method for generic inputs
 let channel (a) into (b):
     show "Channeling raw energy..."
 end
 
-@@ The strict-typed method for our Magic System
+## The strict-typed method for our Magic System
 let channel (spell: Spell) into (mage: Mage):
     if mage's essencePool < spell's cost:
       show "`mage's name` does not have enough essence!"
@@ -27,12 +25,12 @@ let channel (spell: Spell) into (mage: Mage):
 
     add -spell's cost to mage's essencePool
 
-    @@ Testing string interpolation and possessive access!
+    ## Testing string interpolation and possessive access!
     show "` mage's name ` successfully weaves the  ` spell's pattern `!"
     show "Remaining Essence Pool: ` mage's essencePool `"
 end
 
-@@ 3. Boot up the instances
+## 3. Boot up the instances
 let caster be Mage with
   name: "Archmage Munachi",
   essencePool: 50
@@ -48,7 +46,7 @@ let voidWeave be Spell with
   cost: 40
 end
 
-@@ 4. Execute the system
+## 4. Execute the system
 show "--- CASTING FIRST SPELL ---"
 channel fireWeave into caster
 

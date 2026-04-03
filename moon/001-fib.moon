@@ -1,6 +1,6 @@
 
 
-let first (n) fibonacci numbers:
+let the first (n) fibonacci numbers:
   let a be [0, 1]
 
   give a if n < 3
@@ -11,4 +11,4 @@ let first (n) fibonacci numbers:
   give a
 end
 
-show first 10 fibonacci numbers
+show the first 10 fibonacci numbers

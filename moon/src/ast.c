@@ -361,6 +361,17 @@ Node *newInstantiateNode(Node *target, Token *propertyNames, Node **values,
   return node;
 }
 
+Node *newCastNode(Node *left, Node *right, int line) {
+  Node *node = allocateNode(NODE_CAST, line);
+  node->as.cast.left = left;
+  node->as.cast.right = right;
+  if (left)
+    left->parent = node;
+  if (right)
+    right->parent = node;
+  return node;
+}
+
 // --- The Destructor (Crucial for avoiding leaks) ---
 
 void freeNode(Node *node) {
@@ -508,6 +519,13 @@ void freeNode(Node *node) {
     FREE_ARRAY(Node *, node->as.instantiate.values, node->as.instantiate.count);
     break;
   }
+
+  case NODE_CAST: {
+    freeNode(node->as.cast.left);
+    freeNode(node->as.cast.right);
+    break;
+  }
+
   default:
     break; // Nodes like Literal, Variable, Break, Skip have no children/heap
            // arrays

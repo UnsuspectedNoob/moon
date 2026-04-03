@@ -3,7 +3,6 @@
 #ifndef MOON_CHUNK_H
 #define MOON_CHUNK_H
 
-#include "common.h"
 #include "value.h"
 
 // The Instruction Set Architecture (ISA)
@@ -48,6 +47,7 @@ typedef enum {
   OP_TYPE_DEF,
   OP_INSTANTIATE,
   OP_DEFINE_METHOD,
+  OP_CAST,
   OP_RETURN,
 } OpCode;
 

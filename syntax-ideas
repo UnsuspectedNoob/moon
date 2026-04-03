@@ -5,11 +5,6 @@ let lastNames be ["Onaola", "Shay", "Tucker"]
 for each exco in excos, name in lastNames
   show "`exco` `name`"
 
-type Book (n, a, l):
-  name is n,
-  author is a
-end
-
 let books be [
   Book("The Power of Habit", "Charles Duhigg"),
   Book("Atomic Habits", "James Clear"),

@@ -13,6 +13,7 @@ typedef enum {
   NODE_UNARY,
   NODE_SUBSCRIPT,
   NODE_PROPERTY,
+  NODE_CAST,
   NODE_CALL,
   NODE_PHRASAL_CALL,
   NODE_INTERPOLATION,
@@ -156,6 +157,11 @@ typedef struct {
   int count;
 } InstantiatePayload;
 
+typedef struct {
+  Node *left;
+  Node *right;
+} CastPayload;
+
 // --- The Master Node ---
 struct sNode {
   NodeType type;
@@ -180,6 +186,7 @@ struct sNode {
     LetPayload let;
     FunctionPayload function;
     RangePayload range;
+    CastPayload cast;
     ListPayload list;
     DictPayload dictExpr;
     SubscriptPayload subscript;
@@ -230,6 +237,7 @@ Node *newTypeNode(Token name, Token *propertyNames, Node **defaultValues,
                   int count, int line);
 Node *newInstantiateNode(Node *target, Token *propertyNames, Node **values,
                          int count, int line);
+Node *newCastNode(Node *left, Node *right, int line);
 
 void freeNode(Node *node);
 

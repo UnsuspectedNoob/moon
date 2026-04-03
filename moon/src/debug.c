@@ -170,7 +170,8 @@ int disassembleInstruction(Chunk *chunk, int offset) {
     return jumpInstruction("OP_FOR_ITER", 1, chunk, offset);
   case OP_GET_ITER: // <--- Add this
     return simpleInstruction("OP_GET_ITER", offset);
-
+  case OP_CAST:
+    return simpleInstruction("OP_CAST", offset);
   case OP_TYPE_DEF:
     return typeInstruction("OP_TYPE_DEF", chunk, offset);
   case OP_INSTANTIATE:
@@ -385,6 +386,13 @@ void printAST(Node *node, int indent) {
              node->as.typeDecl.propertyNames[i].start);
       printAST(node->as.typeDecl.defaultValues[i], indent + 2);
     }
+    break;
+
+  case NODE_CAST:
+    printf("[CAST]\n");
+    printAST(node->as.cast.left, indent + 1);
+    printf("%*s ├─ [AS]\n", indent * 4, "");
+    printAST(node->as.cast.right, indent + 2);
     break;
 
   case NODE_INSTANTIATE:

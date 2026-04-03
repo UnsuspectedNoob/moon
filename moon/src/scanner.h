@@ -41,7 +41,7 @@ typedef enum {
   // Keywords
   TOKEN_ADD,
   TOKEN_AND,
-  TOKEN_ASK,
+  TOKEN_AS,
   TOKEN_BE,
   TOKEN_BY,
   TOKEN_BREAK,

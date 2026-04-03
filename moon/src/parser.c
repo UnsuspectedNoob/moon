@@ -269,6 +269,7 @@ typedef enum {
   PREC_COMPARISON,
   PREC_TERM,
   PREC_FACTOR,
+  PREC_CAST,
   PREC_UNARY,
   PREC_CALL,
   PREC_PRIMARY
@@ -644,6 +645,13 @@ static bool isComparison(Token opToken) {
   }
 }
 
+static Node *castExpression(Node *left) {
+  int line = parser.previous.line;
+  // Parse the right side (the Target Type) with exact CAST precedence!
+  Node *right = parsePrecedence(PREC_CAST);
+  return newCastNode(left, right, line);
+}
+
 static Node *binary(Node *left) {
   Token opToken = parser.previous;
 
@@ -869,11 +877,8 @@ static Node *subscript(Node *left) {
 static Node *dot(Node *left) {
   int line = parser.previous.line;
 
-  // Moon's Dot Indexer! It expects an expression, not a literal name.
-  // e.g. `list.0` or `list.i`
-  Node *index = parsePrecedence(PREC_CALL);
+  Node *index = parsePrecedence((Precedence)(PREC_CALL + 1));
 
-  // It returns a SubscriptNode, completely identical to `list[i]`
   return newSubscriptNode(left, index, line);
 }
 
@@ -1214,7 +1219,39 @@ static Node *expressionStatement() {
   int line = parser.current.line;
   Node *expr = expression();
 
-  // THE AST INVERSION
+  // --- THE BUBBLE-UP FIX ---
+  // If the expression was a Phrasal Call, check if its last argument absorbed
+  // the modifier!
+  if (expr != NULL && expr->type == NODE_PHRASAL_CALL) {
+    int lastIdx = expr->as.phrasalCall.argCount - 1;
+    if (lastIdx >= 0) {
+      Node *lastArg = expr->as.phrasalCall.arguments[lastIdx];
+      if (lastArg->type == NODE_IF && lastArg->as.ifStmt.elseBranch == NULL) {
+        Node *cond = lastArg->as.ifStmt.condition;
+        // Put the raw string back into the argument slot
+        expr->as.phrasalCall.arguments[lastIdx] = lastArg->as.ifStmt.thenBranch;
+        // Wrap the entire call in the If block
+        Node *exprStmt = newSingleExprNode(NODE_EXPRESSION_STMT, expr, line);
+        return newIfNode(cond, exprStmt, NULL, line);
+      }
+    }
+  }
+
+  // Do the exact same check for standard function calls!
+  if (expr != NULL && expr->type == NODE_CALL) {
+    int lastIdx = expr->as.call.argCount - 1;
+    if (lastIdx >= 0) {
+      Node *lastArg = expr->as.call.arguments[lastIdx];
+      if (lastArg->type == NODE_IF && lastArg->as.ifStmt.elseBranch == NULL) {
+        Node *cond = lastArg->as.ifStmt.condition;
+        expr->as.call.arguments[lastIdx] = lastArg->as.ifStmt.thenBranch;
+        Node *exprStmt = newSingleExprNode(NODE_EXPRESSION_STMT, expr, line);
+        return newIfNode(cond, exprStmt, NULL, line);
+      }
+    }
+  }
+
+  // The standard AST Inversion (for normal assignments/math)
   if (expr != NULL && expr->type == NODE_IF &&
       expr->as.ifStmt.elseBranch == NULL) {
     Node *cond = expr->as.ifStmt.condition;
@@ -1296,62 +1333,131 @@ static Node *typeDeclaration() {
   return node;
 }
 
+// Helper to create our invisible ghost tokens
+static Token makeHiddenToken(const char *text, int line) {
+  Token t;
+  t.type = TOKEN_IDENTIFIER;
+  t.start = text;
+  t.length = strlen(text);
+  t.line = line;
+  t.column = 0;
+  return t;
+}
+
 static Node *updateStatement() {
   int line = parser.previous.line;
 
   // 1. The Target (L-Value)
-  // Parses things like 'score', 'player's health', or 'list[0]'
-  Node *target = parseLValue();
+  Node *rawTarget = parseLValue();
 
   // 2. The Operator
-
-  Token opToken = parser.previous;
-
-  if (isMathOperator(opToken)) {
+  if (!isMathOperator(parser.current)) {
     errorCurrentHint(ERR_SYNTAX, "I was expecting a math operator here.",
                      "The update statement requires a math operator (+, -, *, "
                      "/, or %). e.g., 'update score * 2'");
     return NULL;
   }
 
+  advance();                       // Eat the operator!
+  Token opToken = parser.previous; // Now opToken safely holds the '+'
+
   // OPTIMIZATION: If it's a plus, swap to our specialized inplace token!
   if (opToken.type == TOKEN_PLUS) {
     opToken.type = TOKEN_ADD_INPLACE;
   }
 
-  // 3. The Value (R-Value)
+  // 3. The Value
   Node *value = expression();
 
-  // 4. THE DESUGARING
-  // We clone the target so we can put it on the right side of the binary node
-  Node *accumulator = cloneNode(target);
-  if (accumulator == NULL) {
-    errorHint(ERR_SYNTAX, "This isn't a valid target for 'update'.",
-              "You can only update variables, subscripts, or properties.");
-    return NULL;
+  // 4. THE DESUGARING (Fixing the Double-Evaluation Trap)
+  Node *finalNode = NULL;
+
+  if (rawTarget->type == NODE_VARIABLE) {
+    // Variables have no side-effects, so they are safe to clone!
+    Node *accumulator = cloneNode(rawTarget);
+    Node *binaryMath = newBinaryNode(accumulator, opToken, value, line);
+    Node *targets[1] = {rawTarget};
+    Node *setValues[1] = {binaryMath};
+    finalNode = newSetNode(targets, 1, setValues, 1, line);
+  } else if (rawTarget->type == NODE_PROPERTY) {
+    // Target is an object property: player's health
+    // We isolate the object into a ghost variable!
+    Token objToken = makeHiddenToken(" obj", line);
+    Token nArr[1] = {objToken};
+    Node *eArr[1] = {rawTarget->as.property.target};
+    Node *letObj = newLetNode(nArr, 1, eArr, 1, line);
+
+    // Reconstruct the LHS:  obj's health
+    Node *safeObj1 = newVariableNode(objToken, line);
+    Node *safeTarget1 =
+        newPropertyNode(safeObj1, rawTarget->as.property.name, line);
+
+    // Reconstruct the RHS:  obj's health
+    Node *safeObj2 = newVariableNode(objToken, line);
+    Node *safeTarget2 =
+        newPropertyNode(safeObj2, rawTarget->as.property.name, line);
+
+    // Build the math and the assignment
+    Node *binaryMath = newBinaryNode(safeTarget2, opToken, value, line);
+    Node *targets[1] = {safeTarget1};
+    Node *setValues[1] = {binaryMath};
+    Node *setStmt = newSetNode(targets, 1, setValues, 1, line);
+
+    // Wrap the ghost variable and the assignment in a clean block
+    Node *blockStmts[2] = {letObj, setStmt};
+    finalNode = newBlockNode(blockStmts, 2, line);
+
+    // Free the abandoned target shell so we don't leak memory!
+    FREE(Node, rawTarget);
+  } else if (rawTarget->type == NODE_SUBSCRIPT) {
+    // Target is a subscript: list[index]
+    // We isolate BOTH the list and the index into ghost variables!
+    Token objToken = makeHiddenToken(" obj", line);
+    Token nArr1[1] = {objToken};
+    Node *eArr1[1] = {rawTarget->as.subscript.left};
+    Node *letObj = newLetNode(nArr1, 1, eArr1, 1, line);
+
+    Token idxToken = makeHiddenToken(" idx", line);
+    Token nArr2[1] = {idxToken};
+    Node *eArr2[1] = {rawTarget->as.subscript.index};
+    Node *letIdx = newLetNode(nArr2, 1, eArr2, 1, line);
+
+    // Reconstruct LHS:  obj[ idx]
+    Node *safeObj1 = newVariableNode(objToken, line);
+    Node *safeIdx1 = newVariableNode(idxToken, line);
+    Node *safeTarget1 = newSubscriptNode(safeObj1, safeIdx1, line);
+
+    // Reconstruct RHS:  obj[ idx]
+    Node *safeObj2 = newVariableNode(objToken, line);
+    Node *safeIdx2 = newVariableNode(idxToken, line);
+    Node *safeTarget2 = newSubscriptNode(safeObj2, safeIdx2, line);
+
+    // Build the math and assignment
+    Node *binaryMath = newBinaryNode(safeTarget2, opToken, value, line);
+    Node *targets[1] = {safeTarget1};
+    Node *setValues[1] = {binaryMath};
+    Node *setStmt = newSetNode(targets, 1, setValues, 1, line);
+
+    // Wrap both ghost variables and the assignment in a block
+    Node *blockStmts[3] = {letObj, letIdx, setStmt};
+    finalNode = newBlockNode(blockStmts, 3, line);
+
+    // Free the abandoned shell
+    FREE(Node, rawTarget);
   }
-
-  // Build the math operation: (Target OP Value)
-  Node *binaryMath = newBinaryNode(accumulator, opToken, value, line);
-
-  // Wrap it in a SET assignment: Target = (Target OP Value)
-  Node *targets[1] = {target};
-  Node *setValues[1] = {binaryMath};
-
-  Node *updateNode = newSetNode(targets, 1, setValues, 1, line);
 
   // --- OPTIONAL: AST INVERSION (Statement Modifiers) ---
   if (match(TOKEN_IF)) {
     Node *cond = expression();
-    return newIfNode(cond, updateNode, NULL, line);
+    return newIfNode(cond, finalNode, NULL, line);
   } else if (match(TOKEN_UNLESS)) {
     Node *cond = expression();
     Token notToken = {TOKEN_NOT, "not", 3, line, 0};
     Node *invertedCond = newUnaryNode(notToken, cond, line);
-    return newIfNode(invertedCond, updateNode, NULL, line);
+    return newIfNode(invertedCond, finalNode, NULL, line);
   }
 
-  return updateNode;
+  return finalNode;
 }
 
 static Node *statement() {
@@ -1607,6 +1713,7 @@ static Node *declaration() {
 // ==========================================
 
 ParseRule rules[] = {
+    [TOKEN_AS] = {NULL, castExpression, PREC_CAST},
     [TOKEN_LEFT_PAREN] = {grouping, call, PREC_CALL},
     [TOKEN_LEFT_BRACE] = {dict, instantiate, PREC_CALL}, // <--- Updated!
     [TOKEN_WITH] = {NULL, instantiateWith, PREC_CALL},   // <--- New!
@@ -1648,6 +1755,9 @@ static ParseRule *getRule(TokenType type) { return &rules[type]; }
 Node *parseSource(const char *source) {
   hoistPhrases(source);
   insertSignature("show", "show$1");
+  insertSignature("clock", "clock$0");
+  insertSignature("floor", "floor_of$1");
+  insertSignature("ask", "ask$1");
 
   parser.hadError = false;
   parser.panicMode = false;

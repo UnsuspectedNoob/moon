@@ -537,6 +537,13 @@ static void walkNode(Node *node) {
     break;
   }
 
+  case NODE_CAST: {
+    walkNode(node->as.cast.left);  // Push the raw data
+    walkNode(node->as.cast.right); // Push the Target Blueprint
+    emitByte(OP_CAST);             // Smash them together!
+    break;
+  }
+
   case NODE_PHRASAL_CALL: {
     int arg = resolveLocal(current, &node->as.phrasalCall.mangledName);
     if (arg != -1) {
@@ -683,7 +690,6 @@ ObjFunction *generateCode(Node *rootAST) {
   walkNode(rootAST);
 
   // 3. Wrap it up and return the finished VM function
-  emitReturn();
   ObjFunction *function = endCompiler();
 
   return function;

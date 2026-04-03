@@ -41,6 +41,7 @@ Native Methods (The "Length" Hack Fix): Remember how we hardcoded list's length?
 Dictionary Iteration: Upgrading your for loop so you can do for each key, value in person: to loop over the hash table dynamically.
 add features for [Book] and String | List types
 
+add same type check in lists.
 
 ++ some downsides that may exist ++
 novices might ask why we can't use some variable names
