@@ -1,4 +1,5 @@
 #include "error.h"
+#include "vm.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -97,14 +98,30 @@ void reportCompileError(Token *token, ErrorType type, const char *message,
   }
 }
 
-void reportRuntimeError(int line, ErrorType type, const char *message,
-                        const char *hint) {
-  fprintf(stderr, "\nOops! %s on line %d\n", getErrorTypeName(type), line);
+// Add #include "vm.h" to the top of error.c so it can access the Vault!
+
+void reportRuntimeError(ObjString *moduleName, int line, ErrorType type,
+                        const char *message, const char *hint) {
+  const char *modNameC = moduleName != NULL ? moduleName->chars : "<unknown>";
+
+  fprintf(stderr, "\nOops! %s in '%s' on line %d\n", getErrorTypeName(type),
+          modNameC, line);
   fprintf(stderr, "The program crashed while trying to execute this:\n");
 
-  // For runtime errors, we might not have the exact column from the bytecode
-  // chunk yet, so we pass 0 for the column to just highlight the line.
-  printSnippet(line, 0, 0);
+  // --- THE VAULT LOOKUP ---
+  Value sourceVal;
+  if (moduleName != NULL &&
+      tableGet(&vm.loadedModules, OBJ_VAL(moduleName), &sourceVal)) {
+    // Hot-swap the source pointer to the vaulted string!
+    const char *oldSource = globalSource;
+    globalSource = AS_CSTRING(sourceVal);
+
+    printSnippet(line, 0, 0); // Draw the squiggles!
+
+    globalSource = oldSource; // Put it back
+  } else {
+    fprintf(stderr, "  (Source code unavailable)\n\n");
+  }
 
   fprintf(stderr, "Reason: %s\n", message);
 

@@ -1,5 +1,6 @@
+load "math.moon"
 
-let num be 143.5 as List
-show num                  ## Prints [1, 4, 3, ".", 5]
+show "Initializing crash test.."
 
-show num as Number
+let result be divide 100 by 0
+show result

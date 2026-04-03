@@ -165,11 +165,10 @@ void printObject(Value value) {
 
 ObjFunction *newFunction() {
   ObjFunction *function = ALLOCATE_OBJ(ObjFunction, OBJ_FUNCTION);
-
   function->arity = 0;
   function->name = NULL;
+  function->moduleName = NULL;
   initChunk(&function->chunk);
-
   return function;
 }
 

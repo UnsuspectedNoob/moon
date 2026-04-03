@@ -2,10 +2,12 @@
 #include "ast.h"
 #include "codegen.h"
 #include "debug.h" // <--- 1. ADDED THIS
+#include "emitter.h"
 #include "parser.h"
 
 // The Master Compilation Pipeline
-ObjFunction *compile(const char *source) {
+ObjFunction *compile(const char *source, ObjString *moduleName) {
+  currentModuleName = moduleName;
 
   // Phase 1: Front-End (Source Code -> Abstract Syntax Tree)
   Node *ast = parseSource(source);

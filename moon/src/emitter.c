@@ -10,6 +10,7 @@
 
 Compiler *current = NULL;
 int currentLine = 0;
+ObjString *currentModuleName = NULL;
 
 // ==========================================
 // COMPILER INITIALIZATION
@@ -25,6 +26,9 @@ void initCompiler(Compiler *compiler, FunctionType type) {
   compiler->function = newFunction();
   current = compiler;
   compiler->chunk = &compiler->function->chunk;
+
+  // --- THE MODULE TAG ---
+  compiler->function->moduleName = currentModuleName;
 
   if (type != TYPE_SCRIPT) {
     current->function->name =

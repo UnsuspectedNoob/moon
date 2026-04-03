@@ -8,3 +8,7 @@ end
 let square of (n: Number):
     give n * n
 end
+
+let divide (a: Number) by (b: Number):
+  give a / b
+end

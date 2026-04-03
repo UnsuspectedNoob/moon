@@ -48,7 +48,7 @@ static void runtimeErrorDetailed(ErrorType type, const char *hint,
   int line = function->chunk.lines[instruction];
 
   // 3. Call the beautiful Error Engine!
-  reportRuntimeError(line, type, message, hint);
+  reportRuntimeError(function->moduleName, line, type, message, hint);
 
   // 4. Print the modernized Stack Trace
   fprintf(stderr, "Stack Trace:\n");
@@ -540,7 +540,23 @@ TARGET_OP_MULTIPLY: {
 }
 
 TARGET_OP_DIVIDE: {
-  BINARY_OP(NUMBER_VAL, /);
+  if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) {
+    THROW_ERROR(ERR_TYPE,
+                "Math operations require numbers. Check if you accidentally "
+                "used a string or a list here.",
+                "Operands must be numbers.");
+  }
+
+  double b = AS_NUMBER(pop());
+  double a = AS_NUMBER(pop());
+
+  if (b == 0.0) {
+    THROW_ERROR(ERR_RUNTIME,
+                "You cannot divide by zero. Check your math logic.",
+                "Division by zero.");
+  }
+
+  push(NUMBER_VAL(a / b));
   DISPATCH();
 }
 
@@ -555,7 +571,7 @@ TARGET_OP_MOD: {
 
   if (b == 0.0) {
     THROW_ERROR(ERR_RUNTIME,
-                "You cannot divide or modulo by zero. Check your math logic.",
+                "You cannot modulo by zero. Check your math logic.",
                 "Modulo by zero.");
   }
 
@@ -1746,16 +1762,24 @@ TARGET_OP_LOAD: {
   tableSet(&vm.loadedModules, OBJ_VAL(path), BOOL_VAL(true));
 
   // --- 2. COMPILE ON THE FLY ---
+  // Read the file from the OS
   char *source = readFile(path->chars);
   if (source == NULL) {
-    THROW_ERROR(ERR_RUNTIME,
-                "Make sure the file exists and the path is correct.",
+    THROW_ERROR(ERR_RUNTIME, "Make sure the file exists.",
                 "Could not open module '%s'.", path->chars);
   }
 
-  // Compile the raw text into a brand new VM Function
-  ObjFunction *moduleFunc = compile(source);
-  free(source);
+  // 1. Vault the Source Code!
+  ObjString *sourceStr = copyString(source, strlen(source));
+  push(OBJ_VAL(sourceStr)); // GC Protection
+  tableSet(&vm.loadedModules, OBJ_VAL(path), OBJ_VAL(sourceStr));
+
+  // 2. Compile the module with its path as the name!
+  ObjFunction *moduleFunc = compile(source, path);
+  free(source); // We can safely free the C-string because the Vault owns the
+                // ObjString copy!
+
+  pop(); // Pop sourceStr off the stack
 
   if (moduleFunc == NULL) {
     THROW_ERROR(
@@ -1823,8 +1847,15 @@ static void bootstrapCore() {
   vm.debugMode = false;
   printAstFlag = false;
 
+  // 1. Vault the Core
+  ObjString *coreName = copyString("<core>", 6);
+  push(OBJ_VAL(coreName));
+  ObjString *coreSrc = copyString(coreLibrary, strlen(coreLibrary));
+  push(OBJ_VAL(coreSrc));
+  tableSet(&vm.loadedModules, OBJ_VAL(coreName), OBJ_VAL(coreSrc));
+
   // 2. Compile the embedded standard library
-  ObjFunction *coreFunc = compile(coreLibrary);
+  ObjFunction *coreFunc = compile(coreLibrary, coreName);
 
   // 3. If it compiles successfully, run it!
   if (coreFunc != NULL) {
@@ -1855,8 +1886,15 @@ InterpretResult interpret(const char *source) {
   // Give the error engine the raw string BEFORE compilation begins!
   initErrorEngine(source);
 
-  // Compile the user's actual script
-  ObjFunction *function = compile(source);
+  // 1. Vault the Main Script
+  ObjString *mainName = copyString("<main>", 6);
+  push(OBJ_VAL(mainName));
+  ObjString *mainSrc = copyString(source, strlen(source));
+  push(OBJ_VAL(mainSrc));
+  tableSet(&vm.loadedModules, OBJ_VAL(mainName), OBJ_VAL(mainSrc));
+
+  // 2. Compile with the tag
+  ObjFunction *function = compile(source, mainName);
 
   if (function == NULL)
     return INTERPRET_COMPILE_ERROR;

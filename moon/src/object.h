@@ -64,6 +64,7 @@ struct ObjFunction {
   int arity;       // Number of arguments it expects
   Chunk chunk;     // The bytecode
   ObjString *name; // Function name (for debugging)
+  ObjString *moduleName;
 };
 
 // The wrapper for a C function

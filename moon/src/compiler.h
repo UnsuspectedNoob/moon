@@ -5,6 +5,6 @@
 
 // Compiles the source string into a top-level function (the "main" script).
 // Returns NULL if any syntax or compilation errors occurred.
-ObjFunction *compile(const char *source);
+ObjFunction *compile(const char *source, ObjString *moduleName);
 
 #endif
