@@ -29,8 +29,7 @@ typedef struct {
   Value stack[STACK_MAX];
   Value *stackTop;
 
-  Table globals;
-  Table strings;
+  Table globals, strings, loadedModules;
 
   Obj *objects; // for the GC
 

@@ -179,6 +179,8 @@ int disassembleInstruction(Chunk *chunk, int offset) {
   case OP_DEFINE_METHOD:
     return constantLongInstruction("OP_DEFINE_METHOD", chunk, offset);
 
+  case OP_LOAD:
+    return simpleInstruction("OP_LOAD", offset);
   case OP_RETURN:
     return simpleInstruction("OP_RETURN", offset);
 
@@ -393,6 +395,11 @@ void printAST(Node *node, int indent) {
     printAST(node->as.cast.left, indent + 1);
     printf("%*s ├─ [AS]\n", indent * 4, "");
     printAST(node->as.cast.right, indent + 2);
+    break;
+
+  case NODE_LOAD:
+    printf("[LOAD MODULE: %.*s]\n", node->as.loadStmt.path.length,
+           node->as.loadStmt.path.start);
     break;
 
   case NODE_INSTANTIATE:

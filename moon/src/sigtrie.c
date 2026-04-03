@@ -87,109 +87,75 @@ TrieNode *getSignatureTrie(const char *rootWord) {
   }
 }
 
-void insertSignature(const char *rootWord, const char *mangledName) {
-  uint32_t rHash = hashString(rootWord, strlen(rootWord));
+TrieNode *startPhrase(const char *rootWord, int length) {
+  uint32_t rHash = hashString(rootWord, length);
   uint32_t index = rHash & (TABLE_CAPACITY - 1);
-  TrieNode *current = NULL;
 
-  // Find the exact bucket or an empty one
   for (;;) {
     RegistryEntry *entry = &phrasalTable[index];
     if (entry->rootWord == NULL) {
-      // Empty bucket, claim it!
       entry->rootHash = rHash;
-      entry->rootWord = my_strdup(rootWord);
+      char *rootStr = malloc(length + 1);
+      memcpy(rootStr, rootWord, length);
+      rootStr[length] = '\0';
+      entry->rootWord = rootStr;
+
       entry->trieRoot = newNode(NODE_LABEL);
-      current = entry->trieRoot;
-      break;
+      return entry->trieRoot;
     } else if (entry->rootHash == rHash &&
-               strcmp(entry->rootWord, rootWord) == 0) {
-      // Found existing root!
-      current = entry->trieRoot;
-      break;
+               strncmp(entry->rootWord, rootWord, length) == 0 &&
+               entry->rootWord[length] == '\0') {
+      return entry->trieRoot;
     }
     index = (index + 1) & (TABLE_CAPACITY - 1);
   }
+}
 
-  // 2. Walk the mangled string and build the DFA branches
-  const char *cursor = mangledName + strlen(rootWord);
+TrieNode *addLabelBranch(TrieNode *current, const char *label, int length) {
+  uint32_t lHash = hashString(label, length);
 
-  if (*cursor == '$') {
-    cursor++;
-    int arity = atoi(cursor);
-    if (arity == 0) {
-      current->isTerminal = true;
-      if (current->mangledName)
-        FREE_TRIE(current->mangledName);
-      current->mangledName = my_strdup(mangledName);
-      return;
-    }
+  for (int i = 0; i < current->childCount; i++) {
+    TrieNode *child = current->children[i];
+    if (child->type == NODE_LABEL && child->labelHash == lHash)
+      return child;
   }
 
-  cursor = mangledName + strlen(rootWord);
+  TrieNode *child = newNode(NODE_LABEL);
+  child->labelHash = lHash;
 
-  while (*cursor != '\0') {
-    PhraseNodeType nextType;
-    uint32_t nextHash = 0;
-    int nextArity = 0;
+  if (current->childCapacity < current->childCount + 1) {
+    int old = current->childCapacity;
+    current->childCapacity = old < 4 ? 4 : old * 2;
+    current->children = (TrieNode **)realloc(
+        current->children, sizeof(TrieNode *) * current->childCapacity);
+  }
+  current->children[current->childCount++] = child;
+  return child;
+}
 
-    if (*cursor == '_') {
-      cursor++;
-      nextType = NODE_LABEL;
-
-      char labelBuf[256] = {0};
-      int len = 0;
-      while (cursor[len] != '\0' && cursor[len] != '$' && cursor[len] != '_')
-        len++;
-      strncpy(labelBuf, cursor, len);
-
-      nextHash = hashString(labelBuf, len);
-      cursor += len;
-    } else if (*cursor == '$') {
-      cursor++;
-      nextType = NODE_ARGUMENT;
-      nextArity = atoi(cursor);
-      while (*cursor >= '0' && *cursor <= '9')
-        cursor++;
-    } else {
-      cursor++;
-      continue;
-    }
-
-    TrieNode *nextNode = NULL;
-    for (int i = 0; i < current->childCount; i++) {
-      TrieNode *child = current->children[i];
-      if (child->type == nextType) {
-        if (nextType == NODE_LABEL && child->labelHash == nextHash) {
-          nextNode = child;
-          break;
-        }
-        if (nextType == NODE_ARGUMENT && child->arity == nextArity) {
-          nextNode = child;
-          break;
-        }
-      }
-    }
-
-    if (nextNode == NULL) {
-      nextNode = newNode(nextType);
-      nextNode->labelHash = nextHash;
-      nextNode->arity = nextArity;
-
-      if (current->childCapacity < current->childCount + 1) {
-        int old = current->childCapacity;
-        current->childCapacity = old < 4 ? 4 : old * 2;
-        current->children = (TrieNode **)realloc(
-            current->children, sizeof(TrieNode *) * current->childCapacity);
-      }
-      current->children[current->childCount++] = nextNode;
-    }
-
-    current = nextNode;
+TrieNode *addArgumentBranch(TrieNode *current, int arity) {
+  for (int i = 0; i < current->childCount; i++) {
+    TrieNode *child = current->children[i];
+    if (child->type == NODE_ARGUMENT && child->arity == arity)
+      return child;
   }
 
-  current->isTerminal = true;
-  if (current->mangledName)
-    FREE_TRIE(current->mangledName);
-  current->mangledName = my_strdup(mangledName);
+  TrieNode *child = newNode(NODE_ARGUMENT);
+  child->arity = arity;
+
+  if (current->childCapacity < current->childCount + 1) {
+    int old = current->childCapacity;
+    current->childCapacity = old < 4 ? 4 : old * 2;
+    current->children = (TrieNode **)realloc(
+        current->children, sizeof(TrieNode *) * current->childCapacity);
+  }
+  current->children[current->childCount++] = child;
+  return child;
+}
+
+void finalizePhrase(TrieNode *endNode, const char *mangledName) {
+  endNode->isTerminal = true;
+  if (endNode->mangledName)
+    free(endNode->mangledName);
+  endNode->mangledName = my_strdup(mangledName);
 }

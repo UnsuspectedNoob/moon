@@ -35,6 +35,7 @@ typedef enum {
   NODE_TYPE_DECL,
   NODE_INSTANTIATE,
   NODE_END,
+  NODE_LOAD,
 } NodeType;
 
 // Forward declaration
@@ -162,6 +163,10 @@ typedef struct {
   Node *right;
 } CastPayload;
 
+typedef struct {
+  Token path;
+} LoadPayload;
+
 // --- The Master Node ---
 struct sNode {
   NodeType type;
@@ -192,6 +197,7 @@ struct sNode {
     SubscriptPayload subscript;
     TypeDeclPayload typeDecl;
     InstantiatePayload instantiate;
+    LoadPayload loadStmt;
   } as;
 };
 
@@ -238,6 +244,7 @@ Node *newTypeNode(Token name, Token *propertyNames, Node **defaultValues,
 Node *newInstantiateNode(Node *target, Token *propertyNames, Node **values,
                          int count, int line);
 Node *newCastNode(Node *left, Node *right, int line);
+Node *newLoadNode(Token path, int line);
 
 void freeNode(Node *node);
 

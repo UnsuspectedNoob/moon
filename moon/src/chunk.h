@@ -48,6 +48,7 @@ typedef enum {
   OP_INSTANTIATE,
   OP_DEFINE_METHOD,
   OP_CAST,
+  OP_LOAD,
   OP_RETURN,
 } OpCode;
 

@@ -666,6 +666,18 @@ static void walkNode(Node *node) {
     emitByte(count & 0xff);
     break;
   }
+  case NODE_LOAD: {
+    // 1. Strip the quotes: '"math.moon"' becomes 'math.moon'
+    ObjString *pathStr = copyString(node->as.loadStmt.path.start + 1,
+                                    node->as.loadStmt.path.length - 2);
+
+    // 2. Push the raw string into the VM's constant pool
+    emitConstant(OBJ_VAL(pathStr));
+
+    // 3. Tell the VM to execute the load sequence!
+    emitByte(OP_LOAD);
+    break;
+  }
 
   default:
     // Unhandled node type

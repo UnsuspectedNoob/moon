@@ -6,14 +6,6 @@
 #include "scanner.h"
 #include <stdbool.h>
 
-typedef struct {
-  const char *start;
-  const char *current;
-  int line;
-  int column;
-  int interpolationDepth;
-} Scanner;
-
 Scanner scanner;
 
 void initScanner(const char *source) {
@@ -196,7 +188,15 @@ static TokenType identifierType() {
   }
 
   case 'l': {
-    return checkKeyword(1, 2, "et", TOKEN_LET);
+    if (scanner.current - scanner.start > 1) {
+      switch (scanner.start[1]) {
+      case 'e':
+        return checkKeyword(2, 1, "t", TOKEN_LET);
+      case 'o':
+        return checkKeyword(2, 2, "ad", TOKEN_LOAD);
+      }
+    }
+    break;
   }
 
   case 'm': {

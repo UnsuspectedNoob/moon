@@ -372,6 +372,12 @@ Node *newCastNode(Node *left, Node *right, int line) {
   return node;
 }
 
+Node *newLoadNode(Token path, int line) {
+  Node *node = allocateNode(NODE_LOAD, line);
+  node->as.loadStmt.path = path;
+  return node;
+}
+
 // --- The Destructor (Crucial for avoiding leaks) ---
 
 void freeNode(Node *node) {

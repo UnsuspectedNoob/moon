@@ -56,6 +56,7 @@ typedef enum {
   TOKEN_IN,
   TOKEN_IS,
   TOKEN_LET,
+  TOKEN_LOAD,
   TOKEN_NIL,
   TOKEN_NOT,
   TOKEN_OR,
@@ -84,6 +85,16 @@ typedef struct {
   int line;          // Line number for error reporting
   int column;        // Track horizontal positioning
 } Token;
+
+typedef struct {
+  const char *start;
+  const char *current;
+  int line;
+  int column;
+  int interpolationDepth;
+} Scanner;
+
+extern Scanner scanner;
 
 // Initialize the scanner with the source code string
 void initScanner(const char *source);

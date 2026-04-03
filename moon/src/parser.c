@@ -54,6 +54,30 @@ static char *my_strdup(const char *s) {
   return dup;
 }
 
+// --- THE CIRCULAR DEPENDENCY SHIELD ---
+#define MAX_LOADED_FILES 256
+static char *prepassLoadedFiles[MAX_LOADED_FILES];
+static int prepassLoadedCount = 0;
+
+static bool isPrepassLoaded(const char *path) {
+  for (int i = 0; i < prepassLoadedCount; i++) {
+    if (strcmp(prepassLoadedFiles[i], path) == 0)
+      return true;
+  }
+  return false;
+}
+
+static void markPrepassLoaded(const char *path) {
+  if (prepassLoadedCount < MAX_LOADED_FILES) {
+    prepassLoadedFiles[prepassLoadedCount++] = my_strdup(path);
+  }
+}
+// --------------------------------------
+
+// You will need to expose your readFile helper from main.c or rewrite a quick
+// one here
+extern char *readFile(const char *path);
+
 static bool canStartExpression(TokenType type) {
   switch (type) {
   case TOKEN_NEWLINE:
@@ -91,10 +115,39 @@ bool isMathOperator(Token opToken) {
 
 void hoistPhrases(const char *source) {
   initScanner(source);
-
   Token token = scanToken();
+
   while (token.type != TOKEN_EOF) {
-    if (token.type == TOKEN_LET) {
+    // --- THE RECURSIVE MODULE JUMP ---
+    if (token.type == TOKEN_LOAD) {
+      Token pathToken = scanToken();
+      if (pathToken.type == TOKEN_STRING) {
+        // 1. Extract the file path (chop off quotes)
+        char path[1024] = {0};
+        strncpy(path, pathToken.start + 1, pathToken.length - 2);
+
+        // 2. Check the Shield!
+        if (!isPrepassLoaded(path)) {
+          markPrepassLoaded(path);
+
+          // 3. Read the external file
+          char *externalSource = readFile(path);
+          if (externalSource != NULL) {
+            // 4. THE RECURSION: Save the current scanner state!
+            Scanner previousScanner = scanner;
+
+            // 5. Dive into the new file and extract its verbs
+            hoistPhrases(externalSource);
+            free(externalSource);
+
+            // 6. Restore the scanner to pick up where we left off
+            scanner = previousScanner;
+          }
+        }
+      }
+    }
+    // ---------------------------------
+    else if (token.type == TOKEN_LET) {
       Token nameToken = scanToken();
       if (nameToken.type == TOKEN_IDENTIFIER) {
         Token next = scanToken();
@@ -103,50 +156,56 @@ void hoistPhrases(const char *source) {
           char mangled[1024] = {0};
           strncat(mangled, nameToken.start, nameToken.length);
 
-          // THE 0-ARITY FIX: Did it immediately hit a colon?
+          // Build the root node instantly
+          TrieNode *currentNode =
+              startPhrase(nameToken.start, nameToken.length);
+
           if (next.type == TOKEN_COLON) {
             strcat(mangled, "$0");
+            finalizePhrase(currentNode, mangled);
           } else {
-            while (next.type != TOKEN_COLON && next.type != TOKEN_EOF &&
-                   next.type != TOKEN_NEWLINE) {
+            while (next.type != TOKEN_COLON && next.type != TOKEN_EOF) {
+              if (next.type == TOKEN_NEWLINE) {
+                next = scanToken();
+                continue;
+              }
+
               if (next.type == TOKEN_LEFT_PAREN) {
                 int arity = 0;
                 Token peek = scanToken();
                 if (peek.type != TOKEN_RIGHT_PAREN) {
-                  arity = 1; // If it's not empty, there's at least 1 argument!
+                  arity = 1;
                   while (peek.type != TOKEN_RIGHT_PAREN &&
                          peek.type != TOKEN_EOF) {
-                    if (peek.type == TOKEN_COMMA) {
-                      arity++; // Only increment arity when we see a comma!
-                    }
+                    if (peek.type == TOKEN_COMMA)
+                      arity++;
                     peek = scanToken();
                   }
                 }
+
                 char buf[16];
                 sprintf(buf, "$%d", arity);
                 strcat(mangled, buf);
+
+                // Add Argument Node
+                currentNode = addArgumentBranch(currentNode, arity);
               } else {
                 strcat(mangled, "_");
                 strncat(mangled, next.start, next.length);
+
+                // Add Label Node
+                currentNode =
+                    addLabelBranch(currentNode, next.start, next.length);
               }
               next = scanToken();
             }
+            finalizePhrase(currentNode, mangled);
           }
-
-          char root[256] = {0};
-          snprintf(root, nameToken.length + 1, "%.*s", nameToken.length,
-                   nameToken.start);
-          insertSignature(root, mangled);
         }
       }
     }
-
     token = scanToken();
   }
-
-  // --- ADD THIS LINE ---
-  // The Rewind: Reset the scanner back to the top of the file for the real
-  // pass!
   initScanner(source);
 }
 
@@ -1459,6 +1518,14 @@ static Node *updateStatement() {
   return finalNode;
 }
 
+static Node *loadStatement() {
+  int line = parser.previous.line;
+  consumeHint(TOKEN_STRING, ERR_SYNTAX, "I was expecting a file path here.",
+              "The load statement requires a file path in quotes (e.g., load "
+              "\"math.moon\").");
+  return newLoadNode(parser.previous, line);
+}
+
 static Node *statement() {
   currentStickySubject = NULL;
   ignoreNewlines();
@@ -1482,6 +1549,8 @@ static Node *statement() {
     stmt = breakStatement();
   } else if (match(TOKEN_SKIP)) {
     stmt = skipStatement();
+  } else if (match(TOKEN_LOAD)) {
+    stmt = loadStatement();
   } else if (match(TOKEN_SET)) {
     stmt = setStatement();
   } else if (match(TOKEN_ADD)) {

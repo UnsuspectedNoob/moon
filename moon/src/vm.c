@@ -16,9 +16,11 @@
 #include "error.h"
 #include "memory.h"
 #include "object.h"
+#include "table.h"
 #include "value.h"
 
 VM vm; // Define the global VM instance here
+extern char *readFile(const char *path);
 
 static void resetStack() { vm.stackTop = vm.stack; }
 
@@ -71,6 +73,7 @@ static void runtimeErrorDetailed(ErrorType type, const char *hint,
 void freeVM() {
   freeTable(&vm.strings);
   freeTable(&vm.globals);
+  freeTable(&vm.loadedModules);
   freeObjects();
   free(vm.grayStack);
   freeSignatureTable();
@@ -250,6 +253,7 @@ void initVM() {
 
   initTable(&vm.strings);
   initTable(&vm.globals);
+  initTable(&vm.loadedModules);
 
   // ==========================================
   // PHASE 1: BOOTSTRAP THE OBJECT UNIVERSE
@@ -346,7 +350,8 @@ static InterpretResult run() {
       &&TARGET_OP_FOR_ITER,      &&TARGET_OP_GET_ITER,
       &&TARGET_OP_CALL,          &&TARGET_OP_TYPE_DEF,
       &&TARGET_OP_INSTANTIATE,   &&TARGET_OP_DEFINE_METHOD,
-      &&TARGET_OP_CAST,          &&TARGET_OP_RETURN};
+      &&TARGET_OP_CAST,          &&TARGET_OP_LOAD,
+      &&TARGET_OP_RETURN};
 
 #define READ_BYTE() (*ip++)
 #define READ_CONSTANT() (frame->function->chunk.constants.values[READ_BYTE()])
@@ -1515,7 +1520,44 @@ TARGET_OP_CAST: {
   }
   // GROUP 1: To String (Universal)
   else if (targetType == vm.stringType) {
-    push(OBJ_VAL(valueToString(val)));
+    if (IS_LIST(val)) {
+      ObjList *list = AS_LIST(val);
+
+      // 1. Array to hold the stringified versions of each item
+      ObjString **strings = malloc(sizeof(ObjString *) * list->count);
+      int totalLength = 0;
+
+      // 2. First Pass: Convert everything to a string and protect it from the
+      // GC!
+      for (int i = 0; i < list->count; i++) {
+        strings[i] = valueToString(list->items[i]);
+        push(OBJ_VAL(strings[i])); // Pushed to VM stack to prevent GC sweep
+        totalLength += strings[i]->length;
+      }
+
+      // 3. Second Pass: Allocate the exact memory needed and smash them
+      // together
+      char *chars = ALLOCATE(char, totalLength + 1);
+      char *dest = chars;
+      for (int i = 0; i < list->count; i++) {
+        memcpy(dest, strings[i]->chars, strings[i]->length);
+        dest += strings[i]->length;
+      }
+      chars[totalLength] = '\0';
+
+      // 4. Create the final MOON string
+      ObjString *result = takeString(chars, totalLength);
+
+      // 5. Cleanup: Pop the temporary strings off the VM stack and free the C
+      // array
+      vm.stackTop -= list->count;
+      free(strings);
+
+      push(OBJ_VAL(result));
+    } else {
+      // For everything else, use the standard stringifier
+      push(OBJ_VAL(valueToString(val)));
+    }
   }
   // GROUP 2: To Bool
   else if (targetType == vm.boolType) {
@@ -1573,6 +1615,34 @@ TARGET_OP_CAST: {
       }
       pop();
       push(OBJ_VAL(l));
+    } else if (IS_NUMBER(val)) {
+      // 1. We cheat! We convert the number to a string first so we can parse
+      // its characters.
+      ObjString *s = valueToString(val);
+      push(OBJ_VAL(s)); // GC Protection
+
+      ObjList *l = newList();
+      push(OBJ_VAL(l)); // GC Protection
+
+      // 2. Loop through the stringified number
+      for (int i = 0; i < s->length; i++) {
+        char c = s->chars[i];
+
+        if (c >= '0' && c <= '9') {
+          // If it's a digit, subtract '0' (ASCII 48) to get the actual math
+          // number!
+          appendList(l, NUMBER_VAL(c - '0'));
+        } else {
+          // If it's a decimal point (or a minus sign/exponent), keep it as a
+          // string
+          appendList(l, OBJ_VAL(vm.charStrings[(uint8_t)c]));
+        }
+      }
+
+      // 3. Clean up the stack
+      pop();            // Pop list
+      pop();            // Pop string
+      push(OBJ_VAL(l)); // Push list back as the final result
     } else if (IS_DICT(val)) {
       ObjDict *d = AS_DICT(val);
       ObjList *l = newList();
@@ -1661,6 +1731,65 @@ TARGET_OP_CAST: {
   DISPATCH();
 }
 
+TARGET_OP_LOAD: {
+  // The compiler pushed the file path string right before calling OP_LOAD
+  ObjString *path = AS_STRING(pop());
+
+  // --- 1. THE SHIELD ---
+  Value dummy;
+  if (tableGet(&vm.loadedModules, OBJ_VAL(path), &dummy)) {
+    // We already ran this file! Skip it to prevent infinite loops.
+    DISPATCH();
+  }
+
+  // Lock the door: mark this file as loaded
+  tableSet(&vm.loadedModules, OBJ_VAL(path), BOOL_VAL(true));
+
+  // --- 2. COMPILE ON THE FLY ---
+  char *source = readFile(path->chars);
+  if (source == NULL) {
+    THROW_ERROR(ERR_RUNTIME,
+                "Make sure the file exists and the path is correct.",
+                "Could not open module '%s'.", path->chars);
+  }
+
+  // Compile the raw text into a brand new VM Function
+  ObjFunction *moduleFunc = compile(source);
+  free(source);
+
+  if (moduleFunc == NULL) {
+    THROW_ERROR(
+        ERR_RUNTIME,
+        "There is a syntax error inside the module you are trying to load.",
+        "Failed to compile '%s'.", path->chars);
+  }
+
+  // Protect the new function from Garbage Collection
+  push(OBJ_VAL(moduleFunc));
+
+  // --- 3. THE CONTEXT SWITCH ---
+  if (vm.frameCount == FRAMES_MAX) {
+    THROW_ERROR(ERR_RUNTIME, "Too many files loading each other.",
+                "Stack overflow.");
+  }
+
+  // A. Save our exact spot in the CURRENT script so we can return here later!
+  frame->ip = ip;
+
+  // B. Create a brand new CallFrame for the module
+  CallFrame *newFrame = &vm.frames[vm.frameCount++];
+  newFrame->function = moduleFunc;
+  newFrame->ip = moduleFunc->chunk.code;
+  newFrame->slots = vm.stackTop - 1; // The module gets its own local variables
+
+  // C. Hijack the VM's brain!
+  frame = newFrame;
+  ip = frame->ip;
+
+  // D. Resume execution. The VM is now reading instructions from the new file!
+  DISPATCH();
+}
+
 TARGET_OP_RETURN: {
   Value result = pop();
   vm.frameCount--;
@@ -1689,7 +1818,10 @@ TARGET_OP_RETURN: {
 static void bootstrapCore() {
   // 1. Temporarily disable debug tracing so the core loads invisibly
   bool previousDebug = vm.debugMode;
+  bool previousAstFlag = printAstFlag;
+
   vm.debugMode = false;
+  printAstFlag = false;
 
   // 2. Compile the embedded standard library
   ObjFunction *coreFunc = compile(coreLibrary);
@@ -1707,6 +1839,7 @@ static void bootstrapCore() {
 
   // 4. Restore the user's debug preferences
   vm.debugMode = previousDebug;
+  printAstFlag = previousAstFlag;
 }
 
 static bool isCoreBootstrapped = false;

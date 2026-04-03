@@ -31,6 +31,13 @@ typedef struct TrieNode {
 // 3. The Public API
 void initSignatureTable();
 void freeSignatureTable();
+TrieNode *getSignatureTrie(const char *rootWord);
+
+// --- THE DIRECT BUILDER API ---
+TrieNode *startPhrase(const char *rootWord, int length);
+TrieNode *addLabelBranch(TrieNode *current, const char *label, int length);
+TrieNode *addArgumentBranch(TrieNode *current, int arity);
+void finalizePhrase(TrieNode *endNode, const char *mangledName);
 
 // Used by the Pre-Pass Skimmer to build the tree
 void insertSignature(const char *rootWord, const char *mangledName);
