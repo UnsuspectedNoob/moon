@@ -291,13 +291,14 @@ static InterpretResult run() {
 #define READ_STRING()                                                          \
   AS_STRING(frame->function->chunk.constants.values[READ_SHORT()])
 
-#define BINARY_OP(valueType, op)                                               \
+#define BINARY_OP(valueType, op, opStr)                                        \
   do {                                                                         \
     if (!IS_NUMBER(peek(0)) || !IS_NUMBER(peek(1))) {                          \
       THROW_ERROR(ERR_TYPE,                                                    \
                   "Math operations require numbers. Check if you "             \
                   "accidentally used a string or a list here.",                \
-                  "Operands must be numbers.");                                \
+                  "You tried to use the '%s' operator on a %s and a %s.",      \
+                  opStr, TYPE_NAME(peek(1)), TYPE_NAME(peek(0)));              \
     }                                                                          \
     double b = AS_NUMBER(pop());                                               \
     double a = AS_NUMBER(pop());                                               \
@@ -337,6 +338,11 @@ static InterpretResult run() {
           "Stack Underflow Error: Expected %d items.", (expectedCount));       \
     }                                                                          \
   } while (false)
+
+// 5. THE TYPE REFLECTOR MACRO
+// Instantly grabs the English name of any MOON value (e.g., "String", "List",
+// "Number")
+#define TYPE_NAME(val) (getObjType(val)->name->chars)
 
   // 3. PRIME THE PUMP
   // Fire off the very first instruction jump!
@@ -417,9 +423,9 @@ TARGET_OP_ADD: {
   // --- RULE 5: THE REJECTOR ---
   else {
     THROW_ERROR(ERR_TYPE,
-                "You can only add Number+Number, String+Any, or List+Any. "
-                "Check the types of the variables you are combining.",
-                "Invalid '+' operation.");
+                "You can only add Number+Number, String+Any, or List+Any.",
+                "You tried to use '+' to combine a %s and a %s.", TYPE_NAME(a),
+                TYPE_NAME(b));
   }
   DISPATCH();
 }
@@ -464,22 +470,33 @@ TARGET_OP_ADD_INPLACE: {
     concatenate();
   }
 
+  // --- RULE 4: THE REJECTOR ---
   else {
     THROW_ERROR(ERR_TYPE,
-                "You can only use 'add' with Numbers, Lists, or Strings. Check "
-                "the types of your variables.",
-                "Invalid 'add' operation.");
+                "You can only add Number+Number, String+Any, or List+Any.",
+                "You tried to use '+' to combine a %s and a %s.", TYPE_NAME(a),
+                TYPE_NAME(b));
   }
   DISPATCH();
 }
 
 TARGET_OP_SUBTRACT: {
-  BINARY_OP(NUMBER_VAL, -);
+  BINARY_OP(NUMBER_VAL, -, "-");
   DISPATCH();
 }
 
 TARGET_OP_MULTIPLY: {
-  BINARY_OP(NUMBER_VAL, *);
+  BINARY_OP(NUMBER_VAL, *, "*");
+  DISPATCH();
+}
+
+TARGET_OP_GREATER: {
+  BINARY_OP(BOOL_VAL, >, ">");
+  DISPATCH();
+}
+
+TARGET_OP_LESS: {
+  BINARY_OP(BOOL_VAL, <, "<");
   DISPATCH();
 }
 
@@ -538,7 +555,7 @@ TARGET_OP_NEGATE: {
   if (!IS_NUMBER(peek(0))) {
     THROW_ERROR(ERR_TYPE,
                 "You can only use the negative sign (-) on numeric values.",
-                "Operand must be a number.");
+                "You tried to negate a %s.", TYPE_NAME(peek(0)));
   }
   push(NUMBER_VAL(-AS_NUMBER(pop())));
   DISPATCH();
@@ -573,11 +590,27 @@ TARGET_OP_DEFINE_GLOBAL: {
 TARGET_OP_GET_GLOBAL: {
   ObjString *name = READ_STRING();
   Value value;
+
   if (!tableGet(&vm.globals, OBJ_VAL(name), &value)) {
-    THROW_ERROR(ERR_REFERENCE,
-                "Did you misspell the variable name, or forget to declare it "
-                "with 'let'?",
-                "Undefined variable '%s'.", name->chars);
+    // --- THE ORACLE INTERCEPT ---
+    const char *suggestion = findVariableSuggestion(name->chars);
+
+    if (suggestion != NULL) {
+      // 1. Build the dynamic hint string first!
+      char hintBuf[256];
+      snprintf(hintBuf, sizeof(hintBuf),
+               "Did you mean '" COLOR_CYAN "%s" COLOR_RESET "'?", suggestion);
+
+      // 2. Throw the error with the properly aligned arguments
+      THROW_ERROR(ERR_REFERENCE, hintBuf, "Undefined variable '%s'.",
+                  name->chars);
+    } else {
+      // No close matches found. Fall back to the standard error.
+      THROW_ERROR(ERR_REFERENCE,
+                  "Did you misspell the variable name, or forget to declare it "
+                  "with 'let'?",
+                  "Undefined variable '%s'.", name->chars);
+    }
   }
 
   push(value);
@@ -590,10 +623,25 @@ TARGET_OP_SET_GLOBAL: {
     // tableSet returns true if it's a NEW key.
     // 'set' is only for EXISTING keys. Delete it and error.
     tableDelete(&vm.globals, OBJ_VAL(name));
-    THROW_ERROR(ERR_REFERENCE,
-                "Did you misspell the variable name, or forget to declare it "
-                "with 'let'?",
-                "Undefined variable '%s'.", name->chars);
+    // --- THE ORACLE INTERCEPT ---
+    const char *suggestion = findVariableSuggestion(name->chars);
+
+    if (suggestion != NULL) {
+      // 1. Build the dynamic hint string first!
+      char hintBuf[256];
+      snprintf(hintBuf, sizeof(hintBuf),
+               "Did you mean '" COLOR_CYAN "%s" COLOR_RESET "'?", suggestion);
+
+      // 2. Throw the error with the properly aligned arguments
+      THROW_ERROR(ERR_REFERENCE, hintBuf, "Undefined variable '%s'.",
+                  name->chars);
+    } else {
+      // No close matches found. Fall back to the standard error.
+      THROW_ERROR(ERR_REFERENCE,
+                  "Did you misspell the variable name, or forget to declare it "
+                  "with 'let'?",
+                  "Undefined variable '%s'.", name->chars);
+    }
   }
 
   DISPATCH();
@@ -634,16 +682,6 @@ TARGET_OP_EQUAL: {
   Value b = pop();
   Value a = pop();
   push(BOOL_VAL(valuesEqual(a, b)));
-  DISPATCH();
-}
-
-TARGET_OP_GREATER: {
-  BINARY_OP(BOOL_VAL, >);
-  DISPATCH();
-}
-
-TARGET_OP_LESS: {
-  BINARY_OP(BOOL_VAL, <);
   DISPATCH();
 }
 
@@ -1375,9 +1413,10 @@ TARGET_OP_CALL: {
     DISPATCH();
   }
 
-  THROW_ERROR(ERR_TYPE,
-              "You appended parentheses to a value that isn't executable.",
-              "Can only call functions or types.");
+  THROW_ERROR(
+      ERR_TYPE, "You appended parentheses to a value that isn't executable.",
+      "You tried to call a %s as if it were a function.",
+      TYPE_NAME(callee)); // We use the 'callee' variable you already extracted!
 }
 
 TARGET_OP_TYPE_DEF: {

@@ -1192,8 +1192,16 @@ static Node *addStatement() {
   // -------------------------
 
   // 2. The Bridge
-  consumeHint(TOKEN_TO, ERR_SYNTAX, "I was expecting the 'to' keyword here.",
-              "The 'add' statement is formatted as 'add <value> to <target>'.");
+  if (match(TOKEN_PLUS)) {
+    errorAt(&parser.previous, ERR_SYNTAX,
+            "It looks like you used '+' inside an 'add' statement.",
+            "The 'add' phrase already implies addition! Use the word 'to' "
+            "instead (e.g., 'add 5 to score').");
+  } else {
+    consumeHint(
+        TOKEN_TO, ERR_SYNTAX, "I was expecting the 'to' keyword here.",
+        "The 'add' statement is formatted as 'add <value> to <target>'.");
+  }
 
   // 3. The Target (L-Value)
   Node *target = parseLValue();
@@ -1248,15 +1256,26 @@ static Node *setStatement() {
     writeNodeArray(&targets, parseLValue());
   } while (match(TOKEN_COMMA));
 
-  consumeHint(TOKEN_TO, ERR_SYNTAX, "I was expecting the 'to' keyword here.",
-              "The 'set' statement is formatted as 'set <target> to <value>'.");
+  // --- FOREIGN SYNTAX INTERCEPT: '=' instead of 'to' ---
+  if (match(TOKEN_EQUAL)) {
+    errorAt(&parser.previous, ERR_SYNTAX,
+            "It looks like you used '=' to update a variable.",
+            "In MOON, we use the word 'to' for updates. Try changing '=' to "
+            "'to' (e.g., 'set score to 100').");
+  } else {
+    // If it wasn't an '=', fall back to the standard strict check
+    consumeHint(
+        TOKEN_TO, ERR_SYNTAX, "I was expecting the 'to' keyword here.",
+        "The 'set' statement is formatted as 'set <target> to <value>'.");
+  }
 
   do {
     writeNodeArray(&values, expression());
   } while (match(TOKEN_COMMA));
 
   Node *lastVal = values.items[values.count - 1];
-  if (lastVal->type == NODE_IF && lastVal->as.ifStmt.elseBranch == NULL) {
+  if (lastVal != NULL && lastVal->type == NODE_IF &&
+      lastVal->as.ifStmt.elseBranch == NULL) {
     Node *cond = lastVal->as.ifStmt.condition;
     values.items[values.count - 1] = lastVal->as.ifStmt.thenBranch;
 
@@ -1631,7 +1650,8 @@ static Node *letDeclaration() {
     } while (match(TOKEN_COMMA));
 
     Node *lastVal = exprs.items[exprs.count - 1];
-    if (lastVal->type == NODE_IF && lastVal->as.ifStmt.elseBranch == NULL) {
+    if (lastVal != NULL && lastVal->type == NODE_IF &&
+        lastVal->as.ifStmt.elseBranch == NULL) {
       errorAt(
           &parser.previous, ERR_SYNTAX,
           "Statement modifiers aren't allowed on 'let' declarations.",
@@ -1649,6 +1669,24 @@ static Node *letDeclaration() {
     freeNodeArray(&exprs);
     freeTokenArray(&names);
     return node;
+  } else if (match(TOKEN_EQUAL)) {
+    // --- FOREIGN SYNTAX INTERCEPT: '=' instead of 'be' ---
+    errorAt(&parser.previous, ERR_SYNTAX,
+            "It looks like you used '=' to assign a variable.",
+            "In MOON, we use the word 'be' for new variables. Try changing '=' "
+            "to 'be' (e.g., 'let x be 10').");
+
+    // Graceful Recovery: We pretend they typed 'be' and parse the expressions
+    // anyway! This prevents a cascade of confusing follow-up errors.
+    NodeArray exprs;
+    initNodeArray(&exprs);
+    do {
+      writeNodeArray(&exprs, expression());
+    } while (match(TOKEN_COMMA));
+
+    freeNodeArray(&exprs);
+    freeTokenArray(&names);
+    return NULL; // Return NULL so we don't generate bad bytecode
   }
 
   Token rootName = names.items[0];
