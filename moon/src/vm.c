@@ -1,7 +1,10 @@
 // vm.c
 
 #include "vm.h"
-#include "core.h"
+#include "lib_core.h"
+#include "lib_list.h"
+#include "lib_math.h"
+#include "lib_string.h"
 #include "sigtrie.h"
 #include <math.h>
 #include <stdarg.h>
@@ -90,7 +93,7 @@ Value pop() {
 }
 
 // FIX: Add peek() function
-static Value peek(int distance) { return vm.stackTop[-1 - distance]; }
+Value peek(int distance) { return vm.stackTop[-1 - distance]; }
 
 static bool isFalsey(Value value) {
   return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
@@ -117,41 +120,15 @@ static void concatenate() {
 bool valuesEqual(Value a, Value b) { return a == b; }
 
 // Helper to define natives
-static void defineNative(const char *name, NativeFn function) {
+void defineNative(const char *name, NativeFn function) {
   push(OBJ_VAL(copyString(name, (int)strlen(name))));
   push(OBJ_VAL(newNative(function)));
-  tableSet(&vm.globals, vm.stack[0], vm.stack[1]);
+
+  // Read the top two items dynamically!
+  tableSet(&vm.globals, peek(1), peek(0));
+
   pop();
   pop();
-}
-
-static Value clockNative(int argCount, Value *args) {
-  (void)argCount; // Silence warning
-  (void)args;     // Silence warning
-  return NUMBER_VAL((double)clock() / CLOCKS_PER_SEC);
-}
-
-static Value showNative(int argCount, Value *args) {
-  (void)argCount;
-
-  // 1. Send the value through our robust, recursive stringifier!
-  ObjString *stringified = valueToString(args[0]);
-
-  // 2. Print the actual formatted characters to the terminal
-  printf("%s\n", stringified->chars);
-
-  return NIL_VAL;
-}
-
-static Value floorNative(int argCount, Value *args) {
-  (void)argCount; // Silence compiler warning
-
-  // If they pass a non-number, just safely return nil
-  if (!IS_NUMBER(args[0]))
-    return NIL_VAL;
-
-  // Use the standard C math library's floor function!
-  return NUMBER_VAL(floor(AS_NUMBER(args[0])));
 }
 
 // --- NATIVE GETTER LOGIC ---
@@ -197,44 +174,6 @@ static void defineNativeGetter(ObjType *type, const char *propertyName,
   pop(); // pop property name string
 }
 
-static Value askNative(int argCount, Value *args) {
-  (void)argCount;
-
-  // 1. Print the prompt string
-  ObjString *prompt = valueToString(args[0]);
-  printf("%s", prompt->chars);
-  fflush(stdout); // CRITICAL: Force the OS to print to the terminal before
-                  // waiting!
-
-  // 2. Wait for the user to type
-  char buffer[1024];
-  if (fgets(buffer, sizeof(buffer), stdin) != NULL) {
-
-    // 3. Strip the invisible newline character (\n) from the end
-    size_t length = strlen(buffer);
-    if (length > 0 && buffer[length - 1] == '\n') {
-      buffer[length - 1] = '\0';
-      length--;
-    }
-
-    // 4. Send the string into MOON's managed memory
-    return OBJ_VAL(copyString(buffer, (int)length));
-  }
-
-  // If input fails (like an EOF signal), safely return an empty string
-  return OBJ_VAL(copyString("", 0));
-}
-
-// The hidden C primitives that power the MOON Standard Library
-static NativeDef corePrimitives[] = {
-    {"__show", showNative},
-    {"__ask", askNative},
-    {"__clock", clockNative},
-    {"__floor", floorNative},
-    // Future C functions go here!
-    {NULL, NULL} // Sentinel value: Tells the boot loop exactly when to stop
-};
-
 void initVM() {
   resetStack();
   vm.objects = NULL;
@@ -271,19 +210,12 @@ void initVM() {
 
   // Inject Native Getters into the Blueprints!
   defineNativeGetter(vm.listType, "length", listLengthGetter);
-  defineNativeGetter(vm.listType, "count", listLengthGetter);
   defineNativeGetter(vm.stringType, "length", stringLengthGetter);
-  defineNativeGetter(vm.stringType, "count", stringLengthGetter);
 
   for (int i = 0; i < 256; i++) {
     char c = (char)i;
     // copyString takes a pointer to the char and the length (1)
     vm.charStrings[i] = copyString(&c, 1);
-  }
-
-  // Boot up all internal C primitives!
-  for (int i = 0; corePrimitives[i].name != NULL; i++) {
-    defineNative(corePrimitives[i].name, corePrimitives[i].function);
   }
 }
 
@@ -392,6 +324,18 @@ static InterpretResult run() {
     frame->ip = ip; /* Sync the fast local register back to memory! */         \
     runtimeErrorDetailed(type, hint, __VA_ARGS__);                             \
     return INTERPRET_RUNTIME_ERROR;                                            \
+  } while (false)
+
+// 4. THE STACK GUARD MACRO
+#define EXPECT_STACK(expectedCount)                                            \
+  do {                                                                         \
+    if ((vm.stackTop - vm.stack) < (expectedCount)) {                          \
+      THROW_ERROR(                                                             \
+          ERR_RUNTIME,                                                         \
+          "The VM attempted to pop more values than existed on the stack. "    \
+          "This indicates corrupted bytecode or a compiler bug.",              \
+          "Stack Underflow Error: Expected %d items.", (expectedCount));       \
+    }                                                                          \
   } while (false)
 
   // 3. PRIME THE PUMP
@@ -710,6 +654,7 @@ TARGET_OP_NOT: {
 
 TARGET_OP_BUILD_STRING: {
   uint16_t count = READ_SHORT();
+  EXPECT_STACK(count);
 
   // Point to the first item in the sequence
   // (Stack grows up, so stackTop is past the end. We back up 'count' slots)
@@ -755,6 +700,7 @@ TARGET_OP_BUILD_STRING: {
 
 TARGET_OP_BUILD_LIST: {
   uint16_t itemCount = READ_SHORT();
+  EXPECT_STACK(itemCount);
 
   // 1. Create the new list object
   ObjList *list = newList();
@@ -807,6 +753,7 @@ TARGET_OP_BUILD_LIST: {
 
 TARGET_OP_BUILD_DICT: {
   uint16_t itemCount = READ_SHORT();
+  EXPECT_STACK(itemCount * 2);
 
   // 1. Create the dictionary and protect it from GC
   ObjDict *dict = newDict();
@@ -835,6 +782,7 @@ TARGET_OP_BUILD_DICT: {
 
 TARGET_OP_INSTANTIATE: {
   uint16_t propCount = READ_SHORT();
+  EXPECT_STACK((propCount * 2) + 1);
 
   // Layout: [Blueprint] [k1] [v1] [k2] [v2] <--- Top
   Value *itemsStart = vm.stackTop - (propCount * 2);
@@ -1299,6 +1247,7 @@ TARGET_OP_FOR_ITER: {
 
 TARGET_OP_CALL: {
   int argCount = READ_SHORT();
+  EXPECT_STACK(argCount + 1);
 
   Value callee = peek(argCount);
 
@@ -1434,6 +1383,7 @@ TARGET_OP_CALL: {
 TARGET_OP_TYPE_DEF: {
   ObjString *name = READ_STRING();
   uint16_t propertyCount = READ_SHORT();
+  EXPECT_STACK(propertyCount * 2);
 
   // 1. Construct the Blueprint!
   ObjType *type = newType(name);
@@ -1839,41 +1789,53 @@ TARGET_OP_RETURN: {
 #undef BINARY_OP
 }
 
+static void compileAndRunWrapper(const char *nameStr, const char *sourceStr) {
+  ObjString *name = copyString(nameStr, (int)strlen(nameStr));
+  push(OBJ_VAL(name));
+  ObjString *src = copyString(sourceStr, (int)strlen(sourceStr));
+  push(OBJ_VAL(src));
+  tableSet(&vm.loadedModules, OBJ_VAL(name), OBJ_VAL(src));
+
+  ObjFunction *func = compile(sourceStr, name);
+
+  if (func != NULL) {
+    push(OBJ_VAL(func));
+    CallFrame *frame = &vm.frames[vm.frameCount++];
+    frame->function = func;
+    frame->ip = func->chunk.code;
+    frame->slots = vm.stackTop - 1;
+    run();
+  }
+
+  pop();
+  pop();
+}
+
 static void bootstrapCore() {
-  // 1. Temporarily disable debug tracing so the core loads invisibly
+  MoonModule standardLibraries[] = {
+      {"<core>", coreLibrary, registerCoreLibrary},
+      {"<math>", mathBootstrap, registerMathLibrary},
+      {"<string>", stringBootstrap, registerStringLibrary},
+      {"<list>", listBootstrap, registerListLibrary},
+      {NULL, NULL, NULL}};
+
   bool previousDebug = vm.debugMode;
   bool previousAstFlag = printAstFlag;
 
   vm.debugMode = false;
   printAstFlag = false;
 
-  // 1. Vault the Core
-  ObjString *coreName = copyString("<core>", 6);
-  push(OBJ_VAL(coreName));
-  ObjString *coreSrc = copyString(coreLibrary, strlen(coreLibrary));
-  push(OBJ_VAL(coreSrc));
-  tableSet(&vm.loadedModules, OBJ_VAL(coreName), OBJ_VAL(coreSrc));
-
-  // 2. Compile the embedded standard library
-  ObjFunction *coreFunc = compile(coreLibrary, coreName);
-
-  // 3. If it compiles successfully, run it!
-  if (coreFunc != NULL) {
-    push(OBJ_VAL(coreFunc));
-    CallFrame *frame = &vm.frames[vm.frameCount++];
-    frame->function = coreFunc;
-    frame->ip = coreFunc->chunk.code;
-    frame->slots = vm.stackTop - 1;
-
-    run(); // Execute the bytecode silently
+  for (int i = 0; standardLibraries[i].name != NULL; i++) {
+    standardLibraries[i].registerCFunctions();
+    compileAndRunWrapper(standardLibraries[i].name,
+                         standardLibraries[i].moonWrapperSource);
   }
 
-  // 4. Restore the user's debug preferences
   vm.debugMode = previousDebug;
   printAstFlag = previousAstFlag;
 }
 
-static bool isCoreBootstrapped = false;
+bool isCoreBootstrapped = false;
 
 InterpretResult interpret(const char *source) {
   // --- THE BOOTSTRAP GUARD ---

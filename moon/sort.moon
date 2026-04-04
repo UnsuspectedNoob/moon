@@ -45,6 +45,6 @@ let quick sort of (list: List):
   give result
 end
 
-let a be [10, 9, 3, 2, 4, 11, 30, 15, 27, 18]
-for i in quick sort of a show i
-for i in sorted a show i
+let a be [1000000 to 1]
+
+show sorted a

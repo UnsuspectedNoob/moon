@@ -88,7 +88,8 @@ static void skipWhitespace() {
         while (peek() != '\n' && !isAtEnd())
           advance();
       } else {
-        return;
+        while (peek() != '\n' && !isAtEnd())
+          advance();
       }
       break;
     default:

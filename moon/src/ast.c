@@ -380,163 +380,179 @@ Node *newLoadNode(Token path, int line) {
 
 // --- The Destructor (Crucial for avoiding leaks) ---
 
-void freeNode(Node *node) {
-  if (node == NULL)
+void freeNode(Node *root) {
+  if (root == NULL)
     return;
 
-  // We must recursively free all children before freeing the parent!
-  switch (node->type) {
-  case NODE_BINARY:
-  case NODE_LOGICAL: { // Reuses binary payload
-    freeNode(node->as.binary.left);
-    freeNode(node->as.binary.right);
-    break;
-  }
-  case NODE_UNARY: {
-    freeNode(node->as.unary.right);
-    break;
-  }
-  case NODE_IF: {
-    freeNode(node->as.ifStmt.condition);
-    freeNode(node->as.ifStmt.thenBranch);
-    freeNode(node->as.ifStmt.elseBranch);
-    break;
-  }
-  case NODE_WHILE: {
-    freeNode(node->as.whileStmt.condition);
-    freeNode(node->as.whileStmt.body);
-    break;
-  }
-  case NODE_FOR: {
-    freeNode(node->as.forStmt.sequence);
-    freeNode(node->as.forStmt.body);
-    break;
-  }
-  case NODE_BLOCK: {
-    for (int i = 0; i < node->as.block.count; i++) {
-      freeNode(node->as.block.statements[i]);
+  // 1. Initialize our custom heap-allocated stack
+  NodeArray worklist;
+  initNodeArray(&worklist);
+  writeNodeArray(&worklist, root);
+
+  // 2. Iteratively process until the tree is completely destroyed
+  while (worklist.count > 0) {
+    // Pop the top node off our worklist
+    Node *node = worklist.items[--worklist.count];
+
+    if (node == NULL)
+      continue;
+
+    // STEP A: Push all children to the worklist so they get processed next
+    switch (node->type) {
+    case NODE_BINARY:
+    case NODE_LOGICAL:
+      writeNodeArray(&worklist, node->as.binary.left);
+      writeNodeArray(&worklist, node->as.binary.right);
+      break;
+    case NODE_UNARY:
+      writeNodeArray(&worklist, node->as.unary.right);
+      break;
+    case NODE_IF:
+      writeNodeArray(&worklist, node->as.ifStmt.condition);
+      writeNodeArray(&worklist, node->as.ifStmt.thenBranch);
+      writeNodeArray(&worklist, node->as.ifStmt.elseBranch);
+      break;
+    case NODE_WHILE:
+      writeNodeArray(&worklist, node->as.whileStmt.condition);
+      writeNodeArray(&worklist, node->as.whileStmt.body);
+      break;
+    case NODE_FOR:
+      writeNodeArray(&worklist, node->as.forStmt.sequence);
+      writeNodeArray(&worklist, node->as.forStmt.body);
+      break;
+    case NODE_BLOCK:
+      for (int i = 0; i < node->as.block.count; i++)
+        writeNodeArray(&worklist, node->as.block.statements[i]);
+      break;
+    case NODE_LET:
+      for (int i = 0; i < node->as.let.exprCount; i++)
+        writeNodeArray(&worklist, node->as.let.exprs[i]);
+      break;
+    case NODE_SET:
+      for (int i = 0; i < node->as.set.targetCount; i++)
+        writeNodeArray(&worklist, node->as.set.targets[i]);
+      for (int i = 0; i < node->as.set.valueCount; i++)
+        writeNodeArray(&worklist, node->as.set.values[i]);
+      break;
+    case NODE_LIST:
+      for (int i = 0; i < node->as.list.count; i++)
+        writeNodeArray(&worklist, node->as.list.items[i]);
+      break;
+    case NODE_DICT:
+      for (int i = 0; i < node->as.dictExpr.count; i++) {
+        writeNodeArray(&worklist, node->as.dictExpr.keys[i]);
+        writeNodeArray(&worklist, node->as.dictExpr.values[i]);
+      }
+      break;
+    case NODE_INTERPOLATION:
+      for (int i = 0; i < node->as.interpolation.partCount; i++)
+        writeNodeArray(&worklist, node->as.interpolation.parts[i]);
+      break;
+    case NODE_CALL:
+      writeNodeArray(&worklist, node->as.call.callee);
+      for (int i = 0; i < node->as.call.argCount; i++)
+        writeNodeArray(&worklist, node->as.call.arguments[i]);
+      break;
+    case NODE_PHRASAL_CALL:
+      for (int i = 0; i < node->as.phrasalCall.argCount; i++)
+        writeNodeArray(&worklist, node->as.phrasalCall.arguments[i]);
+      break;
+    case NODE_FUNCTION:
+      writeNodeArray(&worklist, node->as.function.body);
+      break;
+    case NODE_SUBSCRIPT:
+      writeNodeArray(&worklist, node->as.subscript.left);
+      writeNodeArray(&worklist, node->as.subscript.index);
+      break;
+    case NODE_PROPERTY:
+      writeNodeArray(&worklist, node->as.property.target);
+      break;
+    case NODE_RANGE:
+      writeNodeArray(&worklist, node->as.range.start);
+      writeNodeArray(&worklist, node->as.range.end);
+      writeNodeArray(&worklist, node->as.range.step);
+      break;
+    case NODE_EXPRESSION_STMT:
+    case NODE_RETURN:
+      writeNodeArray(&worklist, node->as.singleExpr.expression);
+      break;
+    case NODE_TYPE_DECL:
+      for (int i = 0; i < node->as.typeDecl.count; i++)
+        writeNodeArray(&worklist, node->as.typeDecl.defaultValues[i]);
+      break;
+    case NODE_INSTANTIATE:
+      writeNodeArray(&worklist, node->as.instantiate.target);
+      for (int i = 0; i < node->as.instantiate.count; i++)
+        writeNodeArray(&worklist, node->as.instantiate.values[i]);
+      break;
+    case NODE_CAST:
+      writeNodeArray(&worklist, node->as.cast.left);
+      writeNodeArray(&worklist, node->as.cast.right);
+      break;
+    default:
+      // Leaf nodes have no children to push
+      break;
     }
-    FREE_ARRAY(Node *, node->as.block.statements, node->as.block.count);
-    break;
-  }
-  case NODE_LET: {
-    FREE_ARRAY(Token, node->as.let.names, node->as.let.nameCount);
-    for (int i = 0; i < node->as.let.exprCount; i++) {
-      freeNode(node->as.let.exprs[i]);
+
+    // STEP B: Free the node's specific dynamically allocated C-arrays
+    switch (node->type) {
+    case NODE_BLOCK:
+      FREE_ARRAY(Node *, node->as.block.statements, node->as.block.count);
+      break;
+    case NODE_LET:
+      FREE_ARRAY(Token, node->as.let.names, node->as.let.nameCount);
+      FREE_ARRAY(Node *, node->as.let.exprs, node->as.let.exprCount);
+      break;
+    case NODE_SET:
+      FREE_ARRAY(Node *, node->as.set.targets, node->as.set.targetCount);
+      FREE_ARRAY(Node *, node->as.set.values, node->as.set.valueCount);
+      break;
+    case NODE_LIST:
+      FREE_ARRAY(Node *, node->as.list.items, node->as.list.count);
+      break;
+    case NODE_DICT:
+      FREE_ARRAY(Node *, node->as.dictExpr.keys, node->as.dictExpr.count);
+      FREE_ARRAY(Node *, node->as.dictExpr.values, node->as.dictExpr.count);
+      break;
+    case NODE_INTERPOLATION:
+      FREE_ARRAY(Node *, node->as.interpolation.parts,
+                 node->as.interpolation.partCount);
+      break;
+    case NODE_CALL:
+      FREE_ARRAY(Node *, node->as.call.arguments, node->as.call.argCount);
+      break;
+    case NODE_PHRASAL_CALL:
+      FREE_ARRAY(Node *, node->as.phrasalCall.arguments,
+                 node->as.phrasalCall.argCount);
+      free((void *)node->as.phrasalCall.mangledName.start);
+      break;
+    case NODE_FUNCTION:
+      FREE_ARRAY(Token, node->as.function.parameters,
+                 node->as.function.paramCount);
+      FREE_ARRAY(Token, node->as.function.paramTypes,
+                 node->as.function.paramCount);
+      free((void *)node->as.function.name.start);
+      break;
+    case NODE_TYPE_DECL:
+      FREE_ARRAY(Token, node->as.typeDecl.propertyNames,
+                 node->as.typeDecl.count);
+      FREE_ARRAY(Node *, node->as.typeDecl.defaultValues,
+                 node->as.typeDecl.count);
+      break;
+    case NODE_INSTANTIATE:
+      FREE_ARRAY(Token, node->as.instantiate.propertyNames,
+                 node->as.instantiate.count);
+      FREE_ARRAY(Node *, node->as.instantiate.values,
+                 node->as.instantiate.count);
+      break;
+    default:
+      break;
     }
-    FREE_ARRAY(Node *, node->as.let.exprs, node->as.let.exprCount);
-    break;
-  }
-  case NODE_SET: {
-    for (int i = 0; i < node->as.set.targetCount; i++)
-      freeNode(node->as.set.targets[i]);
-    FREE_ARRAY(Node *, node->as.set.targets, node->as.set.targetCount);
 
-    for (int i = 0; i < node->as.set.valueCount; i++)
-      freeNode(node->as.set.values[i]);
-    FREE_ARRAY(Node *, node->as.set.values, node->as.set.valueCount);
-    break;
-  }
-  case NODE_LIST: {
-    for (int i = 0; i < node->as.list.count; i++)
-      freeNode(node->as.list.items[i]);
-    FREE_ARRAY(Node *, node->as.list.items, node->as.list.count);
-    break;
+    // STEP C: Free the node wrapper itself
+    FREE(Node, node);
   }
 
-  case NODE_DICT: {
-    for (int i = 0; i < node->as.dictExpr.count; i++) {
-      freeNode(node->as.dictExpr.keys[i]);
-      freeNode(node->as.dictExpr.values[i]);
-    }
-    FREE_ARRAY(Node *, node->as.dictExpr.keys, node->as.dictExpr.count);
-    FREE_ARRAY(Node *, node->as.dictExpr.values, node->as.dictExpr.count);
-    break;
-  }
-  case NODE_INTERPOLATION: {
-    for (int i = 0; i < node->as.interpolation.partCount; i++)
-      freeNode(node->as.interpolation.parts[i]);
-    FREE_ARRAY(Node *, node->as.interpolation.parts,
-               node->as.interpolation.partCount);
-    break;
-  }
-  case NODE_CALL: {
-    freeNode(node->as.call.callee);
-    for (int i = 0; i < node->as.call.argCount; i++)
-      freeNode(node->as.call.arguments[i]);
-    FREE_ARRAY(Node *, node->as.call.arguments, node->as.call.argCount);
-    break;
-  }
-  case NODE_PHRASAL_CALL: {
-    for (int i = 0; i < node->as.phrasalCall.argCount; i++)
-      freeNode(node->as.phrasalCall.arguments[i]);
-    FREE_ARRAY(Node *, node->as.phrasalCall.arguments,
-               node->as.phrasalCall.argCount);
-    free((void *)node->as.phrasalCall.mangledName.start);
-    break;
-  }
-  case NODE_FUNCTION: {
-    FREE_ARRAY(Token, node->as.function.parameters,
-               node->as.function.paramCount);
-    FREE_ARRAY(Token, node->as.function.paramTypes,
-               node->as.function.paramCount); // NEW
-    freeNode(node->as.function.body);
-    free((void *)node->as.function.name.start);
-    break;
-  }
-  case NODE_SUBSCRIPT: {
-    freeNode(node->as.subscript.left);
-    freeNode(node->as.subscript.index);
-    break;
-  }
-  case NODE_PROPERTY: {
-    freeNode(node->as.property.target);
-    break;
-  }
-  case NODE_RANGE: {
-    freeNode(node->as.range.start);
-    freeNode(node->as.range.end);
-    freeNode(node->as.range.step);
-    break;
-  }
-  case NODE_EXPRESSION_STMT:
-  case NODE_RETURN: {
-    freeNode(node->as.singleExpr.expression);
-    break;
-  }
-
-  case NODE_TYPE_DECL: {
-    FREE_ARRAY(Token, node->as.typeDecl.propertyNames, node->as.typeDecl.count);
-    for (int i = 0; i < node->as.typeDecl.count; i++) {
-      freeNode(node->as.typeDecl.defaultValues[i]);
-    }
-    FREE_ARRAY(Node *, node->as.typeDecl.defaultValues,
-               node->as.typeDecl.count);
-    break;
-  }
-
-  case NODE_INSTANTIATE: {
-    freeNode(node->as.instantiate.target);
-    FREE_ARRAY(Token, node->as.instantiate.propertyNames,
-               node->as.instantiate.count);
-    for (int i = 0; i < node->as.instantiate.count; i++) {
-      freeNode(node->as.instantiate.values[i]);
-    }
-    FREE_ARRAY(Node *, node->as.instantiate.values, node->as.instantiate.count);
-    break;
-  }
-
-  case NODE_CAST: {
-    freeNode(node->as.cast.left);
-    freeNode(node->as.cast.right);
-    break;
-  }
-
-  default:
-    break; // Nodes like Literal, Variable, Break, Skip have no children/heap
-           // arrays
-  }
-
-  // Finally, free the parent node itself
-  FREE(Node, node);
+  // 3. Clean up our worklist
+  freeNodeArray(&worklist);
 }

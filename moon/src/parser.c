@@ -8,6 +8,7 @@
 #include "parser.h"
 #include "scanner.h"
 #include "sigtrie.h"
+#include "vm.h"
 
 // ==========================================
 // 1. GLOBAL STATE & REGISTRY
@@ -26,6 +27,11 @@ static int expectedLabelCount = 0;
 static int groupingDepth = 0; // Tracks if we are inside () or []
 static Node *currentStickySubject = NULL;
 static int loopingDepth = 0;
+
+// --- ADD THESE TWO LINES ---
+static int parseDepth = 0;
+#define MAX_AST_DEPTH 256
+// ---------------------------
 
 static bool isExpectedLabel() {
   if (expectedLabelCount == 0)
@@ -330,6 +336,14 @@ static Node *expression();
 static ParseRule *getRule(TokenType type);
 
 static Node *parsePrecedence(Precedence precedence) {
+  // 1. Tracks recursive depth (Right-heavy trees)
+  parseDepth++;
+  if (parseDepth > MAX_AST_DEPTH) {
+    error("Expression is too complex or deeply nested. Break it up.");
+    parseDepth--;
+    return NULL;
+  }
+
   advance();
 
   PrefixFn prefixRule = getRule(parser.previous.type)->prefix;
@@ -338,23 +352,34 @@ static Node *parsePrecedence(Precedence precedence) {
     errorAt(&parser.previous, ERR_SYNTAX, "I was expecting an expression here.",
             "An expression evaluates to a value (like a number, a string, or "
             "math). Did you leave a trailing operator?");
+    parseDepth--; // Prevent depth leak on error!
     return NULL;
   }
 
   Node *leftNode = prefixRule();
 
+  // 2. Tracks while-loop depth (Left-heavy trees!)
+  int infixDepth = 0;
+
   while (precedence <= getRule(parser.current.type)->precedence) {
-    // --- THE BLINDFOLD CHECK ---
-    // This is the line you missed! It stops the Pratt parser from eating
-    // labels.
     if (isExpectedLabel())
       break;
+
+    // --- CATCH THE BOMB ---
+    infixDepth++;
+    if (parseDepth + infixDepth > MAX_AST_DEPTH) {
+      error(
+          "This expression is too long. Please break it into multiple lines.");
+      break;
+    }
+    // ----------------------
 
     advance();
     InfixFn infixRule = getRule(parser.previous.type)->infix;
     leftNode = infixRule(leftNode);
   }
 
+  parseDepth--;
   return leftNode;
 }
 
@@ -465,6 +490,22 @@ static Node *literal() {
 
 static Node *variable() {
   Token rootToken = parser.previous;
+
+  // --- THE LEXICAL SHIELD ---
+  // If the variable starts with '__', it's a VM intrinsic.
+  if (rootToken.length >= 2 && rootToken.start[0] == '_' &&
+      rootToken.start[1] == '_') {
+    // If the core is already done booting, the user is typing this! Reject it.
+    if (isCoreBootstrapped) {
+      errorAt(&parser.previous, ERR_SYNTAX,
+              "You may not use identifiers starting with '__'.",
+              "This prefix is strictly reserved for internal MOON engine "
+              "primitives.. so piss off..");
+      return newVariableNode(rootToken,
+                             rootToken.line); // Return safe dummy node
+    }
+  }
+  // --------------------------
 
   char rootWord[256] = {0};
   snprintf(rootWord, rootToken.length + 1, "%.*s", rootToken.length,

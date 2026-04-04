@@ -62,14 +62,30 @@ typedef struct {
   const char *name;
   NativeFn function;
 } NativeDef;
+ObjType *getObjType(Value val);
 
 extern VM vm;
 
 void initVM();
 void freeVM();
 InterpretResult interpret(const char *source);
+
+// --- THE NATIVE MODULE REGISTRY ---
+
+typedef void (*NativeRegisterFn)();
+
+typedef struct {
+  const char *name;
+  const char *moonWrapperSource;
+  NativeRegisterFn registerCFunctions;
+} MoonModule;
+
+// --- THE NATIVE API ---
 void push(Value value);
 Value pop();
-ObjType *getObjType(Value val);
+Value peek(int distance);
+void defineNative(const char *name, NativeFn function);
+
+extern bool isCoreBootstrapped;
 
 #endif
