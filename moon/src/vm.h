@@ -85,6 +85,7 @@ void push(Value value);
 Value pop();
 Value peek(int distance);
 void defineNative(const char *name, NativeFn function);
+void throwNativeError(const char *hint, const char *format, ...);
 
 extern bool isCoreBootstrapped;
 

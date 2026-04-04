@@ -2,6 +2,7 @@
 
 #include "vm.h"
 #include "lib_core.h"
+#include "lib_io.h"
 #include "lib_list.h"
 #include "lib_math.h"
 #include "lib_string.h"
@@ -71,6 +72,53 @@ static void runtimeErrorDetailed(ErrorType type, const char *hint,
   fprintf(stderr, "\n");
 
   resetStack();
+}
+
+// The bridge for Native C-Functions to trigger MOON Panics!
+// The bridge for Native C-Functions to trigger MOON Panics!
+void throwNativeError(const char *hint, const char *format, ...) {
+  char message[1024];
+  va_list args;
+  va_start(args, format);
+  vsnprintf(message, sizeof(message), format, args);
+  va_end(args);
+
+  // --- THE BLAME SHIFT ---
+  // vm.frameCount - 1 is the internal MOON wrapper (e.g., `<io>`).
+  // vm.frameCount - 2 is the user's script that actually made the bad call!
+  int blameIndex = (vm.frameCount > 1) ? vm.frameCount - 2 : 0;
+
+  CallFrame *frame = &vm.frames[blameIndex];
+  ObjFunction *function = frame->function;
+
+  // Find the exact instruction in the user's script
+  size_t instruction = frame->ip - function->chunk.code - 1;
+  int line = function->chunk.lines[instruction];
+
+  reportRuntimeError(function->moduleName, line, ERR_RUNTIME, message, hint);
+
+  // --- ADD THE MISSING STACK TRACE ---
+  fprintf(stderr, "Stack Trace:\n");
+  for (int i = vm.frameCount - 1; i >= 0; i--) {
+    CallFrame *traceFrame = &vm.frames[i];
+    ObjFunction *traceFunc = traceFrame->function;
+
+    // Prevent underflow on the instruction pointer calculation
+    size_t traceInst = (traceFrame->ip > traceFunc->chunk.code)
+                           ? traceFrame->ip - traceFunc->chunk.code - 1
+                           : 0;
+    int traceLine = traceFunc->chunk.lines[traceInst];
+
+    fprintf(stderr, "  > [line %d] in ", traceLine);
+    if (traceFunc->name == NULL) {
+      fprintf(stderr, "main script\n");
+    } else {
+      fprintf(stderr, "function %s\n", traceFunc->name->chars);
+    }
+  }
+  fprintf(stderr, "\n");
+
+  exit(70);
 }
 
 void freeVM() {
@@ -1856,6 +1904,7 @@ static void bootstrapCore() {
       {"<math>", mathBootstrap, registerMathLibrary},
       {"<string>", stringBootstrap, registerStringLibrary},
       {"<list>", listBootstrap, registerListLibrary},
+      {"<io>", ioBootstrap, registerIOLibrary},
       {NULL, NULL, NULL}};
 
   bool previousDebug = vm.debugMode;
