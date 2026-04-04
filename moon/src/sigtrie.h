@@ -39,9 +39,6 @@ TrieNode *addLabelBranch(TrieNode *current, const char *label, int length);
 TrieNode *addArgumentBranch(TrieNode *current, int arity);
 void finalizePhrase(TrieNode *endNode, const char *mangledName);
 
-// Used by the Pre-Pass Skimmer to build the tree
-void insertSignature(const char *rootWord, const char *mangledName);
-
 // Used by the Parser to fetch the tree
 TrieNode *getSignatureTrie(const char *rootWord);
 

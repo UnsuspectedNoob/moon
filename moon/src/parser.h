@@ -3,6 +3,7 @@
 
 #include "ast.h" // We need this so it knows what a Node is!
 #include "common.h"
+#include "error.h"
 #include "scanner.h"
 
 // ==========================================
@@ -25,17 +26,18 @@ Node *parseSource(const char *source);
 // ==========================================
 // ERROR HANDLING & TOKEN ADVANCEMENT
 // ==========================================
-void errorAt(Token *token, const char *message);
+void errorAt(Token *token, ErrorType type, const char *message,
+             const char *hint);
 void error(const char *message);
-void errorAtCurrent(const char *message);
+void consumeHint(TokenType type, ErrorType errType, const char *message,
+                 const char *hint);
+void consume(TokenType type, const char *message);
 void synchronize();
 
 void advance();
-void consume(TokenType type, const char *message);
 bool check(TokenType type);
 bool checkTerminator(TokenType *terminators, int count);
 bool match(TokenType type);
 void ignoreNewlines();
-void consumeEnd();
 
 #endif

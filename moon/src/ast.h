@@ -212,8 +212,6 @@ Node *newEndNode(int line);
 Node *newBlockNode(Node **statements, int count, int line);
 Node *newLetNode(Token *names, int nameCount, Node **exprs, int exprCount,
                  int line);
-Node *newSetNode(Node **targets, int targetCount, Node **values, int valueCount,
-                 int line);
 Node *newIfNode(Node *condition, Node *thenBranch, Node *elseBranch, int line);
 Node *newSetNode(Node **targets, int targetCount, Node **values, int valueCount,
                  int line);

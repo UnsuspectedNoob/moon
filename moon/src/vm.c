@@ -1597,7 +1597,7 @@ TARGET_OP_CAST: {
       char *end;
       double num = strtod(s->chars, &end);
       if (*end != '\0')
-        THROW_ERROR(ERR_TYPE, "String does not contain a valid number.",
+        THROW_ERROR(ERR_TYPE, "String contains an invalid number.",
                     "Invalid string to number cast.");
       push(NUMBER_VAL(num));
     } else if (IS_BOOL(val)) {

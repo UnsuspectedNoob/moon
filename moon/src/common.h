@@ -4,7 +4,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdint.h> // Ensure this is here
 #include <stdio.h>
 #define UINT8_COUNT (UINT8_MAX + 1)
 

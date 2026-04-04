@@ -415,7 +415,6 @@ static void walkNode(Node *node) {
     emitByte((count >> 8) & 0xff); // High byte
     emitByte(count & 0xff);        // Low byte
     break;
-    break;
   }
 
   case NODE_RANGE: {

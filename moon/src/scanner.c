@@ -313,44 +313,44 @@ static Token number() {
   return makeToken(TOKEN_NUMBER);
 }
 
-static Token string() {
-  // 1. Loop until we hit a closing quote OR a backtick
+static Token string(bool isResuming) {
   for (;;) {
     char c = peek();
 
-    // Stop if end of file
     if (isAtEnd())
       return errorToken("Unterminated string.");
 
-    // Stop if we hit a double-quote
     if (c == '"') {
       advance(); // Consume the quote
 
-      // If we were inside an interpolation (depth > 0), decrement depth
-      if (scanner.interpolationDepth > 0) {
+      // If we are resuming an outer string, this quote finishes the entire
+      // interpolation!
+      if (isResuming) {
         scanner.interpolationDepth--;
-        return makeToken(TOKEN_STRING_CLOSE); // `...string"`
+        return makeToken(TOKEN_STRING_CLOSE);
       }
-      return makeToken(TOKEN_STRING); // "string"
+
+      // Otherwise, it's just a normal string ending (like "not").
+      return makeToken(TOKEN_STRING);
     }
 
-    // Stop if we hit a backtick
     if (c == '`') {
       // Check for escape (double backtick)
       if (peekNext() == '`') {
         advance();
-        advance(); // Skip both
+        advance();
         continue;
       }
 
       advance(); // Consume the single backtick
 
-      // If we are already deep, we are SWITCHING holes: `...` -> `
-      if (scanner.interpolationDepth > 0) {
+      // If we are resuming an outer string, this backtick just opens another
+      // hole!
+      if (isResuming) {
         return makeToken(TOKEN_STRING_MIDDLE);
       }
 
-      // Otherwise, we are OPENING a hole: "..." -> `
+      // Otherwise, we are opening the very first hole from a fresh string
       scanner.interpolationDepth++;
       return makeToken(TOKEN_STRING_OPEN);
     }
@@ -421,10 +421,10 @@ Token scanToken() {
   case '>':
     return makeToken(match('=') ? TOKEN_GREATER_EQUAL : TOKEN_GREATER);
   case '"':
-    return string();
+    return string(false);
   case '`':
     if (scanner.interpolationDepth > 0) {
-      return string(); // Resume string scanning
+      return string(true); // Resume string scanning
     }
     return errorToken("Unexpected backtick.");
 

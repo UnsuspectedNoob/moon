@@ -213,35 +213,18 @@ void hoistPhrases(const char *source) {
 // 3. ERROR HANDLING
 // ==========================================
 
-// The Master Error function that talks to error.c
-void errorAtDetailed(Token *token, ErrorType type, const char *message,
-                     const char *hint) {
+void errorAt(Token *token, ErrorType type, const char *message,
+             const char *hint) {
   if (parser.panicMode)
     return;
   parser.panicMode = true;
-
   reportCompileError(token, type, message, hint);
-
   parser.hadError = true;
 }
 
-// Legacy Wrappers (Keeps the rest of parser.c compiling!)
-void errorAt(Token *token, const char *message) {
-  errorAtDetailed(token, ERR_SYNTAX, message, NULL);
-}
-void error(const char *message) { errorAt(&parser.previous, message); }
-void errorAtCurrent(const char *message) { errorAt(&parser.current, message); }
-void consume(TokenType type, const char *message) {
-  if (parser.current.type == type) {
-    advance();
-    return;
-  }
-  errorAtCurrent(message);
-}
-
-// --- THE NEW ORDEAL UX WRAPPERS ---
-void errorHint(ErrorType type, const char *message, const char *hint) {
-  errorAtDetailed(&parser.previous, type, message, hint);
+// Legacy fallback for the Emitter
+void error(const char *message) {
+  errorAt(&parser.previous, ERR_SYNTAX, message, NULL);
 }
 
 void consumeHint(TokenType type, ErrorType errType, const char *message,
@@ -250,11 +233,12 @@ void consumeHint(TokenType type, ErrorType errType, const char *message,
     advance();
     return;
   }
-  errorAtDetailed(&parser.current, errType, message, hint);
+  errorAt(&parser.current, errType, message, hint);
 }
 
-void errorCurrentHint(ErrorType type, const char *message, const char *hint) {
-  errorAtDetailed(&parser.current, type, message, hint);
+// Legacy fallback
+void consume(TokenType type, const char *message) {
+  consumeHint(type, ERR_SYNTAX, message, NULL);
 }
 
 void synchronize() {
@@ -286,7 +270,8 @@ void advance() {
     parser.current = scanToken();
     if (parser.current.type != TOKEN_ERROR)
       break;
-    errorAtCurrent(parser.current.start);
+
+    errorAt(&parser.current, ERR_SYNTAX, parser.current.start, NULL);
   }
 }
 
@@ -350,9 +335,9 @@ static Node *parsePrecedence(Precedence precedence) {
   PrefixFn prefixRule = getRule(parser.previous.type)->prefix;
 
   if (prefixRule == NULL) {
-    errorHint(ERR_SYNTAX, "I was expecting an expression here.",
-              "An expression evaluates to a value (like a number, a string, or "
-              "math). Did you leave a trailing operator?");
+    errorAt(&parser.previous, ERR_SYNTAX, "I was expecting an expression here.",
+            "An expression evaluates to a value (like a number, a string, or "
+            "math). Did you leave a trailing operator?");
     return NULL;
   }
 
@@ -445,8 +430,8 @@ static Node *interpolation() {
       writeNodeArray(&parts, extractInterpolationString(parser.previous));
       break;
     } else {
-      errorCurrentHint(
-          ERR_SYNTAX,
+      errorAt(
+          &parser.current, ERR_SYNTAX,
           "I was expecting the end of the string interpolation here.",
           "Make sure to close your interpolation block with another backtick "
           "(`) or end the string with a double quote (\")");
@@ -588,10 +573,10 @@ static Node *variable() {
 
   if (lastGoodState != NULL) {
     if (currentNode != lastGoodState) {
-      errorHint(
-          ERR_SYNTAX, "This phrasal function looks incomplete.",
-          "You started a phrase but didn't finish it. Check the function's "
-          "signature to see what words or arguments are missing.");
+      errorAt(&parser.previous, ERR_SYNTAX,
+              "This phrasal function looks incomplete.",
+              "You started a phrase but didn't finish it. Check the function's "
+              "signature to see what words or arguments are missing.");
       freeNodeArray(&args);
       return newVariableNode(rootToken, rootToken.line);
     }
@@ -607,8 +592,9 @@ static Node *variable() {
   }
 
   if (currentNode != startNode) {
-    errorHint(
-        ERR_REFERENCE, "I don't recognize this phrasal function.",
+    errorAt(
+        &parser.previous, ERR_REFERENCE,
+        "I don't recognize this phrasal function.",
         "Did you misspell a word, or forget to define this function earlier?");
   }
 
@@ -646,20 +632,21 @@ static Node *cloneNode(Node *original) {
                             cloneNode(original->as.subscript.index),
                             original->line);
   default:
-    errorHint(ERR_SYNTAX,
-              "I can't use a complex expression as a sticky subject.",
-              "A sticky subject must be a simple variable, property, or "
-              "subscript (e.g., 'player' or 'player's health').");
+    errorAt(&parser.previous, ERR_SYNTAX,
+            "I can't use a complex expression as a sticky subject.",
+            "A sticky subject must be a simple variable, property, or "
+            "subscript (e.g., 'player' or 'player's health').");
     return NULL;
   }
 }
 
 static Node *stickyPrefix() {
   if (currentStickySubject == NULL) {
-    errorHint(ERR_SYNTAX, "This operator is missing its left side.",
-              "It looks like you used an operator (like '<', '>=', or 'is') "
-              "without providing a value on its left, and there is no active "
-              "subject to attach it to.");
+    errorAt(&parser.previous, ERR_SYNTAX,
+            "This operator is missing its left side.",
+            "It looks like you used an operator (like '<', '>=', or 'is') "
+            "without providing a value on its left, and there is no active "
+            "subject to attach it to.");
     return NULL;
   }
 
@@ -806,10 +793,10 @@ static Node *dict() {
             copyString(parser.previous.start + 1, parser.previous.length - 2);
         keyNode = newLiteralNode(OBJ_VAL(keyStr), parser.previous.line);
       } else {
-        errorHint(ERR_SYNTAX,
-                  "I was expecting a property name for this dictionary item.",
-                  "Dictionary keys should be words or strings (e.g., 'name:' "
-                  "or '\"age\":').");
+        errorAt(&parser.previous, ERR_SYNTAX,
+                "I was expecting a property name for this dictionary item.",
+                "Dictionary keys should be words or strings (e.g., 'name:' "
+                "or '\"age\":').");
         break;
       }
 
@@ -839,38 +826,59 @@ static Node *dict() {
   return node;
 }
 
-static Node *instantiate(Node *left) {
+static Node *parseInstantiate(Node *left, bool isWith) {
   int line = parser.previous.line;
   TokenArray propNames;
   initTokenArray(&propNames);
   NodeArray values;
   initNodeArray(&values);
 
-  groupingDepth++; // Protect from blindfolds
-  if (!check(TOKEN_RIGHT_BRACE)) {
+  // Dynamically swap the terminator!
+  TokenType terminator = isWith ? TOKEN_END : TOKEN_RIGHT_BRACE;
+
+  if (!isWith)
+    groupingDepth++; // Protect from blindfolds only for {}
+
+  if (!check(terminator)) {
     do {
       ignoreNewlines();
-      if (check(TOKEN_RIGHT_BRACE))
+      if (check(terminator))
         break;
 
-      consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
-                  "I was expecting a property name here.",
-                  "When instantiating a type, you need to list its properties "
-                  "(e.g., 'health: 100').");
+      errorAt(
+          &parser.current, ERR_SYNTAX, "I was expecting a property name here.",
+          isWith
+              ? "When overriding properties, you need to list them explicitly."
+              : "When instantiating a type, you need to list its properties "
+                "(e.g., 'health: 100').");
+      if (parser.current.type == TOKEN_IDENTIFIER)
+        advance(); // Eat the identifier
 
       writeTokenArray(&propNames, parser.previous);
+
       consumeHint(
           TOKEN_COLON, ERR_SYNTAX, "I was expecting a colon ':' here.",
           "Provide a colon after the property name to assign its value.");
+
       writeNodeArray(&values, expression());
     } while (match(TOKEN_COMMA));
   }
-  groupingDepth--;
+
+  if (!isWith)
+    groupingDepth--;
 
   ignoreNewlines();
-  consumeHint(TOKEN_RIGHT_BRACE, ERR_SYNTAX,
-              "I couldn't find the closing brace '}' for this instance.",
-              "Make sure your instance block ends with '}'.");
+
+  if (isWith) {
+    consumeHint(
+        TOKEN_END, ERR_SYNTAX,
+        "I was expecting 'end' to close this 'with' block.",
+        "Blocks opened with 'with' must be properly closed with 'end'.");
+  } else {
+    consumeHint(TOKEN_RIGHT_BRACE, ERR_SYNTAX,
+                "I couldn't find the closing brace '}' for this instance.",
+                "Make sure your instance block ends with '}'.");
+  }
 
   Node *node = newInstantiateNode(left, propNames.items, values.items,
                                   propNames.count, line);
@@ -879,43 +887,10 @@ static Node *instantiate(Node *left) {
   return node;
 }
 
+// The tiny 1-line wrappers for the Pratt Rule Table!
+static Node *instantiate(Node *left) { return parseInstantiate(left, false); }
 static Node *instantiateWith(Node *left) {
-  int line = parser.previous.line;
-  TokenArray propNames;
-  initTokenArray(&propNames);
-  NodeArray values;
-  initNodeArray(&values);
-
-  if (!check(TOKEN_END)) {
-    do {
-      ignoreNewlines();
-      if (check(TOKEN_END))
-        break;
-
-      consumeHint(
-          TOKEN_IDENTIFIER, ERR_SYNTAX, "I was expecting a property name here.",
-          "When overriding properties, you need to list them explicitly.");
-
-      writeTokenArray(&propNames, parser.previous);
-
-      consumeHint(
-          TOKEN_COLON, ERR_SYNTAX, "I was expecting a colon ':' here.",
-          "Provide a colon after the property name to assign its value.");
-
-      writeNodeArray(&values, expression());
-    } while (match(TOKEN_COMMA));
-  }
-
-  ignoreNewlines();
-  consumeHint(TOKEN_END, ERR_SYNTAX,
-              "I was expecting 'end' to close this 'with' block.",
-              "Blocks opened with 'with' must be properly closed with 'end'.");
-
-  Node *node = newInstantiateNode(left, propNames.items, values.items,
-                                  propNames.count, line);
-  freeTokenArray(&propNames);
-  freeNodeArray(&values);
-  return node;
+  return parseInstantiate(left, true);
 }
 
 static Node *subscript(Node *left) {
@@ -1176,9 +1151,10 @@ static Node *addStatement() {
   // 4. THE DESUGARING (Build the Accumulator)
   Node *accumulator = cloneNode(target);
   if (accumulator == NULL) {
-    errorHint(ERR_SYNTAX, "This isn't a valid target for 'add'.",
-              "You can only add to variables, subscripts, or properties (e.g., "
-              "'add 5 to player's score').");
+    errorAt(&parser.previous, ERR_SYNTAX,
+            "This isn't a valid target for 'add'.",
+            "You can only add to variables, subscripts, or properties (e.g., "
+            "'add 5 to player's score').");
     return NULL;
   }
 
@@ -1323,18 +1299,19 @@ static Node *expressionStatement() {
 
 static Node *breakStatement() {
   if (loopingDepth == 0) {
-    errorHint(ERR_SYNTAX, "I found a 'break' or 'quit' outside of a loop.",
-              "These keywords can only be used inside 'while' or 'for' loops "
-              "to exit them early.");
+    errorAt(&parser.previous, ERR_SYNTAX,
+            "I found a 'break' or 'quit' outside of a loop.",
+            "These keywords can only be used inside 'while' or 'for' loops "
+            "to exit them early.");
   }
   return newBreakNode(parser.previous.line);
 }
 
 static Node *skipStatement() {
   if (loopingDepth == 0) {
-    errorHint(ERR_SYNTAX, "I found a 'skip' outside of a loop.",
-              "The 'skip' keyword can only be used inside loops to jump to the "
-              "next iteration.");
+    errorAt(&parser.previous, ERR_SYNTAX, "I found a 'skip' outside of a loop.",
+            "The 'skip' keyword can only be used inside loops to jump to the "
+            "next iteration.");
   }
   return newSkipNode(parser.previous.line);
 }
@@ -1408,68 +1385,79 @@ static Node *updateStatement() {
   // 1. The Target (L-Value)
   Node *rawTarget = parseLValue();
 
-  // 2. The Operator
-  if (!isMathOperator(parser.current)) {
-    errorCurrentHint(ERR_SYNTAX, "I was expecting a math operator here.",
-                     "The update statement requires a math operator (+, -, *, "
-                     "/, or %). e.g., 'update score * 2'");
+  // 2. The Operator Fork!
+  bool isCastUpdate = false;
+  Node *castType = NULL;
+  Token opToken;
+  Node *mathValue = NULL;
+  Node *modifierCond = NULL;
+
+  if (match(TOKEN_AS)) {
+    isCastUpdate = true;
+    castType = parsePrecedence(PREC_CAST);
+  } else if (isMathOperator(parser.current)) {
+    advance();
+    opToken = parser.previous;
+    if (opToken.type == TOKEN_PLUS)
+      opToken.type = TOKEN_ADD_INPLACE;
+    mathValue = expression();
+    // --- THE MODIFIER UNWRAP FIX ---
+    // If expression() accidentally ate a statement modifier, unwrap it!
+    if (mathValue != NULL && mathValue->type == NODE_IF &&
+        mathValue->as.ifStmt.elseBranch == NULL) {
+      modifierCond = mathValue->as.ifStmt.condition;
+      mathValue = mathValue->as.ifStmt.thenBranch;
+    }
+  } else {
+    errorAt(&parser.current, ERR_SYNTAX,
+            "I was expecting 'as' or a math operator here.",
+            "The update statement requires 'as' (to cast) or a math operator "
+            "(+, -, *, /, %). e.g., 'update x as List' or 'update x * 2'.");
     return NULL;
   }
 
-  advance();                       // Eat the operator!
-  Token opToken = parser.previous; // Now opToken safely holds the '+'
-
-  // OPTIMIZATION: If it's a plus, swap to our specialized inplace token!
-  if (opToken.type == TOKEN_PLUS) {
-    opToken.type = TOKEN_ADD_INPLACE;
-  }
-
-  // 3. The Value
-  Node *value = expression();
-
-  // 4. THE DESUGARING (Fixing the Double-Evaluation Trap)
+  // 3. THE DESUGARING (Building the Universal RHS)
   Node *finalNode = NULL;
 
   if (rawTarget->type == NODE_VARIABLE) {
-    // Variables have no side-effects, so they are safe to clone!
     Node *accumulator = cloneNode(rawTarget);
-    Node *binaryMath = newBinaryNode(accumulator, opToken, value, line);
+    Node *rhsNode = isCastUpdate
+                        ? newCastNode(accumulator, castType, line)
+                        : newBinaryNode(accumulator, opToken, mathValue, line);
+
     Node *targets[1] = {rawTarget};
-    Node *setValues[1] = {binaryMath};
+    Node *setValues[1] = {rhsNode};
     finalNode = newSetNode(targets, 1, setValues, 1, line);
+
   } else if (rawTarget->type == NODE_PROPERTY) {
-    // Target is an object property: player's health
-    // We isolate the object into a ghost variable!
     Token objToken = makeHiddenToken(" obj", line);
     Token nArr[1] = {objToken};
     Node *eArr[1] = {rawTarget->as.property.target};
     Node *letObj = newLetNode(nArr, 1, eArr, 1, line);
 
-    // Reconstruct the LHS:  obj's health
     Node *safeObj1 = newVariableNode(objToken, line);
     Node *safeTarget1 =
         newPropertyNode(safeObj1, rawTarget->as.property.name, line);
 
-    // Reconstruct the RHS:  obj's health
     Node *safeObj2 = newVariableNode(objToken, line);
-    Node *safeTarget2 =
+    Node *rhsReader =
         newPropertyNode(safeObj2, rawTarget->as.property.name, line);
 
-    // Build the math and the assignment
-    Node *binaryMath = newBinaryNode(safeTarget2, opToken, value, line);
+    // Apply the fork!
+    Node *rhsNode = isCastUpdate
+                        ? newCastNode(rhsReader, castType, line)
+                        : newBinaryNode(rhsReader, opToken, mathValue, line);
+
     Node *targets[1] = {safeTarget1};
-    Node *setValues[1] = {binaryMath};
+    Node *setValues[1] = {rhsNode};
     Node *setStmt = newSetNode(targets, 1, setValues, 1, line);
 
-    // Wrap the ghost variable and the assignment in a clean block
     Node *blockStmts[2] = {letObj, setStmt};
     finalNode = newBlockNode(blockStmts, 2, line);
 
-    // Free the abandoned target shell so we don't leak memory!
     FREE(Node, rawTarget);
+
   } else if (rawTarget->type == NODE_SUBSCRIPT) {
-    // Target is a subscript: list[index]
-    // We isolate BOTH the list and the index into ghost variables!
     Token objToken = makeHiddenToken(" obj", line);
     Token nArr1[1] = {objToken};
     Node *eArr1[1] = {rawTarget->as.subscript.left};
@@ -1480,28 +1468,34 @@ static Node *updateStatement() {
     Node *eArr2[1] = {rawTarget->as.subscript.index};
     Node *letIdx = newLetNode(nArr2, 1, eArr2, 1, line);
 
-    // Reconstruct LHS:  obj[ idx]
     Node *safeObj1 = newVariableNode(objToken, line);
     Node *safeIdx1 = newVariableNode(idxToken, line);
     Node *safeTarget1 = newSubscriptNode(safeObj1, safeIdx1, line);
 
-    // Reconstruct RHS:  obj[ idx]
     Node *safeObj2 = newVariableNode(objToken, line);
     Node *safeIdx2 = newVariableNode(idxToken, line);
-    Node *safeTarget2 = newSubscriptNode(safeObj2, safeIdx2, line);
+    Node *rhsReader = newSubscriptNode(safeObj2, safeIdx2, line);
 
-    // Build the math and assignment
-    Node *binaryMath = newBinaryNode(safeTarget2, opToken, value, line);
+    // Apply the fork!
+    Node *rhsNode = isCastUpdate
+                        ? newCastNode(rhsReader, castType, line)
+                        : newBinaryNode(rhsReader, opToken, mathValue, line);
+
     Node *targets[1] = {safeTarget1};
-    Node *setValues[1] = {binaryMath};
+    Node *setValues[1] = {rhsNode};
     Node *setStmt = newSetNode(targets, 1, setValues, 1, line);
 
-    // Wrap both ghost variables and the assignment in a block
     Node *blockStmts[3] = {letObj, letIdx, setStmt};
     finalNode = newBlockNode(blockStmts, 3, line);
 
-    // Free the abandoned shell
     FREE(Node, rawTarget);
+  }
+
+  // --- 4. RE-WRAP THE AST ---
+  // If we unwrapped a stolen modifier earlier, apply it to the whole statement
+  // now!
+  if (modifierCond != NULL) {
+    return newIfNode(modifierCond, finalNode, NULL, line);
   }
 
   // --- OPTIONAL: AST INVERSION (Statement Modifiers) ---
@@ -1589,14 +1583,14 @@ static Node *letDeclaration() {
 
     Node *lastVal = exprs.items[exprs.count - 1];
     if (lastVal->type == NODE_IF && lastVal->as.ifStmt.elseBranch == NULL) {
-      errorHint(
-          ERR_SYNTAX,
+      errorAt(
+          &parser.previous, ERR_SYNTAX,
           "Statement modifiers aren't allowed on 'let' declarations.",
           "Try using a standard if-block, or a ternary (if...else) instead.");
     }
     if (exprs.count != 1 && exprs.count != names.count) {
-      errorHint(
-          ERR_SYNTAX, "Mismatch in assignment counts.",
+      errorAt(
+          &parser.previous, ERR_SYNTAX, "Mismatch in assignment counts.",
           "When declaring multiple variables, you must provide exactly 1 value "
           "(to copy to all), or exactly match the number of variables.");
     }
@@ -1616,8 +1610,9 @@ static Node *letDeclaration() {
       check(TOKEN_IDENTIFIER) ||
       (parser.current.type >= TOKEN_ADD && parser.current.type <= TOKEN_WITH)) {
     if (names.count > 1) {
-      errorHint(ERR_SYNTAX, "I can't declare multiple functions at once.",
-                "Function declarations must happen one at a time.");
+      errorAt(&parser.previous, ERR_SYNTAX,
+              "I can't declare multiple functions at once.",
+              "Function declarations must happen one at a time.");
       freeTokenArray(&names);
       return NULL;
     }
@@ -1704,9 +1699,9 @@ static Node *letDeclaration() {
     return node;
   }
 
-  errorHint(ERR_SYNTAX, "This declaration is confusing me.",
-            "Use 'let x be 10' for variables, or provide a valid function "
-            "signature (e.g., 'let jump():').");
+  errorAt(&parser.previous, ERR_SYNTAX, "This declaration is confusing me.",
+          "Use 'let x be 10' for variables, or provide a valid function "
+          "signature (e.g., 'let jump():').");
 
   freeTokenArray(&names);
   return NULL;
