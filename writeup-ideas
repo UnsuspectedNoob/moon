@@ -40,11 +40,33 @@ Pretty-Printing Dictionaries: Right now, we just print <dict>. We could write th
 Native Methods (The "Length" Hack Fix): Remember how we hardcoded list's length? Now that we understand how properties work, we can build a true Native Method system. This would allow things like list.push(5) or string.upper().
 Dictionary Iteration: Upgrading your for loop so you can do for each key, value in person: to loop over the hash table dynamically.
 
-add features for [Book] and String | List types
-add same type check in lists.
-add update x as Type
-fix interpolation in "`""`"
+### **Phase 1: The Visual Polish (ANSI Colors)**
+Right now, the error output is a wall of plain white text. The human eye struggles to parse it quickly. We can inject standard ANSI escape codes into `error.c` to colorize the output.
+* **Red & Bold:** For the "Oops!" and the `^` squiggles.
+* **Cyan:** For the actual code snippet, so it pops out from the text.
+* **Yellow:** For the "Hint:", making it feel like a helpful tip rather than a scolding.
+* *Difficulty: Very Easy. Just tweaking `printf` strings.*
 
+### **Phase 2: Foreign Syntax Interception**
+Programmers coming to MOON will accidentally bring muscle memory from Python, JS, or C. If they type `let x = 5` instead of `let x be 5`, the parser will currently throw a generic "I was expecting 'be' or ','" error.
+We can add specific traps in `parser.c` to catch these exact bad habits.
+* **Example Output:** `"It looks like you used '=' to assign a variable. In MOON, we use the word 'be' (e.g., let x be 5)."`
+* *Difficulty: Easy. Just peeking at tokens in specific functions.*
+
+### **Phase 3: Empathetic Type Reporting (Runtime)**
+Currently, if someone passes a String into a Math function, MOON says: `"Math operations require numbers."` 
+Because MOON carries Type Blueprints at runtime, we can make the VM inspect the exact data that caused the crash and report it back to the user.
+* **Example Output:** `"You tried to use the '-' operator, which requires Numbers. But you gave me a String ('Munachi')."`
+* *Difficulty: Medium. Requires tweaking our `THROW_ERROR` macro to accept and format values.*
+
+### **Phase 4: The "Did you mean?" Oracle (Spellchecking)**
+This is the holy grail of modern compilers. If a user types `shw(player_name)`, they get an `ERR_REFERENCE: Undefined variable 'shw'`. 
+We can implement a fast **Levenshtein Distance** algorithm (which calculates how many edits it takes to turn one word into another). When a variable isn't found, the VM scans the global table, finds the closest match, and suggests it.
+* **Example Output:** `"Undefined variable 'shw'. Did you mean 'show'?"`
+* *Difficulty: Hard. Requires writing a string-distance algorithm in C, but the payoff is massive.*
+
+
+add same type check in lists.
 ++ some downsides that may exist ++
 novices might ask why we can't use some variable names
 

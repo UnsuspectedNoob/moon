@@ -242,6 +242,24 @@ void consumeHint(TokenType type, ErrorType errType, const char *message,
   errorAt(&parser.current, errType, message, hint);
 }
 
+// --- THE EMPATHETIC BLOCK CLOSER ---
+static void consumeBlockEnd(Token opener, const char *blockName) {
+  if (check(TOKEN_END)) {
+    advance();
+    return;
+  }
+
+  char message[256];
+  snprintf(message, sizeof(message),
+           "I couldn't find the 'end' keyword for this %s block.", blockName);
+
+  errorAt(&opener, ERR_SYNTAX, message,
+          "Control flow blocks, functions, and types must be closed with the "
+          "'end' keyword. "
+          "Look at the line I highlighted above to see exactly where this "
+          "block started.");
+}
+
 // Legacy fallback
 void consume(TokenType type, const char *message) {
   consumeHint(type, ERR_SYNTAX, message, NULL);
@@ -869,6 +887,8 @@ static Node *dict() {
 
 static Node *parseInstantiate(Node *left, bool isWith) {
   int line = parser.previous.line;
+  Token blockOpener = parser.previous;
+
   TokenArray propNames;
   initTokenArray(&propNames);
   NodeArray values;
@@ -911,10 +931,7 @@ static Node *parseInstantiate(Node *left, bool isWith) {
   ignoreNewlines();
 
   if (isWith) {
-    consumeHint(
-        TOKEN_END, ERR_SYNTAX,
-        "I was expecting 'end' to close this 'with' block.",
-        "Blocks opened with 'with' must be properly closed with 'end'.");
+    consumeBlockEnd(blockOpener, "'with' override");
   } else {
     consumeHint(TOKEN_RIGHT_BRACE, ERR_SYNTAX,
                 "I couldn't find the closing brace '}' for this instance.",
@@ -1030,10 +1047,12 @@ static Node *ifStatement(bool invert) {
   TokenType altToken = invert ? TOKEN_THEN : TOKEN_ELSE;
 
   if (match(TOKEN_COLON)) {
+    Token thenStart = parser.previous; // <- capture the colon
     TokenType thenEnds[] = {altToken, TOKEN_END};
     thenBranch = block(thenEnds, 2);
 
     if (match(altToken)) {
+      Token elseStart = parser.previous; // <- capture the 'else' / 'then'
       if (match(TOKEN_IF)) {
         elseBranch = ifStatement(false);
       } else if (match(TOKEN_UNLESS)) {
@@ -1041,18 +1060,12 @@ static Node *ifStatement(bool invert) {
       } else if (match(TOKEN_COLON)) {
         TokenType elseEnds[] = {TOKEN_END};
         elseBranch = block(elseEnds, 1);
-        consumeHint(TOKEN_END, ERR_SYNTAX,
-                    "I couldn't find the 'end' keyword for this block.",
-                    "Control flow blocks, functions, and types must be closed "
-                    "with the 'end' keyword.");
+        consumeBlockEnd(elseStart, "alternate");
       } else {
         elseBranch = statement();
       }
     } else {
-      consumeHint(TOKEN_END, ERR_SYNTAX,
-                  "I couldn't find the 'end' keyword for this block.",
-                  "Control flow blocks, functions, and types must be closed "
-                  "with the 'end' keyword.");
+      consumeBlockEnd(thenStart, "if/unless");
     }
   } else {
     // Single-statement branches
@@ -1087,12 +1100,10 @@ static Node *whileLogic(bool invert) {
   loopingDepth++;
 
   if (match(TOKEN_COLON)) {
+    Token loopStart = parser.previous; // <- capture the colon
     TokenType terminators[] = {TOKEN_END};
     body = block(terminators, 1);
-    consumeHint(TOKEN_END, ERR_SYNTAX,
-                "I couldn't find the 'end' keyword for this block.",
-                "Control flow blocks, functions, and types must be closed with "
-                "the 'end' keyword.");
+    consumeBlockEnd(loopStart, "while/until loop");
   } else {
     body = statement();
   }
@@ -1123,12 +1134,10 @@ static Node *forStatement() {
 
   loopingDepth++;
   if (match(TOKEN_COLON)) {
+    Token loopStart = parser.previous;
     TokenType terminators[] = {TOKEN_END};
     body = block(terminators, 1);
-    consumeHint(TOKEN_END, ERR_SYNTAX,
-                "I couldn't find the 'end' keyword for this block.",
-                "Control flow blocks, functions, and types must be closed with "
-                "the 'end' keyword.");
+    consumeBlockEnd(loopStart, "for loop");
   } else {
     body = statement();
   }
@@ -1367,6 +1376,8 @@ static Node *typeDeclaration() {
               "I was expecting a colon ':' after the type name.",
               "Type definitions begin with a colon before listing properties.");
 
+  Token typeStart = parser.previous;
+
   TokenArray propertyNames;
   initTokenArray(&propertyNames);
   NodeArray defaultValues;
@@ -1397,10 +1408,7 @@ static Node *typeDeclaration() {
   }
 
   ignoreNewlines();
-  consumeHint(TOKEN_END, ERR_SYNTAX,
-              "I couldn't find the 'end' keyword for this block.",
-              "Control flow blocks, functions, and types must be closed with "
-              "the 'end' keyword.");
+  consumeBlockEnd(typeStart, "type definition");
 
   Node *node = newTypeNode(name, propertyNames.items, defaultValues.items,
                            propertyNames.count, line);
@@ -1720,12 +1728,10 @@ static Node *letDeclaration() {
         TOKEN_COLON, ERR_SYNTAX, "I was expecting a colon ':' here.",
         "Function signatures must end with a colon before the body begins.");
 
+    Token funcStart = parser.previous; // <- capture the colon
     TokenType terminators[] = {TOKEN_END};
     Node *body = block(terminators, 1);
-    consumeHint(TOKEN_END, ERR_SYNTAX,
-                "I couldn't find the 'end' keyword for this block.",
-                "Control flow blocks, functions, and types must be closed with "
-                "the 'end' keyword.");
+    consumeBlockEnd(funcStart, "function");
 
     Token finalName = rootName;
     finalName.start = my_strdup(mangled);
