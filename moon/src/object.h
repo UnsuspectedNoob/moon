@@ -17,6 +17,7 @@ typedef enum {
   OBJ_TYPE_BLUEPRINT,
   OBJ_INSTANCE,
   OBJ_MULTI_FUNCTION,
+  OBJ_UNION,
 } ObjKind;
 
 typedef struct Obj {
@@ -115,9 +116,15 @@ typedef struct {
   int methodCount;
   int methodCapacity;
   ObjFunction **methods; // Array of actual compiled bytecode chunks
-  ObjType ***signatures; // 2D Array! [Method Index][Argument Index] -> Points
-                         // to ObjType
+  Value **signatures;
 } ObjMultiFunction;
+
+// --- THE UNION TYPE (e.g., String or Number) ---
+typedef struct {
+  Obj obj;
+  int count;
+  Value *types; // Array of the valid Type Blueprints in this union
+} ObjUnion;
 
 // Helper to check type
 static inline bool isObjType(Value value, ObjKind type) {
@@ -149,4 +156,5 @@ ObjMultiFunction *newMultiFunction(ObjString *name, int arity);
 ObjString *valueToString(Value value);
 
 ObjDict *newDict();
+ObjUnion *newUnion(int count);
 #endif

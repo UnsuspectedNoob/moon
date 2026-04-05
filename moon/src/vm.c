@@ -324,14 +324,14 @@ static InterpretResult run() {
       &&TARGET_OP_GREATER,       &&TARGET_OP_LESS,
       &&TARGET_OP_NOT,           &&TARGET_OP_BUILD_STRING,
       &&TARGET_OP_BUILD_LIST,    &&TARGET_OP_BUILD_DICT,
-      &&TARGET_OP_GET_PROPERTY,  &&TARGET_OP_SET_PROPERTY,
-      &&TARGET_OP_GET_SUBSCRIPT, &&TARGET_OP_SET_SUBSCRIPT,
-      &&TARGET_OP_GET_END_INDEX, &&TARGET_OP_RANGE,
-      &&TARGET_OP_FOR_ITER,      &&TARGET_OP_GET_ITER,
-      &&TARGET_OP_CALL,          &&TARGET_OP_TYPE_DEF,
-      &&TARGET_OP_INSTANTIATE,   &&TARGET_OP_DEFINE_METHOD,
-      &&TARGET_OP_CAST,          &&TARGET_OP_LOAD,
-      &&TARGET_OP_RETURN};
+      &&TARGET_OP_BUILD_UNION,   &&TARGET_OP_GET_PROPERTY,
+      &&TARGET_OP_SET_PROPERTY,  &&TARGET_OP_GET_SUBSCRIPT,
+      &&TARGET_OP_SET_SUBSCRIPT, &&TARGET_OP_GET_END_INDEX,
+      &&TARGET_OP_RANGE,         &&TARGET_OP_FOR_ITER,
+      &&TARGET_OP_GET_ITER,      &&TARGET_OP_CALL,
+      &&TARGET_OP_TYPE_DEF,      &&TARGET_OP_INSTANTIATE,
+      &&TARGET_OP_DEFINE_METHOD, &&TARGET_OP_CAST,
+      &&TARGET_OP_LOAD,          &&TARGET_OP_RETURN};
 
 #define READ_BYTE() (*ip++)
 #define READ_CONSTANT() (frame->function->chunk.constants.values[READ_BYTE()])
@@ -866,6 +866,32 @@ TARGET_OP_BUILD_DICT: {
   DISPATCH();
 }
 
+TARGET_OP_BUILD_UNION: {
+  uint16_t count = READ_SHORT();
+  EXPECT_STACK(count);
+
+  // 1. Create the Union object and protect it from GC
+  ObjUnion *unionObj = newUnion(count);
+  push(OBJ_VAL(unionObj));
+
+  // 2. Extract the Blueprints from the stack
+  Value *typesStart = vm.stackTop - 1 - count;
+  for (int i = 0; i < count; i++) {
+    if (!IS_TYPE(typesStart[i])) {
+      THROW_ERROR(ERR_TYPE, "Unions can only contain valid Type Blueprints.",
+                  "Invalid type inside Union.");
+    }
+    unionObj->types[i] = typesStart[i];
+  }
+
+  // 3. Cleanup: Pop the union temporarily, pop the raw types, push the finished
+  // union
+  pop();
+  vm.stackTop -= count;
+  push(OBJ_VAL(unionObj));
+  DISPATCH();
+}
+
 TARGET_OP_INSTANTIATE: {
   uint16_t propCount = READ_SHORT();
   EXPECT_STACK((propCount * 2) + 1);
@@ -1395,23 +1421,47 @@ TARGET_OP_CALL: {
     bool isAmbiguous = false;
 
     for (int i = 0; i < multi->methodCount; i++) {
-      ObjType **signature = multi->signatures[i];
+      Value *signature = multi->signatures[i];
       bool isMatch = true;
       int currentScore = 0;
 
       // Check every argument against the signature
+      // Check every argument against the signature
       for (int j = 0; j < argCount; j++) {
-        ObjType *expectedType = signature[j];
-        ObjType *actualType =
-            getObjType(args[j]); // <--- THE UNIVERSAL RESOLVER!
+        Value expectedVal = signature[j];
+        ObjType *actualType = getObjType(args[j]);
 
-        if (expectedType == actualType) {
-          currentScore += 2; // EXACT MATCH: 2 Points
-        } else if (expectedType == NULL || expectedType == vm.anyType) {
-          currentScore += 1; // ANY WILDCARD: 1 Point
-        } else {
-          isMatch = false; // TYPE MISMATCH: Hard fail
-          break;
+        // --- THE UNION CHECK ---
+        if (IS_UNION(expectedVal)) {
+          ObjUnion *unionObj = AS_UNION(expectedVal);
+          bool matchedUnion = false;
+
+          for (int k = 0; k < unionObj->count; k++) {
+            if (AS_TYPE(unionObj->types[k]) == actualType) {
+              matchedUnion = true;
+              break;
+            }
+          }
+
+          if (matchedUnion) {
+            currentScore += 2; // EXACT MATCH inside the union!
+          } else {
+            isMatch = false; // Hard fail
+            break;
+          }
+        }
+        // --- THE STANDARD CHECK ---
+        else {
+          ObjType *expectedType = AS_TYPE(expectedVal);
+
+          if (expectedType == actualType) {
+            currentScore += 2; // EXACT MATCH
+          } else if (expectedType == vm.anyType) {
+            currentScore += 1; // WILDCARD
+          } else {
+            isMatch = false; // Hard fail
+            break;
+          }
         }
       }
 
@@ -1511,16 +1561,16 @@ TARGET_OP_DEFINE_METHOD: {
   // The types are sitting right below the method on the stack
   Value *typesStart = vm.stackTop - 1 - arity;
 
-  // 1. Extract the Expected Types
-  ObjType **signatures = ALLOCATE(ObjType *, arity);
+  // 1. Extract the Expected Types (UPGRADED)
+  Value *signatures = ALLOCATE(Value, arity);
   for (int i = 0; i < arity; i++) {
-    if (!IS_TYPE(typesStart[i])) {
-      THROW_ERROR(ERR_TYPE,
-                  "Make sure the type you specified is defined before using it "
-                  "as a parameter type.",
-                  "Type annotation must resolve to a valid Type Blueprint.");
+    if (!IS_TYPE(typesStart[i]) && !IS_UNION(typesStart[i])) {
+      THROW_ERROR(
+          ERR_TYPE,
+          "Make sure the type you specified is defined before using it.",
+          "Type annotation must resolve to a valid Type Blueprint or Union.");
     }
-    signatures[i] = AS_TYPE(typesStart[i]);
+    signatures[i] = typesStart[i];
   }
 
   // 2. Does the MultiFunction folder already exist in globals?
@@ -1543,8 +1593,10 @@ TARGET_OP_DEFINE_METHOD: {
     multi->methodCapacity = GROW_CAPACITY(oldCap);
     multi->methods = GROW_ARRAY(ObjFunction *, multi->methods, oldCap,
                                 multi->methodCapacity);
-    multi->signatures = GROW_ARRAY(ObjType **, multi->signatures, oldCap,
-                                   multi->methodCapacity);
+
+    // UPGRADED: Cast to Value**
+    multi->signatures =
+        GROW_ARRAY(Value *, multi->signatures, oldCap, multi->methodCapacity);
   }
   multi->methods[multi->methodCount] = method;
   multi->signatures[multi->methodCount] = signatures;
@@ -1567,6 +1619,12 @@ TARGET_OP_CAST: {
                 "Invalid cast target.");
   }
   ObjType *targetType = AS_TYPE(typeVal);
+
+  // --- THE FAST-PATH IDENTITY CHECK ---
+  if (targetType == getObjType(val)) {
+    push(val); // It's already the correct type! Just push it back and move on.
+    DISPATCH();
+  }
 
   // GROUP 0: Reflection (The typeof operator)
   if (targetType == vm.typeType) {
@@ -1628,15 +1686,22 @@ TARGET_OP_CAST: {
       push(BOOL_VAL(!isFalsey(val)));
     }
   }
+
   // GROUP 3: To Number
   else if (targetType == vm.numberType) {
     if (IS_STRING(val)) {
       ObjString *s = AS_STRING(val);
       char *end;
       double num = strtod(s->chars, &end);
-      if (*end != '\0')
-        THROW_ERROR(ERR_TYPE, "String contains an invalid number.",
-                    "Invalid string to number cast.");
+
+      if (*end != '\0') {
+        // --- THE DESCRIPTIVE ERROR UPGRADE ---
+        THROW_ERROR(ERR_TYPE,
+                    "Make sure the string only contains digits, a decimal "
+                    "point, or a minus sign.",
+                    "Cannot cast the string '%s' to a Number.", s->chars);
+      }
+
       push(NUMBER_VAL(num));
     } else if (IS_BOOL(val)) {
       push(NUMBER_VAL(AS_BOOL(val) ? 1.0 : 0.0));
@@ -1645,6 +1710,7 @@ TARGET_OP_CAST: {
                   "Invalid cast to Number.");
     }
   }
+
   // GROUP 4a: To List
   else if (targetType == vm.listType) {
     if (IS_RANGE(val)) {

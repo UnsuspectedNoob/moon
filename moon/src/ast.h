@@ -36,6 +36,7 @@ typedef enum {
   NODE_INSTANTIATE,
   NODE_END,
   NODE_LOAD,
+  NODE_UNION_TYPE,
 } NodeType;
 
 // Forward declaration
@@ -139,7 +140,7 @@ typedef struct {
 typedef struct {
   Token name;
   Token *parameters;
-  Token *paramTypes;
+  Node **paramTypes;
   int paramCount;
   Node *body;
 } FunctionPayload;
@@ -166,6 +167,11 @@ typedef struct {
 typedef struct {
   Token path;
 } LoadPayload;
+
+typedef struct {
+  Node **types;
+  int count;
+} UnionTypePayload;
 
 // --- The Master Node ---
 struct sNode {
@@ -198,6 +204,7 @@ struct sNode {
     TypeDeclPayload typeDecl;
     InstantiatePayload instantiate;
     LoadPayload loadStmt;
+    UnionTypePayload unionType;
   } as;
 };
 
@@ -234,8 +241,6 @@ Node *newRangeNode(Node *start, Node *end, Node *step, int line);
 Node *newPropertyNode(Node *target, Token name, int line);
 
 Node *newCallNode(Node *callee, Node **arguments, int argCount, int line);
-Node *newFunctionNode(Token name, Token *parameters, Token *paramTypes,
-                      int paramCount, Node *body, int line);
 
 Node *newTypeNode(Token name, Token *propertyNames, Node **defaultValues,
                   int count, int line);
@@ -243,6 +248,10 @@ Node *newInstantiateNode(Node *target, Token *propertyNames, Node **values,
                          int count, int line);
 Node *newCastNode(Node *left, Node *right, int line);
 Node *newLoadNode(Token path, int line);
+Node *newUnionTypeNode(Node **types, int count, int line);
+Node *newFunctionNode(Token name, Token *parameters, Node **paramTypes,
+                      int paramCount, Node *body,
+                      int line); // <--- Updated signature
 
 void freeNode(Node *node);
 

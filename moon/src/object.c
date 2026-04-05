@@ -157,6 +157,10 @@ void printObject(Value value) {
     printf("<native fn>");
     break;
 
+  case OBJ_UNION:
+    printf("<union type>");
+    break;
+
   default:
     printf("<unknown>");
     break;
@@ -252,6 +256,13 @@ ObjMultiFunction *newMultiFunction(ObjString *name, int arity) {
   multi->methods = NULL;
   multi->signatures = NULL;
   return multi;
+}
+
+ObjUnion *newUnion(int count) {
+  ObjUnion *unionObj = ALLOCATE_OBJ(ObjUnion, OBJ_UNION);
+  unionObj->count = count;
+  unionObj->types = ALLOCATE(Value, count);
+  return unionObj;
 }
 
 ObjString *valueToString(Value value) {

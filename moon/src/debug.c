@@ -148,6 +148,8 @@ int disassembleInstruction(Chunk *chunk, int offset) {
     return shortInstruction("OP_BUILD_LIST", chunk, offset);
   case OP_BUILD_DICT:
     return shortInstruction("OP_BUILD_DICT", chunk, offset);
+  case OP_BUILD_UNION: // <--- NEW!
+    return shortInstruction("OP_BUILD_UNION", chunk, offset);
   case OP_CALL:
     return shortInstruction("OP_CALL", chunk, offset);
 
@@ -323,16 +325,21 @@ void printAST(Node *node, int indent) {
     printf("[FUNCTION: %.*s]\n", node->as.function.name.length,
            node->as.function.name.start);
     for (int i = 0; i < node->as.function.paramCount; i++) {
-      // THE UPGRADE: It prints both the parameter name AND its extracted Type
-      // Annotation!
-      printf("%*s ├─ Param: %.*s (Type: %.*s)\n", indent * 4, "",
+      printf("%*s ├─ Param: %.*s (Type:)\n", indent * 4, "",
              node->as.function.parameters[i].length,
-             node->as.function.parameters[i].start,
-             node->as.function.paramTypes[i].length,
-             node->as.function.paramTypes[i].start);
+             node->as.function.parameters[i].start);
+      printAST(node->as.function.paramTypes[i],
+               indent + 2); // Recurse into the type node!
     }
     printf("%*s ├─ [BODY]\n", indent * 4, "");
     printAST(node->as.function.body, indent + 2);
+    break;
+
+  case NODE_UNION_TYPE:
+    printf("[UNION TYPE]\n");
+    for (int i = 0; i < node->as.unionType.count; i++) {
+      printAST(node->as.unionType.types[i], indent + 1);
+    }
     break;
 
   case NODE_CALL:

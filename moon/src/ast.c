@@ -306,17 +306,20 @@ Node *newCallNode(Node *callee, Node **arguments, int argCount, int line) {
   return node;
 }
 
-Node *newFunctionNode(Token name, Token *parameters, Token *paramTypes,
+Node *newFunctionNode(Token name, Token *parameters, Node **paramTypes,
                       int paramCount, Node *body, int line) {
   Node *node = allocateNode(NODE_FUNCTION, line);
   node->as.function.name = name;
   node->as.function.paramCount = paramCount;
   node->as.function.parameters = ALLOCATE(Token, paramCount);
-  node->as.function.paramTypes = ALLOCATE(Token, paramCount); // NEW
+  node->as.function.paramTypes =
+      ALLOCATE(Node *, paramCount); // Now allocates Node Pointers!
 
   for (int i = 0; i < paramCount; i++) {
     node->as.function.parameters[i] = parameters[i];
-    node->as.function.paramTypes[i] = paramTypes[i]; // NEW
+    node->as.function.paramTypes[i] = paramTypes[i];
+    if (paramTypes[i] != NULL)
+      paramTypes[i]->parent = node; // Link the parent!
   }
   node->as.function.body = body;
   if (body != NULL)
@@ -378,6 +381,17 @@ Node *newLoadNode(Token path, int line) {
   return node;
 }
 
+Node *newUnionTypeNode(Node **types, int count, int line) {
+  Node *node = allocateNode(NODE_UNION_TYPE, line);
+  node->as.unionType.count = count;
+  node->as.unionType.types = ALLOCATE(Node *, count);
+  for (int i = 0; i < count; i++) {
+    node->as.unionType.types[i] = types[i];
+    if (types[i] != NULL)
+      types[i]->parent = node;
+  }
+  return node;
+}
 // --- The Destructor (Crucial for avoiding leaks) ---
 
 void freeNode(Node *root) {
@@ -457,8 +471,15 @@ void freeNode(Node *root) {
       for (int i = 0; i < node->as.phrasalCall.argCount; i++)
         writeNodeArray(&worklist, node->as.phrasalCall.arguments[i]);
       break;
+    case NODE_UNION_TYPE:
+      for (int i = 0; i < node->as.unionType.count; i++)
+        writeNodeArray(&worklist, node->as.unionType.types[i]);
+      break;
     case NODE_FUNCTION:
       writeNodeArray(&worklist, node->as.function.body);
+      // Push the new type nodes to the GC worklist!
+      for (int i = 0; i < node->as.function.paramCount; i++)
+        writeNodeArray(&worklist, node->as.function.paramTypes[i]);
       break;
     case NODE_SUBSCRIPT:
       writeNodeArray(&worklist, node->as.subscript.left);
@@ -526,11 +547,14 @@ void freeNode(Node *root) {
                  node->as.phrasalCall.argCount);
       free((void *)node->as.phrasalCall.mangledName.start);
       break;
+    case NODE_UNION_TYPE:
+      FREE_ARRAY(Node *, node->as.unionType.types, node->as.unionType.count);
+      break;
     case NODE_FUNCTION:
       FREE_ARRAY(Token, node->as.function.parameters,
                  node->as.function.paramCount);
-      FREE_ARRAY(Token, node->as.function.paramTypes,
-                 node->as.function.paramCount);
+      FREE_ARRAY(Node *, node->as.function.paramTypes,
+                 node->as.function.paramCount); // Free Node* array!
       free((void *)node->as.function.name.start);
       break;
     case NODE_TYPE_DECL:

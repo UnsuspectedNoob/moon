@@ -64,6 +64,7 @@ static inline Value numToValue(double num) {
 #define IS_TYPE(value) isObjType(value, OBJ_TYPE_BLUEPRINT)
 #define IS_INSTANCE(value) isObjType(value, OBJ_INSTANCE)
 #define IS_MULTI_FUNCTION(value) isObjType(value, OBJ_MULTI_FUNCTION)
+#define IS_UNION(value) isObjType(value, OBJ_UNION)
 
 // 7. Value Extractors (AS_*)
 #define AS_NUMBER(value) valueToNum(value)
@@ -72,6 +73,7 @@ static inline Value numToValue(double num) {
 #define AS_TYPE(value) ((ObjType *)AS_OBJ(value))
 #define AS_INSTANCE(value) ((ObjInstance *)AS_OBJ(value))
 #define AS_MULTI_FUNCTION(value) ((ObjMultiFunction *)AS_OBJ(value))
+#define AS_UNION(value) ((ObjUnion *)AS_OBJ(value))
 
 typedef struct {
   int capacity;

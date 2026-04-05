@@ -1628,6 +1628,37 @@ static Node *statement() {
   return stmt;
 }
 
+static Node *parseTypeAnnotation() {
+  int line = parser.previous.line;
+
+  // 1. We expect at least one Type name (e.g. 'String')
+  consumeHint(TOKEN_IDENTIFIER, ERR_TYPE, "I was expecting a type name here.",
+              "Type annotations must specify a valid blueprint type (e.g., "
+              "'name: String').");
+  Node *baseType = newVariableNode(parser.previous, line);
+
+  // 2. Is it a union? Look ahead for the 'or' keyword!
+  if (check(TOKEN_OR)) {
+    NodeArray types;
+    initNodeArray(&types);
+    writeNodeArray(&types, baseType);
+
+    while (match(TOKEN_OR)) {
+      consumeHint(TOKEN_IDENTIFIER, ERR_TYPE,
+                  "I was expecting another type name after 'or'.",
+                  "Unions must link valid types (e.g., 'String or Number').");
+      writeNodeArray(&types,
+                     newVariableNode(parser.previous, parser.previous.line));
+    }
+
+    Node *unionNode = newUnionTypeNode(types.items, types.count, line);
+    freeNodeArray(&types);
+    return unionNode;
+  }
+
+  return baseType; // Just a normal, single type
+}
+
 static Node *letDeclaration() {
   TokenArray names;
   initTokenArray(&names);
@@ -1707,8 +1738,8 @@ static Node *letDeclaration() {
     int line = rootName.line;
     TokenArray parameters;
     initTokenArray(&parameters);
-    TokenArray paramTypes;       // NEW
-    initTokenArray(&paramTypes); // NEW
+    NodeArray paramTypes;       // NEW
+    initNodeArray(&paramTypes); // NEW
 
     char mangled[1024] = {0};
     strncat(mangled, rootName.start, rootName.length);
@@ -1729,19 +1760,15 @@ static Node *letDeclaration() {
 
               // --- NEW: THE TYPE EXTRACTION ---
               if (match(TOKEN_COLON)) {
-                consumeHint(TOKEN_IDENTIFIER, ERR_TYPE,
-                            "I was expecting a type name here.",
-                            "Type annotations must specify a valid blueprint "
-                            "type (e.g., 'name: String').");
-
-                writeTokenArray(&paramTypes, parser.previous);
+                writeNodeArray(&paramTypes, parseTypeAnnotation());
               } else {
-                // If no type is provided, insert a dummy 'Any' token
+                // Default to 'Any'
                 Token anyToken = {.type = TOKEN_IDENTIFIER,
                                   .start = "Any",
                                   .length = 3,
                                   .line = parser.previous.line};
-                writeTokenArray(&paramTypes, anyToken);
+                writeNodeArray(&paramTypes,
+                               newVariableNode(anyToken, parser.previous.line));
               }
               // --------------------------------
 
@@ -1779,7 +1806,7 @@ static Node *letDeclaration() {
     Node *node = newFunctionNode(finalName, parameters.items, paramTypes.items,
                                  parameters.count, body, line);
     freeTokenArray(&parameters);
-    freeTokenArray(&paramTypes); // Free the temp buffer!
+    freeNodeArray(&paramTypes); // Free the temp buffer!
     freeTokenArray(&names);
     return node;
   }

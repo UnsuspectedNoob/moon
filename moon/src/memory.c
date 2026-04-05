@@ -173,11 +173,17 @@ static void blackenObject(Obj *object) {
       // Rescue the 2D array of Type Signatures!
       if (multi->signatures[i] != NULL) {
         for (int j = 0; j < multi->arity; j++) {
-          if (multi->signatures[i][j] != NULL) {
-            markObject((Obj *)multi->signatures[i][j]);
-          }
+          markValue(multi->signatures[i][j]); // <--- UPGRADED: Use markValue!
         }
       }
+    }
+    break;
+  }
+
+  case OBJ_UNION: {
+    ObjUnion *unionObj = (ObjUnion *)object;
+    for (int i = 0; i < unionObj->count; i++) {
+      markValue(unionObj->types[i]); // Rescue the internal Blueprints!
     }
     break;
   }
@@ -263,10 +269,10 @@ void freeObject(Obj *object) {
     if (multi->signatures != NULL) {
       for (int i = 0; i < multi->methodCount; i++) {
         if (multi->signatures[i] != NULL) {
-          FREE_ARRAY(ObjType *, multi->signatures[i], multi->arity);
+          FREE_ARRAY(Value *, multi->signatures[i], multi->arity);
         }
       }
-      FREE_ARRAY(ObjType **, multi->signatures, multi->methodCapacity);
+      FREE_ARRAY(Value **, multi->signatures, multi->methodCapacity);
     }
 
     // Free the methods array
@@ -275,6 +281,13 @@ void freeObject(Obj *object) {
     }
 
     FREE(ObjMultiFunction, object);
+    break;
+  }
+
+  case OBJ_UNION: {
+    ObjUnion *unionObj = (ObjUnion *)object;
+    FREE_ARRAY(Value, unionObj->types, unionObj->count);
+    FREE(ObjUnion, object);
     break;
   }
   }

@@ -598,13 +598,11 @@ static void walkNode(Node *node) {
     ObjFunction *fn = endCompiler();
 
     // 1. Push the Expected Types to the Stack!
-    // Because we bootstrapped "Number", "String", and "Any" into globals,
-    // OP_GET_GLOBAL will flawlessly fetch their blueprints!
+    // We walk the AST node! If it's a simple variable (String), it pushes the
+    // Blueprint. If it's a Union (String or Number), it evaluates both and
+    // pushes an ObjUnion!
     for (int i = 0; i < node->as.function.paramCount; i++) {
-      uint16_t typeName = identifierConstant(&node->as.function.paramTypes[i]);
-      emitByte(OP_GET_GLOBAL);
-      emitByte((typeName >> 8) & 0xff);
-      emitByte(typeName & 0xff);
+      walkNode(node->as.function.paramTypes[i]);
     }
 
     // 2. Push the compiled function chunk itself
@@ -675,6 +673,20 @@ static void walkNode(Node *node) {
 
     // 3. Tell the VM to execute the load sequence!
     emitByte(OP_LOAD);
+    break;
+  }
+
+  case NODE_UNION_TYPE: {
+    // 1. Evaluate every type in the union (pushes them to the stack)
+    for (int i = 0; i < node->as.unionType.count; i++) {
+      walkNode(node->as.unionType.types[i]);
+    }
+
+    // 2. Tell the VM to pop 'count' types and merge them into one ObjUnion!
+    emitByte(OP_BUILD_UNION);
+    uint16_t count = (uint16_t)node->as.unionType.count;
+    emitByte((count >> 8) & 0xff); // High byte
+    emitByte(count & 0xff);        // Low byte
     break;
   }
 
