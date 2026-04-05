@@ -4,6 +4,20 @@
 #include "object.h"
 #include "scanner.h"
 
+#include <stdbool.h>
+
+// --- LSP DIAGNOSTIC STORAGE ---
+typedef struct {
+  int line;
+  int column;
+  int length;
+  char message[1024];
+} Diagnostic;
+
+extern Diagnostic lspDiagnostics[100];
+extern int lspDiagnosticCount;
+extern bool isLspMode; // The Silencer Flag
+
 // --- THE ANSI COLOR PALETTE ---
 #define COLOR_RED "\x1b[1;31m"
 #define COLOR_YELLOW "\x1b[1;33m"

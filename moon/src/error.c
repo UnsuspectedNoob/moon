@@ -4,6 +4,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+Diagnostic lspDiagnostics[100];
+int lspDiagnosticCount = 0;
+bool isLspMode = false;
+
 // --- THE SPELLCHECKING ORACLE ---
 // Calculates the exact number of edits required to change s1 into s2.
 static int levenshteinDistance(const char *s1, const char *s2) {
@@ -152,6 +156,25 @@ static void printSnippet(int targetLine, int targetCol, int length) {
 
 void reportCompileError(Token *token, ErrorType type, const char *message,
                         const char *hint) {
+  // --- THE LSP INTERCEPT ---
+  if (isLspMode) {
+    if (lspDiagnosticCount < 100) {
+      Diagnostic *diag = &lspDiagnostics[lspDiagnosticCount++];
+      diag->line = token->line;
+      diag->column = token->column;
+      diag->length = token->length > 0 ? token->length : 1;
+
+      // Combine the Reason and the Hint into one helpful tooltip!
+      if (hint != NULL) {
+        snprintf(diag->message, sizeof(diag->message), "%s\n\nHint: %s",
+                 message, hint);
+      } else {
+        snprintf(diag->message, sizeof(diag->message), "%s", message);
+      }
+    }
+    return; // Exit immediately! Do NOT print to the terminal!
+  }
+
   fprintf(stderr, "\n" COLOR_RED "Oops! %s on line %d\n" COLOR_RESET,
           getErrorTypeName(type), token->line);
   fprintf(stderr,

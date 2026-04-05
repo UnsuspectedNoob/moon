@@ -4,6 +4,8 @@
 #include <string.h>
 
 #include "common.h"
+#include "error.h"
+#include "lsp.h"
 #include "vm.h"
 
 // --- GLOBAL FLAGS ---
@@ -68,22 +70,24 @@ int main(int argc, char *argv[]) {
 
   char *filePath = NULL;
 
+  bool runLsp = false;
+
   // --- THE ROBUST CLI PARSER ---
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--debug") == 0) {
       vm.debugMode = true;
     } else if (strcmp(argv[i], "--ast") == 0) {
       printAstFlag = true;
+    } else if (strcmp(argv[i], "--lsp") == 0) {
+      runLsp = true;
+      isLspMode = true; // Tell the Error Engine to stay quiet!
     } else if (argv[i][0] == '-') {
-      // Catch typos like '--debg' or '-a'
       fprintf(stderr, "Unknown flag: %s\n", argv[i]);
-      fprintf(stderr, "Usage: moon [--debug] [--ast] [path]\n");
+      fprintf(stderr, "Usage: moon [--debug] [--ast] [--lsp] [path]\n");
       exit(64);
     } else {
-      // If it doesn't start with '-', it must be the file path!
       if (filePath != NULL) {
         fprintf(stderr, "Error: Multiple file paths provided.\n");
-        fprintf(stderr, "Usage: moon [--debug] [--ast] [path]\n");
         exit(64);
       }
       filePath = argv[i];
@@ -91,7 +95,10 @@ int main(int argc, char *argv[]) {
   }
 
   // --- EXECUTION ROUTING ---
-  if (filePath == NULL) {
+  // 2. Add the LSP branch
+  if (runLsp) {
+    startLanguageServer();
+  } else if (filePath == NULL) {
     repl();
   } else {
     runFile(filePath);

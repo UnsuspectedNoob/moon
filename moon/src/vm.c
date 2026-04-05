@@ -1044,6 +1044,7 @@ TARGET_OP_GET_SUBSCRIPT: {
 
       ObjList *resultList = newList();
       push(OBJ_VAL(resultList));
+
       if (start <= end && start < list->count && end >= 0) {
         if (start < 0)
           start = 0;

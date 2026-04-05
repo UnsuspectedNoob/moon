@@ -904,18 +904,18 @@ static Node *parseInstantiate(Node *left, bool isWith) {
     do {
       ignoreNewlines();
       if (check(terminator))
-        break;
+        break; // Successfully handles trailing commas!
 
-      errorAt(
-          &parser.current, ERR_SYNTAX, "I was expecting a property name here.",
+      // --- THE FIX ---
+      consumeHint(
+          TOKEN_IDENTIFIER, ERR_SYNTAX, "I was expecting a property name here.",
           isWith
               ? "When overriding properties, you need to list them explicitly."
               : "When instantiating a type, you need to list its properties "
                 "(e.g., 'health: 100').");
-      if (parser.current.type == TOKEN_IDENTIFIER)
-        advance(); // Eat the identifier
 
       writeTokenArray(&propNames, parser.previous);
+      // ---------------
 
       consumeHint(
           TOKEN_COLON, ERR_SYNTAX, "I was expecting a colon ':' here.",
@@ -1914,9 +1914,13 @@ Node *parseSource(const char *source) {
     writeNodeArray(&statements, declaration());
   }
 
-  Node *node = (parser.hadError)
-                   ? NULL
-                   : newBlockNode(statements.items, statements.count, 0);
+  // --- THE LSP AST RESCUE FIX ---
+  // Even if parser.hadError is true, we ALWAYS return the block node.
+  // The MOON compiler (in compiler.c) already checks parser.hadError
+  // and will safely abort compilation, but now the LSP will be able
+  // to read the partial tree and salvage the variables!
+  Node *node = newBlockNode(statements.items, statements.count, 0);
+
   freeNodeArray(&statements);
   return node;
 }

@@ -50,6 +50,6 @@ end
 show "--- CASTING FIRST SPELL ---"
 channel fireWeave into caster
 
-show ""
-show "--- ATTEMPTING OVERDRAW ---"
+show "
+--- ATTEMPTING OVERDRAW ---"
 channel voidWeave into caster
