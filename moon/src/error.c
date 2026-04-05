@@ -14,15 +14,14 @@ static int levenshteinDistance(const char *s1, const char *s2) {
   int len1 = strlen(s1);
   int len2 = strlen(s2);
 
-  // We use a 1D array to save memory (only keeping the previous row)
   int *column = malloc((len1 + 1) * sizeof(int));
   for (int i = 0; i <= len1; i++) {
     column[i] = i;
   }
 
   for (int x = 1; x <= len2; x++) {
+    int lastDiagonal = column[0]; // Save before overwriting!
     column[0] = x;
-    int lastDiagonal = x - 1;
     for (int y = 1; y <= len1; y++) {
       int oldDiagonal = column[y];
       int cost = (s1[y - 1] == s2[x - 1]) ? 0 : 1;
@@ -33,9 +32,8 @@ static int levenshteinDistance(const char *s1, const char *s2) {
       if (lastDiagonal + cost < min)
         min = lastDiagonal + cost; // Substitution
 
-      column[y - 1] = lastDiagonal;
+      column[y] = min; // Store the result safely!
       lastDiagonal = oldDiagonal;
-      column[y] = min;
     }
   }
 

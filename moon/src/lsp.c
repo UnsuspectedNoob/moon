@@ -25,6 +25,36 @@ typedef enum {
   LSP_TYPE_BLUEPRINT
 } LspSymbolType;
 
+// --- THE SPELLCHECKING ORACLE (For the LSP) ---
+static int levenshteinDistanceLsp(const char *s1, const char *s2) {
+  int len1 = strlen(s1);
+  int len2 = strlen(s2);
+  int *column = malloc((len1 + 1) * sizeof(int));
+  for (int i = 0; i <= len1; i++)
+    column[i] = i;
+
+  for (int x = 1; x <= len2; x++) {
+    int lastDiagonal = column[0]; // IMPORTANT: Save before overwriting!
+    column[0] = x;
+    for (int y = 1; y <= len1; y++) {
+      int oldDiagonal = column[y];
+      int cost = (s1[y - 1] == s2[x - 1]) ? 0 : 1;
+
+      int min = column[y] + 1; // Deletion
+      if (column[y - 1] + 1 < min)
+        min = column[y - 1] + 1; // Insertion
+      if (lastDiagonal + cost < min)
+        min = lastDiagonal + cost; // Substitution
+
+      column[y] = min; // Correctly update the current cell
+      lastDiagonal = oldDiagonal;
+    }
+  }
+  int result = column[len1];
+  free(column);
+  return result;
+}
+
 // --- THE SECRET SIDE-CHANNEL LOGGER ---
 static void lspLog(const char *format, ...) {
   FILE *logFile = fopen("moon_lsp.log", "a");
@@ -266,6 +296,89 @@ static void analyzeNode(Node *node) {
 
       registerSymbol(varName, guessedType, bpName);
     }
+    break;
+  }
+
+    // --- THE STRICT SENTINEL (Semantic Errors) ---
+  case NODE_VARIABLE: {
+    char varName[64];
+    Token t = node->as.variable.name;
+    int len = t.length < 63 ? t.length : 63;
+    strncpy(varName, t.start, len);
+    varName[len] = '\0';
+
+    bool found = false;
+
+    // 1. Check local Memory Palace (Variables, Functions, Blueprints)
+    for (int i = 0; i < lspSymbolCount; i++) {
+      if (strcmp(lspSymbols[i].name, varName) == 0) {
+        found = true;
+        break;
+      }
+    }
+
+    // 2. Check Native Core Types (Since the VM handles these globally)
+    if (!found) {
+      const char *natives[] = {"Number", "String",   "List", "Dict", "Bool",
+                               "Range",  "Function", "Nil",  "Any",  "Type"};
+      for (int i = 0; i < 10; i++) {
+        if (strcmp(varName, natives[i]) == 0) {
+          found = true;
+          break;
+        }
+      }
+    }
+
+    // 3. Ignore internal primitives (e.g., __io_read)
+    if (!found && len >= 2 && varName[0] == '_' && varName[1] == '_') {
+      found = true;
+    }
+
+    // 4. Fire the Squiggle!
+    if (!found && lspDiagnosticCount < 100) {
+      Diagnostic *d = &lspDiagnostics[lspDiagnosticCount++];
+      d->line = t.line;
+      d->column = t.column;
+      d->length = t.length > 0 ? t.length : 1;
+
+      // The Oracle: Find a close match!
+      const char *bestMatch = NULL;
+      int minDistance = 999;
+      int maxAllowed = (len <= 3) ? 1 : 2;
+
+      // Check user-defined variables
+      for (int i = 0; i < lspSymbolCount; i++) {
+        int dist = levenshteinDistanceLsp(varName, lspSymbols[i].name);
+        if (dist < minDistance && dist <= maxAllowed) {
+          minDistance = dist;
+          bestMatch = lspSymbols[i].name;
+        }
+      }
+
+      // Check Native Types!
+      const char *natives[] = {"Number", "String",   "List", "Dict", "Bool",
+                               "Range",  "Function", "Nil",  "Any",  "Type"};
+      for (int i = 0; i < 10; i++) {
+        int dist = levenshteinDistanceLsp(varName, natives[i]);
+        if (dist < minDistance && dist <= maxAllowed) {
+          minDistance = dist;
+          bestMatch = natives[i];
+        }
+      }
+
+      if (bestMatch != NULL) {
+        snprintf(d->message, sizeof(d->message),
+                 "Reference Error: Undefined variable '%s'.\n\nHint: Did you "
+                 "mean '%s'?",
+                 varName, bestMatch);
+      } else {
+        snprintf(d->message, sizeof(d->message),
+                 "Reference Error: Undefined variable '%s'.\n\nHint: Did you "
+                 "misspell it or forget to declare it with 'let'?",
+                 varName);
+      }
+    }
+
     break;
   }
 
