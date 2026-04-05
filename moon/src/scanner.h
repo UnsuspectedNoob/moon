@@ -55,6 +55,7 @@ typedef enum {
   TOKEN_IF,
   TOKEN_IN,
   TOKEN_IS,
+  TOKEN_KEEP,
   TOKEN_LET,
   TOKEN_LOAD,
   TOKEN_NIL,

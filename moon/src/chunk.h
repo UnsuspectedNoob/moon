@@ -50,6 +50,8 @@ typedef enum {
   OP_DEFINE_METHOD,
   OP_CAST,
   OP_LOAD,
+  OP_KEEP_LIST,
+  OP_KEEP_DICT,
   OP_RETURN,
 } OpCode;
 

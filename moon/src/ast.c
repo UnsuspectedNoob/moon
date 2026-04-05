@@ -392,6 +392,45 @@ Node *newUnionTypeNode(Node **types, int count, int line) {
   }
   return node;
 }
+
+Node *newComprehensionNode(Token iterator, Token indexVar, bool hasIndex,
+                           Node *sequence, bool isBlockMode, Node *keepValue,
+                           Node *keepKey, Node *body, bool isDict, int line) {
+  Node *node = allocateNode(NODE_COMPREHENSION, line);
+  node->as.comprehension.iterator = iterator;
+  node->as.comprehension.indexVar = indexVar;
+  node->as.comprehension.hasIndex = hasIndex;
+  node->as.comprehension.sequence = sequence;
+  node->as.comprehension.isBlockMode = isBlockMode;
+  node->as.comprehension.keepValue = keepValue;
+  node->as.comprehension.keepKey = keepKey;
+  node->as.comprehension.body = body;
+  node->as.comprehension.isDict = isDict;
+
+  // Link parents for the GC!
+  if (sequence != NULL)
+    sequence->parent = node;
+  if (keepValue != NULL)
+    keepValue->parent = node;
+  if (keepKey != NULL)
+    keepKey->parent = node;
+  if (body != NULL)
+    body->parent = node;
+
+  return node;
+}
+
+Node *newKeepNode(Node *key, Node *value, int line) {
+  Node *node = allocateNode(NODE_KEEP, line);
+  node->as.keepStmt.key = key;
+  node->as.keepStmt.value = value;
+  if (key)
+    key->parent = node;
+  if (value)
+    value->parent = node;
+  return node;
+}
+
 // --- The Destructor (Crucial for avoiding leaks) ---
 
 void freeNode(Node *root) {
@@ -509,6 +548,16 @@ void freeNode(Node *root) {
     case NODE_CAST:
       writeNodeArray(&worklist, node->as.cast.left);
       writeNodeArray(&worklist, node->as.cast.right);
+      break;
+    case NODE_COMPREHENSION:
+      writeNodeArray(&worklist, node->as.comprehension.sequence);
+      writeNodeArray(&worklist, node->as.comprehension.keepValue);
+      writeNodeArray(&worklist, node->as.comprehension.keepKey);
+      writeNodeArray(&worklist, node->as.comprehension.body);
+      break;
+    case NODE_KEEP:
+      writeNodeArray(&worklist, node->as.keepStmt.key);
+      writeNodeArray(&worklist, node->as.keepStmt.value);
       break;
     default:
       // Leaf nodes have no children to push

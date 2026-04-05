@@ -81,6 +81,14 @@ static int typeInstruction(const char *name, Chunk *chunk, int offset) {
   return offset + 5;
 }
 
+static int forIterInstruction(const char *name, Chunk *chunk, int offset) {
+  uint8_t slot = chunk->code[offset + 1];
+  uint16_t jump = (uint16_t)(chunk->code[offset + 2] << 8);
+  jump |= chunk->code[offset + 3];
+  printf("%-16s Slot %d -> %d\n", name, slot, offset + 4 + jump);
+  return offset + 4;
+}
+
 int disassembleInstruction(Chunk *chunk, int offset) {
   printf("%04d ", offset);
   if (offset > 0 && chunk->lines[offset] == chunk->lines[offset - 1]) {
@@ -129,6 +137,8 @@ int disassembleInstruction(Chunk *chunk, int offset) {
     return simpleInstruction("OP_MULTIPLY", offset);
   case OP_DIVIDE:
     return simpleInstruction("OP_DIVIDE", offset);
+  case OP_MOD: // <--- ADD THIS
+    return simpleInstruction("OP_MOD", offset);
   case OP_NOT:
     return simpleInstruction("OP_NOT", offset);
   case OP_NEGATE:
@@ -169,7 +179,7 @@ int disassembleInstruction(Chunk *chunk, int offset) {
     // ...
 
   case OP_FOR_ITER:
-    return jumpInstruction("OP_FOR_ITER", 1, chunk, offset);
+    return forIterInstruction("OP_FOR_ITER", chunk, offset);
   case OP_GET_ITER: // <--- Add this
     return simpleInstruction("OP_GET_ITER", offset);
   case OP_CAST:
@@ -183,6 +193,11 @@ int disassembleInstruction(Chunk *chunk, int offset) {
 
   case OP_LOAD:
     return simpleInstruction("OP_LOAD", offset);
+
+  case OP_KEEP_LIST:
+    return byteInstruction("OP_KEEP_LIST", chunk, offset);
+  case OP_KEEP_DICT:
+    return byteInstruction("OP_KEEP_DICT", chunk, offset);
   case OP_RETURN:
     return simpleInstruction("OP_RETURN", offset);
 
@@ -418,6 +433,41 @@ void printAST(Node *node, int indent) {
              node->as.instantiate.propertyNames[i].start);
       printAST(node->as.instantiate.values[i], indent + 2);
     }
+    break;
+
+  case NODE_COMPREHENSION:
+    printf("[%s COMPREHENSION: iterator %.*s",
+           node->as.comprehension.isDict ? "DICT" : "LIST",
+           node->as.comprehension.iterator.length,
+           node->as.comprehension.iterator.start);
+    if (node->as.comprehension.hasIndex) {
+      printf(", index %.*s", node->as.comprehension.indexVar.length,
+             node->as.comprehension.indexVar.start);
+    }
+    printf("]\n");
+    printAST(node->as.comprehension.sequence, indent + 1);
+
+    if (node->as.comprehension.isBlockMode) {
+      printf("%*s ├─ [BLOCK]\n", indent * 4, "");
+      printAST(node->as.comprehension.body, indent + 2);
+    } else {
+      if (node->as.comprehension.isDict) {
+        printf("%*s ├─ [KEEP KEY]\n", indent * 4, "");
+        printAST(node->as.comprehension.keepKey, indent + 2);
+      }
+      printf("%*s ├─ [KEEP VALUE]\n", indent * 4, "");
+      printAST(node->as.comprehension.keepValue, indent + 2);
+    }
+    break;
+
+  case NODE_KEEP:
+    printf("[KEEP]\n");
+    if (node->as.keepStmt.key != NULL) {
+      printf("%*s ├─ [KEY]\n", indent * 4, "");
+      printAST(node->as.keepStmt.key, indent + 2);
+    }
+    printf("%*s ├─ [VALUE]\n", indent * 4, "");
+    printAST(node->as.keepStmt.value, indent + 2);
     break;
 
   default:

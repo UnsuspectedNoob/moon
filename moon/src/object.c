@@ -265,12 +265,17 @@ ObjUnion *newUnion(int count) {
   return unionObj;
 }
 
-ObjString *valueToString(Value value) {
-  // If it's already a string, just cast and return
+// Pre-declare our recursive engine
+static ObjString *stringifyValue(Value value, int indent);
+
+// The public interface kicks off the recursion at depth 0!
+ObjString *valueToString(Value value) { return stringifyValue(value, 0); }
+
+// The internal engine that tracks indentation
+static ObjString *stringifyValue(Value value, int indent) {
   if (IS_STRING(value))
     return AS_STRING(value);
 
-  // If it's a number, format it
   if (IS_NUMBER(value)) {
     double number = AS_NUMBER(value);
     char buffer[32];
@@ -278,59 +283,64 @@ ObjString *valueToString(Value value) {
     return copyString(buffer, length);
   }
 
-  // If it's boolean
   if (IS_BOOL(value)) {
     return AS_BOOL(value) ? copyString("true", 4) : copyString("false", 5);
   }
 
-  // If it's nil
   if (IS_NIL(value)) {
     return copyString("nil", 3);
   }
 
+  // --- THE DICTIONARY PRETTY PRINTER ---
   if (IS_DICT(value)) {
     ObjDict *dict = AS_DICT(value);
 
-    // Start with a reasonable buffer capacity
-    int capacity = 64;
+    // Empty dict fallback
+    if (dict->fields.count == 0)
+      return copyString("{}", 2);
+
+    int capacity = 128;
     int length = 0;
     char *buffer = malloc(capacity);
 
     buffer[length++] = '{';
-    buffer[length++] = ' ';
+    buffer[length++] = '\n';
 
     bool firstItem = true;
 
-    // Loop through the internal hash table array
     for (int i = 0; i < dict->fields.capacity; i++) {
       Entry *entry = &dict->fields.entries[i];
 
-      // Skip empty slots and tombstones
-      if (IS_EMPTY(entry->key) || IS_TOMB(entry->key)) {
+      if (IS_EMPTY(entry->key) || IS_TOMB(entry->key))
         continue;
-      }
 
-      // 1. Recursively stringify the key and value!
-      ObjString *keyStr = valueToString(entry->key);
-      push(OBJ_VAL(keyStr)); // Protect from GC
+      // 1. Recursively stringify, increasing the indent!
+      ObjString *keyStr = stringifyValue(entry->key, indent + 1);
+      push(OBJ_VAL(keyStr));
 
-      ObjString *valStr = valueToString(entry->value);
-      push(OBJ_VAL(valStr)); // Protect from GC
+      ObjString *valStr = stringifyValue(entry->value, indent + 1);
+      push(OBJ_VAL(valStr));
 
-      // 2. Ensure the buffer is large enough for: key + ": " + val + ", } \0"
-      while (length + keyStr->length + valStr->length + 6 > capacity) {
+      // 2. Pre-calculate the maximum space this item will need
+      int spaceNeeded = 2 + ((indent + 1) * 2) + keyStr->length + 2 +
+                        valStr->length + (indent * 2) + 4;
+
+      while (length + spaceNeeded > capacity) {
         capacity *= 2;
         buffer = realloc(buffer, capacity);
       }
 
-      // 3. Add the comma separator (if it's not the first item)
       if (!firstItem) {
         buffer[length++] = ',';
-        buffer[length++] = ' ';
+        buffer[length++] = '\n';
       }
       firstItem = false;
 
-      // 4. Copy the Key
+      // 3. Add the Indentation
+      for (int s = 0; s < (indent + 1) * 2; s++)
+        buffer[length++] = ' ';
+
+      // 4. Add the Key
       memcpy(buffer + length, keyStr->chars, keyStr->length);
       length += keyStr->length;
 
@@ -338,53 +348,56 @@ ObjString *valueToString(Value value) {
       buffer[length++] = ':';
       buffer[length++] = ' ';
 
-      // 6. Copy the Value
+      // 6. Add the Value
       memcpy(buffer + length, valStr->chars, valStr->length);
       length += valStr->length;
 
-      pop(); // Pop valStr
-      pop(); // Pop keyStr
+      pop();
+      pop();
     }
 
-    buffer[length++] = ' ';
-    buffer[length++] = '}';
-    buffer[length] = '\0'; // Null terminator
+    buffer[length++] = '\n';
 
-    // Transfer the raw C string into the VM's managed memory pool!
+    // Add the closing brace indentation
+    for (int s = 0; s < indent * 2; s++)
+      buffer[length++] = ' ';
+
+    buffer[length++] = '}';
+    buffer[length] = '\0';
+
     ObjString *result = copyString(buffer, length);
     free(buffer);
-
     return result;
   }
 
-  // --- LIST FORMATTING ---
+  // --- THE HORIZONTAL LIST PRINTER ---
   if (IS_LIST(value)) {
     ObjList *list = AS_LIST(value);
+    if (list->count == 0)
+      return copyString("[]", 2);
 
-    // Start with a reasonable buffer capacity
-    int capacity = 64;
+    int capacity = 128;
     int length = 0;
     char *buffer = malloc(capacity);
 
-    buffer[length++] = '['; // Opening bracket
+    buffer[length++] = '[';
 
     for (int i = 0; i < list->count; i++) {
-      // 1. Recursively convert the item into a string!
-      ObjString *itemStr = valueToString(list->items[i]);
+      // Recursively stringify (we pass the same indent so if a Dict is
+      // inside this list, it formats cleanly relative to the list)
+      ObjString *itemStr = stringifyValue(list->items[i], indent);
+      push(OBJ_VAL(itemStr));
 
-      push(OBJ_VAL(itemStr)); // to protect from GC
-
-      // 2. Ensure the buffer is large enough for the item + ", ]\0"
-      while (length + itemStr->length + 4 > capacity) {
+      // We only need enough space for the item, comma, space, and brackets
+      int spaceNeeded = itemStr->length + 4;
+      while (length + spaceNeeded > capacity) {
         capacity *= 2;
         buffer = realloc(buffer, capacity);
       }
 
-      // 3. Copy the item's characters into our buffer
       memcpy(buffer + length, itemStr->chars, itemStr->length);
       length += itemStr->length;
 
-      // 4. Add the comma separator (if it's not the last item)
       if (i < list->count - 1) {
         buffer[length++] = ',';
         buffer[length++] = ' ';
@@ -393,16 +406,13 @@ ObjString *valueToString(Value value) {
       pop();
     }
 
-    buffer[length++] = ']'; // Closing bracket
-    buffer[length] = '\0';  // Null terminator
+    buffer[length++] = ']';
+    buffer[length] = '\0';
 
-    // Transfer the raw C string into the VM's managed memory pool!
     ObjString *result = copyString(buffer, length);
     free(buffer);
-
     return result;
   }
 
-  // Fallback for objects we haven't implemented yet
   return copyString("<object>", 8);
 }

@@ -5,6 +5,7 @@
 
 #include "chunk.h"
 #include "emitter.h"
+#include "parser.h"
 #include "scanner.h"
 
 // ==========================================
@@ -284,7 +285,15 @@ static void walkNode(Node *node) {
     startLoop(&loop, loopStart);
 
     // 4. The Iteration Check
-    int exitJump = emitJump(OP_FOR_ITER);
+    // Replace the old iterSlot and jump logic with this in BOTH places:
+    Token iterTok = syntheticToken(" iter");
+    int iterSlot = resolveLocal(current, &iterTok);
+
+    emitByte(OP_FOR_ITER);
+    emitByte((uint8_t)iterSlot);
+    emitByte(0xff); // Placeholder for High Jump Byte
+    emitByte(0xff); // Placeholder for Low Jump Byte
+    int exitJump = currentChunk()->count - 2;
 
     // --- SCOPE 2: The Inner Body Scope ---
     beginScope();
@@ -687,6 +696,138 @@ static void walkNode(Node *node) {
     uint16_t count = (uint16_t)node->as.unionType.count;
     emitByte((count >> 8) & 0xff); // High byte
     emitByte(count & 0xff);        // Low byte
+    break;
+  }
+
+  case NODE_COMPREHENSION: {
+    // --- SCOPE 1: The Ghost Variables ---
+    beginScope();
+
+    // 1. Sequence
+    walkNode(node->as.comprehension.sequence);
+    addLocal(syntheticToken(" seq"));
+    markInitialized();
+
+    // 2. Iterator Setup
+    emitByte(OP_GET_ITER);
+    addLocal(syntheticToken(" iter"));
+    markInitialized();
+
+    // 3. The Accumulator!
+    // OP_BUILD_LIST takes an initial count. We start empty, so we pass 0!
+    if (node->as.comprehension.isDict) {
+      emitByte(OP_BUILD_DICT);
+      emitBytes(0, 0);
+    } else {
+      emitByte(OP_BUILD_LIST);
+      emitBytes(0, 0);
+    }
+    addLocal(syntheticToken(" acc"));
+    markInitialized();
+
+    // 4. Mark Loop Top
+    int loopStart = currentChunk()->count;
+    CompilerLoop loop;
+    startLoop(&loop, loopStart);
+
+    // --- THE UPGRADED LOOP WIRING ---
+    // Replace the old iterSlot and jump logic with this in BOTH places:
+    Token iterTok = syntheticToken(" iter");
+    int iterSlot = resolveLocal(current, &iterTok);
+
+    emitByte(OP_FOR_ITER);
+    emitByte((uint8_t)iterSlot);
+    emitByte(0xff); // Placeholder for High Jump Byte
+    emitByte(0xff); // Placeholder for Low Jump Byte
+    int exitJump = currentChunk()->count - 2;
+
+    // --- SCOPE 2: The User Variables ---
+    beginScope();
+
+    // 5. Register the Loop Variable (It's physically sitting on top of the
+    // stack!)
+    addLocal(node->as.comprehension.iterator);
+    markInitialized();
+
+    if (node->as.comprehension.hasIndex) {
+      // The index is stored safely in the " iter" ghost variable.
+      // We fetch a copy of it to the top of the stack so the user's indexVar
+      // can claim it!
+      // Replace: int iterSlot = resolveLocal(current, &syntheticToken("
+      // iter"));
+      Token iterTok = syntheticToken(" iter");
+      int iterSlot = resolveLocal(current, &iterTok);
+      emitBytes(OP_GET_LOCAL, (uint8_t)iterSlot);
+
+      addLocal(node->as.comprehension.indexVar);
+      markInitialized();
+    }
+
+    // 6. The Dual-Mode Execution
+    if (node->as.comprehension.isBlockMode) {
+      walkNode(node->as.comprehension.body);
+    } else {
+      // Expression Mode: Manually evaluate and emit the keep!
+      // Replace: int accSlot = resolveLocal(current, &syntheticToken(" acc"));
+      Token accTok = syntheticToken(" acc");
+      int accSlot = resolveLocal(current, &accTok);
+      if (node->as.comprehension.isDict) {
+        walkNode(node->as.comprehension.keepKey);
+        walkNode(node->as.comprehension.keepValue);
+        emitBytes(OP_KEEP_DICT, (uint8_t)accSlot);
+      } else {
+        walkNode(node->as.comprehension.keepValue);
+        emitBytes(OP_KEEP_LIST, (uint8_t)accSlot);
+      }
+    }
+
+    // 7. Inner Cleanup
+    endScope(); // Pops the user's iterator variables
+
+    // 8. Loop mechanics
+    emitLoop(loopStart);
+    patchJump(exitJump);
+    endLoop();
+
+    // --- THE SCOPE SLIDE (Memory Magic) ---
+    Token seqTok2 = syntheticToken(" seq");
+    Token accTok2 = syntheticToken(" acc");
+    int seqSlot = resolveLocal(current, &seqTok2);
+    int accSlot = resolveLocal(current, &accTok2);
+
+    // Copy the List/Dict from the 'acc' slot down into the 'seq' slot
+    emitBytes(OP_GET_LOCAL, (uint8_t)accSlot);
+    emitBytes(OP_SET_LOCAL, (uint8_t)seqSlot);
+    emitByte(OP_POP); // Pop the value OP_SET_LOCAL left on the stack
+
+    // Now physically pop the old 'acc' and 'iter' from the stack
+    emitByte(OP_POP);
+    emitByte(OP_POP);
+
+    // Tell the compiler these variables no longer exist!
+    current->localCount -= 3;
+    current->scopeDepth--;
+    break;
+  }
+
+  case NODE_KEEP: {
+    Token accTok = syntheticToken(" acc");
+    int accSlot = resolveLocal(current, &accTok);
+
+    if (accSlot == -1) {
+      // We use the Compiler's error function, not the VM's!
+      error("I found a 'keep' statement outside of a comprehension.");
+      break; // Abort code generation for this bad node
+    }
+
+    if (node->as.keepStmt.key != NULL) {
+      walkNode(node->as.keepStmt.key);
+      walkNode(node->as.keepStmt.value);
+      emitBytes(OP_KEEP_DICT, (uint8_t)accSlot);
+    } else {
+      walkNode(node->as.keepStmt.value);
+      emitBytes(OP_KEEP_LIST, (uint8_t)accSlot);
+    }
     break;
   }
 

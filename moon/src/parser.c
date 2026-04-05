@@ -801,8 +801,126 @@ static Node *or_(Node *left) {
   return newLogicalNode(left, opToken, right, opToken.line);
 }
 
+static Node *block(TokenType *terminators, int count);
+static Node *listComprehension(int line) {
+  advance(); // Consume the 'for'
+  if (check(TOKEN_EACH))
+    advance();
+
+  consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
+              "I was expecting a variable name here.",
+              "Provide a name for your loop iterator.");
+  Token iterator = parser.previous;
+
+  Token indexVar;
+  bool hasIndex = false;
+  if (match(TOKEN_COMMA)) {
+    consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
+                "I was expecting an index variable name.",
+                "Provide a name for the index variable after the comma.");
+    indexVar = parser.previous;
+    hasIndex = true;
+  }
+
+  if (check(TOKEN_IN))
+    advance();
+  else if (check(TOKEN_FROM))
+    advance();
+
+  Node *sequence = expression();
+
+  bool isBlockMode = false;
+  Node *keepValue = NULL;
+  Node *body = NULL;
+
+  // The Dual-Mode Switch!
+  if (match(TOKEN_KEEP)) {
+    keepValue = expression();
+  } else if (match(TOKEN_COLON)) {
+    isBlockMode = true;
+    TokenType terminators[] = {TOKEN_RIGHT_BRACKET};
+    body = block(terminators, 1);
+  } else {
+    errorAt(
+        &parser.current, ERR_SYNTAX,
+        "I was expecting 'keep' or a colon ':' here.",
+        "Comprehensions must specify what to keep, or open a block with ':'.");
+  }
+
+  ignoreNewlines();
+  consumeHint(TOKEN_RIGHT_BRACKET, ERR_SYNTAX,
+              "I couldn't find the closing bracket ']'.",
+              "Close your list comprehension.");
+
+  return newComprehensionNode(iterator, indexVar, hasIndex, sequence,
+                              isBlockMode, keepValue, NULL, body, false, line);
+}
+
+static Node *dictComprehension(int line) {
+  advance(); // Consume the 'for'
+  if (check(TOKEN_EACH))
+    advance();
+
+  consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
+              "I was expecting a variable name here.",
+              "Provide a name for your loop iterator.");
+  Token iterator = parser.previous;
+
+  Token indexVar;
+  bool hasIndex = false;
+  if (match(TOKEN_COMMA)) {
+    consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
+                "I was expecting an index variable name.",
+                "Provide a name for the index variable after the comma.");
+    indexVar = parser.previous;
+    hasIndex = true;
+  }
+
+  if (check(TOKEN_IN))
+    advance();
+  else if (check(TOKEN_FROM))
+    advance();
+
+  Node *sequence = expression();
+
+  bool isBlockMode = false;
+  Node *keepKey = NULL;
+  Node *keepValue = NULL;
+  Node *body = NULL;
+
+  if (match(TOKEN_KEEP)) {
+    keepKey = expression();
+    consumeHint(TOKEN_COLON, ERR_SYNTAX, "I was expecting a colon ':' here.",
+                "Dictionary comprehensions require a key and a value separated "
+                "by a colon (e.g., keep name : id).");
+    keepValue = expression();
+  } else if (match(TOKEN_COLON)) {
+    isBlockMode = true;
+    TokenType terminators[] = {TOKEN_RIGHT_BRACE};
+    body = block(terminators, 1);
+  } else {
+    errorAt(
+        &parser.current, ERR_SYNTAX,
+        "I was expecting 'keep' or a colon ':' here.",
+        "Comprehensions must specify what to keep, or open a block with ':'.");
+  }
+
+  ignoreNewlines();
+  consumeHint(TOKEN_RIGHT_BRACE, ERR_SYNTAX,
+              "I couldn't find the closing brace '}'.",
+              "Close your dictionary comprehension.");
+
+  return newComprehensionNode(iterator, indexVar, hasIndex, sequence,
+                              isBlockMode, keepValue, keepKey, body, true,
+                              line);
+}
+
 static Node *list() {
   int line = parser.previous.line;
+
+  if (check(TOKEN_FOR))
+    return listComprehension(line);
+
   NodeArray itemsArr, *items = &itemsArr;
   initNodeArray(items);
 
@@ -830,6 +948,10 @@ static Node *list() {
 
 static Node *dict() {
   int line = parser.previous.line;
+
+  if (check(TOKEN_FOR))
+    return dictComprehension(line);
+
   NodeArray keys;
   initNodeArray(&keys);
 
@@ -1594,6 +1716,35 @@ static Node *loadStatement() {
   return newLoadNode(parser.previous, line);
 }
 
+static Node *keepStatement() {
+  int line = parser.previous.line;
+  Node *key = NULL;
+  Node *value = expression();
+
+  // If there is a colon, it's a dictionary keep! (keep key : value)
+  if (match(TOKEN_COLON)) {
+    key = value; // The first expression was actually the key!
+    value = expression();
+  }
+
+  // --- AST INVERSION (Statement Modifiers) ---
+  // Because the modifier is always at the end of the line,
+  // the Pratt parser attaches it to the 'value' expression.
+  if (value != NULL && value->type == NODE_IF &&
+      value->as.ifStmt.elseBranch == NULL) {
+    Node *cond = value->as.ifStmt.condition;
+    Node *innerValue = value->as.ifStmt.thenBranch;
+
+    // 1. Rebuild the keep node with the raw inner value
+    Node *keepNode = newKeepNode(key, innerValue, line);
+
+    // 2. Wrap the keep node completely inside the IF block!
+    return newIfNode(cond, keepNode, NULL, line);
+  }
+
+  return newKeepNode(key, value, line);
+}
+
 static Node *statement() {
   currentStickySubject = NULL;
   ignoreNewlines();
@@ -1627,6 +1778,8 @@ static Node *statement() {
     stmt = giveStatement();
   } else if (match(TOKEN_UPDATE)) {
     stmt = updateStatement();
+  } else if (match(TOKEN_KEEP)) {
+    stmt = keepStatement();
   } else {
     stmt = expressionStatement();
   }

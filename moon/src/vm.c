@@ -331,7 +331,8 @@ static InterpretResult run() {
       &&TARGET_OP_GET_ITER,      &&TARGET_OP_CALL,
       &&TARGET_OP_TYPE_DEF,      &&TARGET_OP_INSTANTIATE,
       &&TARGET_OP_DEFINE_METHOD, &&TARGET_OP_CAST,
-      &&TARGET_OP_LOAD,          &&TARGET_OP_RETURN};
+      &&TARGET_OP_LOAD,          &&TARGET_OP_KEEP_LIST,
+      &&TARGET_OP_KEEP_DICT,     &&TARGET_OP_RETURN};
 
 #define READ_BYTE() (*ip++)
 #define READ_CONSTANT() (frame->function->chunk.constants.values[READ_BYTE()])
@@ -1338,57 +1339,46 @@ TARGET_OP_GET_ITER: {
 
   // 2. The Loop Logic
 TARGET_OP_FOR_ITER: {
-  // Stack: [Sequence] [Iterator Index]
-  Value iteratorVal = peek(0);
-  Value seqVal = peek(1);
+  uint8_t slot = READ_BYTE();
+  uint16_t offset = READ_SHORT();
 
-  // A. Range Logic
+  // The Sequence is ALWAYS stored exactly one slot before the Iterator!
+  Value seqVal = frame->slots[slot - 1];
+  Value iteratorVal = frame->slots[slot];
+
+  bool hasNext = false;
+  Value loopValue = NIL_VAL;
+
   if (IS_RANGE(seqVal)) {
     ObjRange *range = AS_RANGE(seqVal);
     double index = AS_NUMBER(iteratorVal);
     double nextIndex = index + 1;
     double nextValue;
 
-    // Calculate the actual value based on direction and step
     if (range->start <= range->end) {
-      // Counting UP
       nextValue = range->start + (nextIndex * range->step);
-
       if (nextValue <= range->end) {
-        vm.stackTop[-1] = NUMBER_VAL(nextIndex); // Save the index
-        push(NUMBER_VAL(nextValue));             // Push the actual loop value
-        ip += 2;                                 // Skip jump
-      } else {
-        uint16_t offset = READ_SHORT();
-        ip += offset;
+        frame->slots[slot] = NUMBER_VAL(nextIndex);
+        loopValue = NUMBER_VAL(nextValue);
+        hasNext = true;
       }
     } else {
-      // Counting DOWN
       nextValue = range->start - (nextIndex * range->step);
-
       if (nextValue >= range->end) {
-        vm.stackTop[-1] = NUMBER_VAL(nextIndex); // Save the index
-        push(NUMBER_VAL(nextValue));             // Push the actual loop value
-        ip += 2;                                 // Skip jump
-      } else {
-        uint16_t offset = READ_SHORT();
-        ip += offset;
+        frame->slots[slot] = NUMBER_VAL(nextIndex);
+        loopValue = NUMBER_VAL(nextValue);
+        hasNext = true;
       }
     }
-  }
-  // B. List Logic (Remains mostly the same!)
-  else if (IS_LIST(seqVal)) {
+  } else if (IS_LIST(seqVal)) {
     ObjList *list = AS_LIST(seqVal);
     double index = AS_NUMBER(iteratorVal);
     double nextIndex = index + 1;
 
     if (nextIndex < list->count) {
-      vm.stackTop[-1] = NUMBER_VAL(nextIndex); // Save the index
-      push(list->items[(int)nextIndex]);       // Push the list item
-      ip += 2;                                 // Skip jump
-    } else {
-      uint16_t offset = READ_SHORT();
-      ip += offset;
+      frame->slots[slot] = NUMBER_VAL(nextIndex);
+      loopValue = list->items[(int)nextIndex];
+      hasNext = true;
     }
   } else if (IS_STRING(seqVal)) {
     ObjString *string = AS_STRING(seqVal);
@@ -1396,28 +1386,21 @@ TARGET_OP_FOR_ITER: {
     double nextIndex = index + 1;
 
     if (nextIndex < string->length) {
-      // 1. Save the new index
-      vm.stackTop[-1] = NUMBER_VAL(nextIndex);
-
-      // 2. Grab the raw char byte (cast to unsigned so it safely maps
-      // 0-255)
+      frame->slots[slot] = NUMBER_VAL(nextIndex);
       uint8_t charByte = (uint8_t)string->chars[(int)nextIndex];
-
-      // 3. THE MAGIC: Push the pre-allocated 1-char string from our pool!
-      push(OBJ_VAL(vm.charStrings[charByte]));
-
-      // 4. Skip the jump offset
-      ip += 2;
-    } else {
-      // Done
-      uint16_t offset = READ_SHORT();
-      ip += offset;
+      loopValue = OBJ_VAL(vm.charStrings[charByte]);
+      hasNext = true;
     }
-  } else {
-    THROW_ERROR(ERR_TYPE,
-                "The 'for' loop needs a sequence it can step through.",
-                "Can only iterate over ranges, lists, or strings.");
   }
+
+  if (hasNext) {
+    // We are entering the loop! Push the item for the body to use.
+    push(loopValue);
+  } else {
+    // We are done! Jump cleanly over the loop body.
+    ip += offset;
+  }
+
   DISPATCH();
 }
 
@@ -1978,6 +1961,55 @@ TARGET_OP_LOAD: {
   ip = frame->ip;
 
   // D. Resume execution. The VM is now reading instructions from the new file!
+  DISPATCH();
+}
+
+TARGET_OP_KEEP_LIST: {
+  // 1. The compiler compiled the local slot index as the operand
+  uint8_t slot = READ_BYTE();
+
+  // 2. Grab the Accumulator list from the local stack slot
+  Value listVal = frame->slots[slot];
+
+  // 3. Grab the evaluated expression off the top of the stack
+  EXPECT_STACK(1);
+  Value item = pop();
+
+  // Sanity check (The C-compiler should guarantee this is always true)
+  if (!IS_LIST(listVal)) {
+    THROW_ERROR(ERR_RUNTIME, "Fatal Compiler Bug: Accumulator is not a list.",
+                "Internal Error");
+  }
+
+  // 4. Drop the item into the list!
+  appendList(AS_LIST(listVal), item);
+
+  DISPATCH();
+}
+
+TARGET_OP_KEEP_DICT: {
+  uint8_t slot = READ_BYTE();
+  Value dictVal = frame->slots[slot];
+
+  EXPECT_STACK(2);
+  Value value = pop(); // The value was evaluated last
+  Value key = pop();   // The key was evaluated first
+
+  if (!IS_DICT(dictVal)) {
+    THROW_ERROR(ERR_RUNTIME, "Fatal Compiler Bug: Accumulator is not a dict.",
+                "Internal Error");
+  }
+
+  if (!IS_STRING(key)) {
+    THROW_ERROR(ERR_TYPE,
+                "Dictionary keys must be strings. Did you try to 'keep' a "
+                "number or a list as a key?",
+                "Invalid dictionary key in comprehension.");
+  }
+
+  // Drop the Key-Value pair into the Hash Table!
+  tableSet(&AS_DICT(dictVal)->fields, key, value);
+
   DISPATCH();
 }
 

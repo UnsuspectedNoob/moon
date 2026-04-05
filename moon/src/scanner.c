@@ -188,6 +188,10 @@ static TokenType identifierType() {
     break;
   }
 
+  case 'k': {
+    return checkKeyword(1, 3, "eep", TOKEN_KEEP);
+  }
+
   case 'l': {
     if (scanner.current - scanner.start > 1) {
       switch (scanner.start[1]) {

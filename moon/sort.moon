@@ -3,29 +3,32 @@ let merge (left: List) with (right: List):
   let result be []
   let i, j be 1
 
+  # [3, 5, 6]   [1, 2, 4]
   until i > left's length or j > right's length
-    if left.i < right.j:
-      add left.i to result
-      add 1 to i
+    if left[i] < right[j]:
+      add left[i] to result
+      update i + 1
     else:
-      add right.j to result
-      add 1 to j
+      add right[j] to result
+      update j + 1
     end
 
-  add left[i to end] to result
-  add right[j to end] to result
+  add left[i to end] to result unless i > left's length
+  add right[j to end] to result unless j > right's length
 
   give result
 end
 
-let sorted (list: List):
-  if list's length < 2 give list
+let sort (list: List):
+  if list's length < 2
+    give list
 
-  let left be list[1 to end / 2]
-  let right be list[end / 2 + 1 to end]
+  let left be list[1 to end/2]
+  let right be list[end/2+1 to end]
 
-  give merge (sorted left) with (sorted right)
+  give merge sort left with sort right
 end
+
 
 let quick sort of (list: List):
   if list's length < 2 give list
@@ -47,4 +50,4 @@ end
 
 let a be [1000000 to 1]
 
-show sorted a
+show sort a

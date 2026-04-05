@@ -37,6 +37,8 @@ typedef enum {
   NODE_END,
   NODE_LOAD,
   NODE_UNION_TYPE,
+  NODE_COMPREHENSION,
+  NODE_KEEP,
 } NodeType;
 
 // Forward declaration
@@ -173,6 +175,26 @@ typedef struct {
   int count;
 } UnionTypePayload;
 
+typedef struct {
+  Token iterator;
+  Token indexVar;
+  bool hasIndex;
+  Node *sequence;
+
+  // Dual-Mode Fields
+  bool isBlockMode;
+  Node *keepValue; // Used in Expression Mode
+  Node *keepKey;   // Used in Expression Mode (Dict only)
+  Node *body;      // Used in Block Mode
+
+  bool isDict; // Are we building a List or a Dict?
+} ComprehensionPayload;
+
+typedef struct {
+  Node *key; // NULL if it's for a list!
+  Node *value;
+} KeepPayload;
+
 // --- The Master Node ---
 struct sNode {
   NodeType type;
@@ -205,6 +227,8 @@ struct sNode {
     InstantiatePayload instantiate;
     LoadPayload loadStmt;
     UnionTypePayload unionType;
+    ComprehensionPayload comprehension;
+    KeepPayload keepStmt;
   } as;
 };
 
@@ -252,6 +276,10 @@ Node *newUnionTypeNode(Node **types, int count, int line);
 Node *newFunctionNode(Token name, Token *parameters, Node **paramTypes,
                       int paramCount, Node *body,
                       int line); // <--- Updated signature
+Node *newComprehensionNode(Token iterator, Token indexVar, bool hasIndex,
+                           Node *sequence, bool isBlockMode, Node *keepValue,
+                           Node *keepKey, Node *body, bool isDict, int line);
+Node *newKeepNode(Node *key, Node *value, int line);
 
 void freeNode(Node *node);
 
