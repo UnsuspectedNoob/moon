@@ -10,6 +10,12 @@
 #include "sigtrie.h"
 #include "vm.h"
 
+#include "lib_core.h"
+#include "lib_io.h"
+#include "lib_list.h"
+#include "lib_math.h"
+#include "lib_string.h"
+
 // ==========================================
 // 1. GLOBAL STATE & REGISTRY
 // ==========================================
@@ -1927,7 +1933,43 @@ ParseRule rules[] = {
 
 static ParseRule *getRule(TokenType type) { return &rules[type]; }
 
+// --- THE LSP STATE PURGE ---
+// Wipes all global tracking variables clean before a new parse run!
+static void resetParserState() {
+  expectedLabelCount = 0;
+  groupingDepth = 0;
+  currentStickySubject = NULL;
+  loopingDepth = 0;
+  parseDepth = 0;
+
+  // ONLY wipe long-term memory if we are running in the Language Server!
+  if (isLspMode) {
+    // Free prepass loaded files to prevent caching stale ASTs during live
+    // editing
+    for (int i = 0; i < prepassLoadedCount; i++) {
+      free(prepassLoadedFiles[i]);
+    }
+    prepassLoadedCount = 0;
+
+    // Destroy the old Signature Trie so deleted/edited functions don't haunt
+    // the parser!
+    freeSignatureTable();
+    initSignatureTable();
+
+    // --- THE STDLIB RESCUE ---
+    // We just wiped the brain, so we must re-teach the LSP the Standard
+    // Library!
+    hoistPhrases(coreLibrary);
+    hoistPhrases(ioBootstrap);
+    hoistPhrases(listBootstrap);
+    hoistPhrases(mathBootstrap);
+    hoistPhrases(stringBootstrap);
+  }
+}
+
 Node *parseSource(const char *source) {
+  resetParserState();
+
   hoistPhrases(source);
 
   parser.hadError = false;
