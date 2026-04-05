@@ -1056,11 +1056,12 @@ TARGET_OP_GET_SUBSCRIPT: {
       pop();
       push(list->items[index]);
     } else if (IS_RANGE(indexVal)) {
-      // ... (Keep your excellent slicing logic exactly the same here) ...
       ObjRange *range = AS_RANGE(indexVal);
       int start = (int)range->start;
       int end = (int)range->end;
+      int step = (int)range->step; // Extract the custom step size!
 
+      // 1-based indexing rules (with negative wrap-around)
       if (start < 0)
         start = list->count + start + 1;
       if (end < 0)
@@ -1069,20 +1070,32 @@ TARGET_OP_GET_SUBSCRIPT: {
       end--;
 
       ObjList *resultList = newList();
-      push(OBJ_VAL(resultList));
+      push(OBJ_VAL(resultList)); // GC Protection
 
-      if (start <= end && start < list->count && end >= 0) {
+      // --- GOING FORWARD ---
+      if (start <= end) {
         if (start < 0)
           start = 0;
         if (end >= list->count)
           end = list->count - 1;
-        for (int i = start; i <= end; i++) {
+        for (int i = start; i <= end; i += step) {
           appendList(resultList, list->items[i]);
         }
       }
-      pop();
-      pop();
-      pop();
+      // --- GOING BACKWARD ---
+      else {
+        if (start >= list->count)
+          start = list->count - 1;
+        if (end < 0)
+          end = 0;
+        for (int i = start; i >= end; i -= step) {
+          appendList(resultList, list->items[i]);
+        }
+      }
+
+      pop(); // resultList
+      pop(); // indexVal
+      pop(); // seqVal
       push(OBJ_VAL(resultList));
     } else {
       THROW_ERROR(
@@ -1108,37 +1121,87 @@ TARGET_OP_GET_SUBSCRIPT: {
       pop();
       push(NIL_VAL); // Safe cache miss!
     }
-  }
-  // NEW: Add native string indexing! `string[2]`
-  else if (IS_STRING(seqVal)) {
-    if (!IS_NUMBER(indexVal)) {
+  } else if (IS_STRING(seqVal)) {
+    ObjString *str = AS_STRING(seqVal);
+
+    if (IS_NUMBER(indexVal)) {
+      int userIndex = (int)AS_NUMBER(indexVal);
+      if (userIndex == 0) {
+        THROW_ERROR(
+            ERR_RUNTIME,
+            "You tried to access an index that doesn't exist. Remember, "
+            "MOON strings start at index 1!",
+            "Index out of bounds.");
+      }
+
+      int index = userIndex > 0 ? userIndex - 1 : str->length + userIndex;
+
+      if (index < 0 || index >= str->length) {
+        THROW_ERROR(
+            ERR_RUNTIME,
+            "You tried to access an index that doesn't exist. Remember, "
+            "MOON strings start at index 1!",
+            "Index out of bounds.");
+      }
+
+      uint8_t charByte = (uint8_t)str->chars[index];
+      pop();
+      pop();
+      push(OBJ_VAL(vm.charStrings[charByte]));
+    }
+    // --- NEW: STRING SLICING ---
+    else if (IS_RANGE(indexVal)) {
+      ObjRange *range = AS_RANGE(indexVal);
+      int start = (int)range->start;
+      int end = (int)range->end;
+      int step = (int)range->step;
+
+      if (start < 0)
+        start = str->length + start + 1;
+      if (end < 0)
+        end = str->length + end + 1;
+      start--;
+      end--;
+
+      // Pre-allocate the maximum possible size for the new string
+      int maxLen = abs(start - end) + 1;
+      char *chars = ALLOCATE(char, maxLen + 1);
+      int dest = 0;
+
+      // --- GOING FORWARD ---
+      if (start <= end) {
+        if (start < 0)
+          start = 0;
+        if (end >= str->length)
+          end = str->length - 1;
+        for (int i = start; i <= end; i += step) {
+          chars[dest++] = str->chars[i];
+        }
+      }
+      // --- GOING BACKWARD ---
+      else {
+        if (start >= str->length)
+          start = str->length - 1;
+        if (end < 0)
+          end = 0;
+        for (int i = start; i >= end; i -= step) {
+          chars[dest++] = str->chars[i];
+        }
+      }
+      chars[dest] = '\0';
+
+      // Hand the C string to the MOON string pool
+      ObjString *resultStr = takeString(chars, dest);
+
+      pop();
+      pop();
+      push(OBJ_VAL(resultStr));
+    } else {
       THROW_ERROR(
           ERR_TYPE,
           "Check what type of value you are passing into the brackets [].",
           "Invalid index type for this collection.");
     }
-    ObjString *str = AS_STRING(seqVal);
-    int userIndex = (int)AS_NUMBER(indexVal);
-
-    if (userIndex == 0) {
-      THROW_ERROR(ERR_RUNTIME,
-                  "You tried to access an index that doesn't exist. Remember, "
-                  "MOON lists start at index 1!",
-                  "Index out of bounds.");
-    }
-    int index = userIndex > 0 ? userIndex - 1 : str->length + userIndex;
-
-    if (index < 0 || index >= str->length) {
-      THROW_ERROR(ERR_RUNTIME,
-                  "You tried to access an index that doesn't exist. Remember, "
-                  "MOON lists start at index 1!",
-                  "Index out of bounds.");
-    }
-
-    uint8_t charByte = (uint8_t)str->chars[index];
-    pop();
-    pop();
-    push(OBJ_VAL(vm.charStrings[charByte]));
   } else {
     THROW_ERROR(ERR_TYPE,
                 "You can only use brackets [] to access items in Lists, "
