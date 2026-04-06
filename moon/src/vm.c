@@ -413,11 +413,6 @@ static InterpretResult run() {
     }                                                                          \
   } while (false)
 
-// 5. THE TYPE REFLECTOR MACRO
-// Instantly grabs the English name of any MOON value (e.g., "String", "List",
-// "Number")
-#define TYPE_NAME(val) (getObjType(val)->name->chars)
-
   // 3. PRIME THE PUMP
   // Fire off the very first instruction jump!
   DISPATCH();
@@ -1505,7 +1500,6 @@ TARGET_OP_CALL: {
       int currentScore = 0;
 
       // Check every argument against the signature
-      // Check every argument against the signature
       for (int j = 0; j < argCount; j++) {
         Value expectedVal = signature[j];
         ObjType *actualType = getObjType(args[j]);
@@ -1534,7 +1528,7 @@ TARGET_OP_CALL: {
           ObjType *expectedType = AS_TYPE(expectedVal);
 
           if (expectedType == actualType) {
-            currentScore += 2; // EXACT MATCH
+            currentScore += 3; // EXACT MATCH
           } else if (expectedType == vm.anyType) {
             currentScore += 1; // WILDCARD
           } else {
@@ -1774,18 +1768,41 @@ TARGET_OP_CAST: {
       double num = strtod(s->chars, &end);
 
       if (*end != '\0') {
-        // --- THE DESCRIPTIVE ERROR UPGRADE ---
         THROW_ERROR(ERR_TYPE,
                     "Make sure the string only contains digits, a decimal "
                     "point, or a minus sign.",
                     "Cannot cast the string '%s' to a Number.", s->chars);
       }
-
       push(NUMBER_VAL(num));
     } else if (IS_BOOL(val)) {
       push(NUMBER_VAL(AS_BOOL(val) ? 1.0 : 0.0));
-    } else {
-      THROW_ERROR(ERR_TYPE, "Can only cast Strings and Bools to Numbers.",
+    }
+    // --- THE NEW LIST TO NUMBER CAST ---
+    else if (IS_LIST(val)) {
+      ObjList *list = AS_LIST(val);
+      double result = 0.0;
+
+      for (int i = 0; i < list->count; i++) {
+        if (!IS_NUMBER(list->items[i])) {
+          THROW_ERROR(ERR_TYPE,
+                      "A list can only be cast to a Number if every single "
+                      "item inside it is a number.",
+                      "Found a %s inside the list. Cannot cast to Number.",
+                      TYPE_NAME(list->items[i]));
+        }
+        // Horner's Method: Shift the total left by one decimal place, then add
+        // the new digit! [2, 3, 5] -> (0*10)+2=2 -> (2*10)+3=23 ->
+        // (23*10)+5=235
+        result = (result * 10.0) + AS_NUMBER(list->items[i]);
+      }
+
+      push(NUMBER_VAL(result));
+    }
+    // -----------------------------------
+    else {
+      // Don't forget to update the fallback error message!
+      THROW_ERROR(ERR_TYPE,
+                  "Can only cast Strings, Bools, and Lists to Numbers.",
                   "Invalid cast to Number.");
     }
   }

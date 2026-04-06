@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <string.h>
 
 #include "lib_list.h"
@@ -118,6 +119,48 @@ static Value indexOfNative(int argCount, Value *args) {
   return NIL_VAL; // Not found
 }
 
+static Value parseBaseNative(int argCount, Value *args) {
+  if (argCount != 2)
+    return NIL_VAL;
+  if (!IS_NUMBER(args[1])) {
+    throwNativeError("The base must be a number.", "Invalid radix type.");
+  }
+
+  double radix = AS_NUMBER(args[1]);
+  Value seq = args[0];
+
+  // 1. HORNER's METHOD FOR LISTS
+  if (IS_LIST(seq)) {
+    ObjList *list = AS_LIST(seq);
+    double result = 0.0;
+
+    for (int i = 0; i < list->count; i++) {
+      if (!IS_NUMBER(list->items[i])) {
+        throwNativeError("Lists parsed with a base can only contain numbers.",
+                         "Found a %s in the list.", TYPE_NAME(list->items[i]));
+      }
+      result = (result * radix) + AS_NUMBER(list->items[i]);
+    }
+    return NUMBER_VAL(result);
+  }
+  // 2. STANDARD C-PARSING FOR STRINGS
+  else if (IS_STRING(seq)) {
+    ObjString *str = AS_STRING(seq);
+    char *end;
+    long result = strtol(str->chars, &end, (int)radix);
+
+    if (*end != '\0') {
+      throwNativeError("The string contains invalid characters for this base.",
+                       "Cannot parse '%s' in base %d.", str->chars, (int)radix);
+    }
+    return NUMBER_VAL((double)result);
+  }
+
+  throwNativeError("You can only parse Strings or Lists.",
+                   "Invalid sequence type.");
+  return NIL_VAL;
+}
+
 // --- THE HANDSHAKE ---
 
 void registerListLibrary() {
@@ -125,22 +168,27 @@ void registerListLibrary() {
   defineNative("__list_join", joinNative);
   defineNative("__list_pop", popNative);
   defineNative("__list_index", indexOfNative);
+  defineNative("__parse_base", parseBaseNative);
 }
 
 // --- THE MOON WRAPPERS ---
 
-const char listBootstrap[] = "let reverse (l: List):\n"
-                             "    give __list_reverse(l)\n"
-                             "end\n"
-                             "\n"
-                             "let join (l: List) with (delim: String):\n"
-                             "    give __list_join(l, delim)\n"
-                             "end\n"
-                             "\n"
-                             "let pop from (l: List):\n"
-                             "    give __list_pop(l)\n"
-                             "end\n"
-                             "\n"
-                             "let index of (item: Any) in (l: List):\n"
-                             "    give __list_index(l, item)\n"
-                             "end\n";
+const char listBootstrap[] =
+    "let reverse (l: List):\n"
+    "    give __list_reverse(l)\n"
+    "end\n"
+    "\n"
+    "let join (l: List) with (delim: String):\n"
+    "    give __list_join(l, delim)\n"
+    "end\n"
+    "\n"
+    "let pop from (l: List):\n"
+    "    give __list_pop(l)\n"
+    "end\n"
+    "\n"
+    "let numbers in (seq: Any) in base (radix: Number):\n"
+    "    give __parse_base(seq, radix)\n"
+    "end\n"
+    "let index of (item: Any) in (l: List):\n"
+    "    give __list_index(l, item)\n"
+    "end\n";

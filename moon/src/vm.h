@@ -65,7 +65,9 @@ typedef struct {
   const char *name;
   NativeFn function;
 } NativeDef;
+
 ObjType *getObjType(Value val);
+#define TYPE_NAME(val) (getObjType(val)->name->chars)
 
 extern VM vm;
 
