@@ -39,9 +39,10 @@ static ObjString *allocateString(char *chars, int length, uint32_t hash) {
   string->length = length;
   string->chars = chars;
   string->hash = hash;
+  string->left = NULL;  // <--- Initialize to NULL
+  string->right = NULL; // <--- Initialize to NULL
 
-  //  FIX: Add the new string to the interned set immediately
-  //  and push string to vm stack, to synchronize with GC
+  // Push to VM stack to synchronize with GC
   push(OBJ_VAL(string));
   tableSet(&vm.strings, OBJ_VAL(string), NIL_VAL);
   pop();
@@ -63,6 +64,57 @@ ObjString *takeString(char *chars, int length) {
   }
 
   return allocateString(chars, length, hash);
+}
+
+ObjString *takeRope(ObjString *left, ObjString *right) {
+  ObjString *string = ALLOCATE_OBJ(ObjString, OBJ_STRING);
+
+  string->length = left->length + right->length;
+  string->chars = NULL; // NULL means "I am a Rope!"
+  string->hash = 0;     // Unhashed until flattened
+  string->left = left;
+  string->right = right;
+
+  // Notice we do NOT intern ropes into vm.strings!
+  // They are completely ephemeral and invisible to the Hash Table.
+  return string;
+}
+
+// 1. The Recursive Walker
+static void fillRope(ObjString *string, char *buffer, int *offset) {
+  if (string->chars != NULL) {
+    // Base Case: It's a flat leaf node! Copy its characters into the master
+    // buffer.
+    memcpy(buffer + *offset, string->chars, string->length);
+    *offset += string->length;
+  } else {
+    // Recursive Case: It's a Rope! Walk down the left branch, then the right.
+    fillRope(string->left, buffer, offset);
+    fillRope(string->right, buffer, offset);
+  }
+}
+
+// 2. The Master Flattener
+void flattenString(ObjString *string) {
+  if (string->chars != NULL)
+    return; // Fast path: It is already flat!
+
+  // Allocate the exact size needed for the entire combined string
+  char *buffer = ALLOCATE(char, string->length + 1);
+  int offset = 0;
+
+  // Fire the recursive walker!
+  fillRope(string, buffer, &offset);
+  buffer[string->length] = '\0';
+
+  // Mutate the Rope into a standard flat string
+  string->chars = buffer;
+  string->hash = hashString(buffer, string->length);
+
+  // Sever the branches! If no other variables are holding onto these pieces,
+  // the Garbage Collector will happily sweep them away on the next pass.
+  string->left = NULL;
+  string->right = NULL;
 }
 
 ObjString *copyString(const char *chars, int length) {
@@ -273,8 +325,10 @@ ObjString *valueToString(Value value) { return stringifyValue(value, 0); }
 
 // The internal engine that tracks indentation
 static ObjString *stringifyValue(Value value, int indent) {
-  if (IS_STRING(value))
+  if (IS_STRING(value)) {
+    flattenString(AS_STRING(value)); // <--- SHIELD
     return AS_STRING(value);
+  }
 
   if (IS_NUMBER(value)) {
     double number = AS_NUMBER(value);

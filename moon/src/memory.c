@@ -188,11 +188,19 @@ static void blackenObject(Obj *object) {
     break;
   }
 
-  case OBJ_STRING:
+  case OBJ_STRING: {
+    ObjString *string = (ObjString *)object;
+    // If it's a Rope, we MUST rescue its left and right branches!
+    if (string->chars == NULL) {
+      markObject((Obj *)string->left);
+      markObject((Obj *)string->right);
+    }
+    break;
+  }
+
   case OBJ_NATIVE:
   case OBJ_RANGE:
     // Leaf Nodes: These objects do not contain other objects.
-    // There is nothing to trace, so we just break!
     break;
   }
 }
@@ -224,7 +232,9 @@ void freeObject(Obj *object) {
 
   case OBJ_STRING: {
     ObjString *string = (ObjString *)object;
-    FREE_ARRAY(char, string->chars, string->length + 1);
+    if (string->chars != NULL) { // <--- PROTECT THE ROPE
+      FREE_ARRAY(char, string->chars, string->length + 1);
+    }
     FREE(ObjString, object);
     break;
   }

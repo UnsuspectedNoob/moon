@@ -31,8 +31,11 @@ void freeValueArray(ValueArray *array) {
 uint32_t hashValue(Value value) {
   // 1. If it's an object (like a string), use the string's cached FNV-1a hash!
   if (IS_OBJ(value)) {
-    if (IS_STRING(value))
+    if (IS_STRING(value)) {
+      flattenString(AS_STRING(value)); // <--- SHIELD
       return AS_STRING(value)->hash;
+    }
+    // ...
 
     // For other objects (lists/dicts), we hash their memory pointer
     return (uint32_t)(uintptr_t)AS_OBJ(value);

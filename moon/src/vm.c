@@ -149,23 +149,45 @@ static bool isFalsey(Value value) {
 
 // FIX: Add concatenate() function for strings
 static void concatenate() {
-  ObjString *b = AS_STRING(peek(0));
-  ObjString *a = AS_STRING(peek(1));
+  ObjString *right = AS_STRING(peek(0));
+  ObjString *left = AS_STRING(peek(1));
 
-  int length = a->length + b->length;
-  char *chars = ALLOCATE(char, length + 1);
-  memcpy(chars, a->chars, a->length);
-  memcpy(chars + a->length, b->chars, b->length);
-  chars[length] = '\0';
-
-  ObjString *result = takeString(chars, length);
+  // The Magic: Instantly create a pointer node instead of copying memory!
+  ObjString *result = takeRope(left, right);
 
   pop();
   pop();
   push(OBJ_VAL(result));
 }
 
-bool valuesEqual(Value a, Value b) { return a == b; }
+bool valuesEqual(Value a, Value b) {
+  // Fast path: Exact same memory address, or identical numbers/booleans
+  if (a == b)
+    return true;
+
+  // The String Liberation: Deep character comparison
+  if (IS_STRING(a) && IS_STRING(b)) {
+    ObjString *aStr = AS_STRING(a);
+    ObjString *bStr = AS_STRING(b);
+
+    // If the lengths don't match, don't bother checking characters!
+    if (aStr->length != bStr->length)
+      return false;
+
+    // We must ensure both strings are flattened before we compare them!
+    flattenString(aStr);
+    flattenString(bStr);
+
+    // Now that they are flat, check their hashes first (O(1) comparison)
+    if (aStr->hash != bStr->hash)
+      return false;
+
+    // Finally, verify the actual bytes
+    return memcmp(aStr->chars, bStr->chars, aStr->length) == 0;
+  }
+
+  return false;
+}
 
 // Helper to define natives
 void defineNative(const char *name, NativeFn function) {

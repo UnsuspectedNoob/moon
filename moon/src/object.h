@@ -53,6 +53,9 @@ typedef struct ObjString {
   int length;
   char *chars;
   uint32_t hash; // Cached hash for fast map lookups
+
+  struct ObjString *left;
+  struct ObjString *right;
 } ObjString;
 
 typedef struct ObjFunction ObjFunction; // Forward declaration
@@ -136,6 +139,9 @@ void printObject(Value value);
 ObjString *copyString(const char *chars, int length);
 ObjString *copyStringUnescaped(const char *chars, int length);
 ObjString *takeString(char *chars, int length);
+// 2. Add these declarations to the bottom of the file
+ObjString *takeRope(ObjString *left, ObjString *right);
+void flattenString(ObjString *string);
 
 ObjFunction *newFunction();
 ObjNative *newNative(NativeFn function);
