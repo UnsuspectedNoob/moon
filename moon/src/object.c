@@ -369,7 +369,7 @@ static ObjString *stringifyValue(Value value, int indent) {
 
     int capacity = 128;
     int length = 0;
-    char *buffer = malloc(capacity);
+    char *buffer = ALLOCATE(char, capacity);
 
     buffer[length++] = '{';
     buffer[length++] = '\n';
@@ -394,8 +394,10 @@ static ObjString *stringifyValue(Value value, int indent) {
                         valStr->length + (indent * 2) + 4;
 
       while (length + spaceNeeded > capacity) {
+        int oldCapacity = capacity;
         capacity *= 2;
-        buffer = realloc(buffer, capacity);
+        buffer = (char *)reallocate(buffer, sizeof(char) * oldCapacity,
+                                    sizeof(char) * capacity);
       }
 
       if (!firstItem) {
@@ -434,7 +436,7 @@ static ObjString *stringifyValue(Value value, int indent) {
     buffer[length] = '\0';
 
     ObjString *result = copyString(buffer, length);
-    free(buffer);
+    FREE_ARRAY(char, buffer, capacity);
     return result;
   }
 
@@ -446,7 +448,7 @@ static ObjString *stringifyValue(Value value, int indent) {
 
     int capacity = 128;
     int length = 0;
-    char *buffer = malloc(capacity);
+    char *buffer = ALLOCATE(char, capacity);
 
     buffer[length++] = '[';
 
@@ -459,8 +461,10 @@ static ObjString *stringifyValue(Value value, int indent) {
       // We only need enough space for the item, comma, space, and brackets
       int spaceNeeded = itemStr->length + 4;
       while (length + spaceNeeded > capacity) {
+        int oldCapacity = capacity;
         capacity *= 2;
-        buffer = realloc(buffer, capacity);
+        buffer = (char *)reallocate(buffer, sizeof(char) * oldCapacity,
+                                    sizeof(char) * capacity);
       }
 
       memcpy(buffer + length, itemStr->chars, itemStr->length);
@@ -478,7 +482,7 @@ static ObjString *stringifyValue(Value value, int indent) {
     buffer[length] = '\0';
 
     ObjString *result = copyString(buffer, length);
-    free(buffer);
+    FREE_ARRAY(char, buffer, capacity);
     return result;
   }
 

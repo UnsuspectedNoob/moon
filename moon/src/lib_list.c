@@ -1,4 +1,3 @@
-#include <stdlib.h>
 #include <string.h>
 
 #include "lib_list.h"
@@ -46,7 +45,7 @@ static Value joinNative(int argCount, Value *args) {
   }
 
   // 1. Array to hold the stringified versions of each item
-  ObjString **strings = malloc(sizeof(ObjString *) * list->count);
+  ObjString **strings = ALLOCATE(ObjString *, list->count);
   int totalLength = 0;
 
   // 2. First Pass: Convert everything to a string and protect it from the GC!
@@ -79,8 +78,7 @@ static Value joinNative(int argCount, Value *args) {
 
   // 5. Cleanup: Pop the temporary strings off the VM stack and free the C array
   vm.stackTop -= list->count;
-  free(strings);
-
+  FREE_ARRAY(ObjString *, strings, list->count);
   return OBJ_VAL(result);
 }
 
