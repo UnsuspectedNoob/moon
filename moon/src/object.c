@@ -9,6 +9,9 @@
 #include "value.h"
 #include "vm.h"
 
+DECLARE_ARRAY(ObjString *, StringArray)
+DEFINE_ARRAY(ObjString *, StringArray);
+
 #define ALLOCATE_OBJ(type, objectType)                                         \
   (type *)allocateObject(sizeof(type), objectType)
 
@@ -80,21 +83,6 @@ ObjString *takeRope(ObjString *left, ObjString *right) {
   return string;
 }
 
-// 1. The Recursive Walker
-static void fillRope(ObjString *string, char *buffer, int *offset) {
-  if (string->chars != NULL) {
-    // Base Case: It's a flat leaf node! Copy its characters into the master
-    // buffer.
-    memcpy(buffer + *offset, string->chars, string->length);
-    *offset += string->length;
-  } else {
-    // Recursive Case: It's a Rope! Walk down the left branch, then the right.
-    fillRope(string->left, buffer, offset);
-    fillRope(string->right, buffer, offset);
-  }
-}
-
-// 2. The Master Flattener
 void flattenString(ObjString *string) {
   if (string->chars != NULL)
     return; // Fast path: It is already flat!
@@ -103,16 +91,41 @@ void flattenString(ObjString *string) {
   char *buffer = ALLOCATE(char, string->length + 1);
   int offset = 0;
 
-  // Fire the recursive walker!
-  fillRope(string, buffer, &offset);
+  // --- THE CALL STACK BOMB DEFUSER (Iterative DFS) ---
+  StringArray worklist;
+  initStringArray(&worklist);
+  writeStringArray(&worklist, string);
+
+  while (worklist.count > 0) {
+    // Pop the top node off our worklist
+    ObjString *currentNode = worklist.items[--worklist.count];
+
+    if (currentNode->chars != NULL) {
+      // Base Case: It's a flat leaf node!
+      memcpy(buffer + offset, currentNode->chars, currentNode->length);
+      offset += currentNode->length;
+    } else {
+      // Recursive Case: It's a Rope!
+      // Because this is a LIFO stack (Last In, First Out), we push the RIGHT
+      // branch first, so the LEFT branch ends up on top and gets processed
+      // first!
+      if (currentNode->right != NULL)
+        writeStringArray(&worklist, currentNode->right);
+      if (currentNode->left != NULL)
+        writeStringArray(&worklist, currentNode->left);
+    }
+  }
+
+  freeStringArray(&worklist);
+  // ---------------------------------------------------
+
   buffer[string->length] = '\0';
 
   // Mutate the Rope into a standard flat string
   string->chars = buffer;
   string->hash = hashString(buffer, string->length);
 
-  // Sever the branches! If no other variables are holding onto these pieces,
-  // the Garbage Collector will happily sweep them away on the next pass.
+  // Sever the branches!
   string->left = NULL;
   string->right = NULL;
 }
@@ -312,8 +325,9 @@ ObjMultiFunction *newMultiFunction(ObjString *name, int arity) {
 
 ObjUnion *newUnion(int count) {
   ObjUnion *unionObj = ALLOCATE_OBJ(ObjUnion, OBJ_UNION);
-  unionObj->count = count;
+  push(OBJ_VAL(unionObj)); // Shield it!
   unionObj->types = ALLOCATE(Value, count);
+  pop(); // Unshield it!
   return unionObj;
 }
 
