@@ -758,7 +758,7 @@ static bool isComparison(Token opToken) {
 static Node *castExpression(Node *left) {
   int line = parser.previous.line;
   // Parse the right side (the Target Type) with exact CAST precedence!
-  Node *right = parsePrecedence(PREC_CAST);
+  Node *right = parsePrecedence(PREC_CAST + 1);
   return newCastNode(left, right, line);
 }
 
