@@ -16,6 +16,7 @@ extern uint32_t hashValue(Value value);
 void initTable(Table *table) {
   table->count = 0;
   table->capacity = 0;
+  table->tombstones = 0;
   table->entries = NULL;
 }
 
@@ -56,6 +57,8 @@ static void adjustCapacity(Table *table, int capacity) {
   }
 
   table->count = 0;
+  table->tombstones = 0;
+
   for (int i = 0; i < table->capacity; i++) {
     Entry *entry = &table->entries[i];
 
@@ -87,20 +90,23 @@ bool tableGet(Table *table, Value key, Value *value) {
 }
 
 bool tableSet(Table *table, Value key, Value value) {
-  if (table->count + 1 > table->capacity * TABLE_MAX_LOAD) {
+  // THE BLACK HOLE FIX: Track both active items and tombstones!
+  if (table->count + table->tombstones + 1 > table->capacity * TABLE_MAX_LOAD) {
     int capacity = GROW_CAPACITY(table->capacity);
     adjustCapacity(table, capacity);
   }
 
   Entry *entry = findEntry(table->entries, table->capacity, key);
-
-  // It's a new key if the slot is completely empty OR if it's a reusable
-  // tombstone
   bool isNewKey = IS_EMPTY(entry->key) || IS_TOMB(entry->key);
 
-  // We only increment the count if it goes into a truly empty slot
-  if (isNewKey && IS_EMPTY(entry->key))
-    table->count++;
+  if (isNewKey) {
+    if (IS_EMPTY(entry->key)) {
+      table->count++; // Went into a purely empty slot
+    } else {
+      table->count++;
+      table->tombstones--; // We resurrected a dead slot!
+    }
+  }
 
   entry->key = key;
   entry->value = value;
@@ -118,6 +124,10 @@ bool tableDelete(Table *table, Value key) {
   // Place a tombstone using our secret tag!
   entry->key = TOMBSTONE_VAL;
   entry->value = BOOL_VAL(true);
+
+  table->count--;      // We lost an active item
+  table->tombstones++; // And gained a tombstone
+
   return true;
 }
 

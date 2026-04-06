@@ -15,6 +15,7 @@ typedef struct {
 typedef struct {
   int count;
   int capacity;
+  int tombstones;
   Entry *entries;
 } Table;
 
