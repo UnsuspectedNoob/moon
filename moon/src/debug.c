@@ -143,15 +143,12 @@ int disassembleInstruction(Chunk *chunk, int offset) {
     return simpleInstruction("OP_NOT", offset);
   case OP_NEGATE:
     return simpleInstruction("OP_NEGATE", offset);
-
-  // NEW JUMP DEBUGGING:
   case OP_JUMP:
     return jumpInstruction("OP_JUMP", 1, chunk, offset);
   case OP_JUMP_IF_FALSE:
     return jumpInstruction("OP_JUMP_IF_FALSE", 1, chunk, offset);
   case OP_LOOP:
     return jumpInstruction("OP_LOOP", -1, chunk, offset);
-
   case OP_BUILD_STRING:
     return shortInstruction("OP_BUILD_STRING", chunk, offset);
   case OP_BUILD_LIST:
@@ -162,22 +159,22 @@ int disassembleInstruction(Chunk *chunk, int offset) {
     return shortInstruction("OP_BUILD_UNION", chunk, offset);
   case OP_CALL:
     return shortInstruction("OP_CALL", chunk, offset);
-
   case OP_GET_PROPERTY:
     return constantLongInstruction("OP_GET_PROPERTY", chunk, offset);
   case OP_SET_PROPERTY:
     return constantLongInstruction("OP_SET_PROPERTY", chunk, offset);
-
   case OP_GET_SUBSCRIPT:
     return simpleInstruction("OP_GET_SUBSCRIPT", offset);
   case OP_SET_SUBSCRIPT:
     return simpleInstruction("OP_SET_SUBSCRIPT", offset);
   case OP_GET_END_INDEX:
     return simpleInstruction("OP_GET_END_INDEX", offset);
+  case OP_PUSH_SEQUENCE:
+    return simpleInstruction("OP_PUSH_SEQUENCE", offset);
+  case OP_POP_SEQUENCE:
+    return simpleInstruction("OP_POP_SEQUENCE", offset);
   case OP_RANGE:
     return simpleInstruction("OP_RANGE", offset);
-    // ...
-
   case OP_FOR_ITER:
     return forIterInstruction("OP_FOR_ITER", chunk, offset);
   case OP_GET_ITER: // <--- Add this
@@ -190,10 +187,8 @@ int disassembleInstruction(Chunk *chunk, int offset) {
     return shortInstruction("OP_INSTANTIATE", chunk, offset);
   case OP_DEFINE_METHOD:
     return constantLongInstruction("OP_DEFINE_METHOD", chunk, offset);
-
   case OP_LOAD:
     return simpleInstruction("OP_LOAD", offset);
-
   case OP_KEEP_LIST:
     return byteInstruction("OP_KEEP_LIST", chunk, offset);
   case OP_KEEP_DICT:

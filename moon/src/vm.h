@@ -56,6 +56,9 @@ typedef struct {
   int grayCount;
   int grayCapacity;
   bool allowGC; // Protects the AST during compilation
+
+  Value sequenceStack[256];
+  int sequenceCount;
 } VM;
 
 typedef struct {

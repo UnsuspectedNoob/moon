@@ -438,19 +438,21 @@ static void walkNode(Node *node) {
   }
 
   case NODE_SUBSCRIPT: {
-    // 1. Push the sequence (list or string) to the stack FIRST
     walkNode(node->as.subscript.left);
 
-    // 2. Push the index (or range) SECOND
-    walkNode(node->as.subscript.index);
+    // 1. Tell the VM to remember this collection!
+    emitByte(OP_PUSH_SEQUENCE);
 
-    // 3. VM pops both and pushes the result
+    walkNode(node->as.subscript.index);
     emitByte(OP_GET_SUBSCRIPT);
+
+    // 2. We are done with the brackets, forget the collection!
+    emitByte(OP_POP_SEQUENCE);
     break;
   }
 
   case NODE_END: {
-    emitByte(OP_GET_END_INDEX);
+    emitByte(OP_GET_END_INDEX); // Back to a pure 1-byte opcode!
     break;
   }
 
@@ -471,12 +473,12 @@ static void walkNode(Node *node) {
     // --- 5. ASSIGNMENT ---
 
   case NODE_SET: {
-    // --- PHASE 1: Evaluate LHS Addresses (Left-to-Right) ---
-    // We must lock in memory addresses before any variables mutate!
+    // --- PHASE 1: Evaluate LHS Addresses ---
     for (int i = 0; i < node->as.set.targetCount; i++) {
       Node *target = node->as.set.targets[i];
       if (target->type == NODE_SUBSCRIPT) {
         walkNode(target->as.subscript.left);
+        emitByte(OP_PUSH_SEQUENCE); // <--- TRACK IT!
         walkNode(target->as.subscript.index);
       } else if (target->type == NODE_PROPERTY) {
         walkNode(target->as.property.target);
@@ -509,7 +511,7 @@ static void walkNode(Node *node) {
       } else if (target->type == NODE_SUBSCRIPT) {
         emitByte(OP_SET_SUBSCRIPT);
         emitByte(OP_POP);
-        // OP_SET_SUBSCRIPT leaves the value, so we pop it here
+        emitByte(OP_POP_SEQUENCE); // <--- CLEAN IT UP!
       } else if (target->type == NODE_PROPERTY) {
         uint16_t nameConst = identifierConstant(&target->as.property.name);
         emitByte(OP_SET_PROPERTY);
@@ -518,6 +520,7 @@ static void walkNode(Node *node) {
         emitByte(OP_POP);
       }
     }
+
     break;
   }
 

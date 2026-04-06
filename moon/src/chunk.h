@@ -53,6 +53,8 @@ typedef enum {
   OP_KEEP_LIST,
   OP_KEEP_DICT,
   OP_RETURN,
+  OP_PUSH_SEQUENCE,
+  OP_POP_SEQUENCE,
 } OpCode;
 
 typedef struct {

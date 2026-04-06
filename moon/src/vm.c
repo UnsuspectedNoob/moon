@@ -248,6 +248,7 @@ void initVM() {
   resetStack();
   vm.objects = NULL;
   vm.debugMode = false;
+  vm.sequenceCount = 0;
 
   initSignatureTable();
 
@@ -354,7 +355,9 @@ static InterpretResult run() {
       &&TARGET_OP_TYPE_DEF,      &&TARGET_OP_INSTANTIATE,
       &&TARGET_OP_DEFINE_METHOD, &&TARGET_OP_CAST,
       &&TARGET_OP_LOAD,          &&TARGET_OP_KEEP_LIST,
-      &&TARGET_OP_KEEP_DICT,     &&TARGET_OP_RETURN};
+      &&TARGET_OP_KEEP_DICT,     &&TARGET_OP_RETURN,
+      &&TARGET_OP_PUSH_SEQUENCE, &&TARGET_OP_POP_SEQUENCE,
+  };
 
 #define READ_BYTE() (*ip++)
 #define READ_CONSTANT() (frame->function->chunk.constants.values[READ_BYTE()])
@@ -1124,7 +1127,9 @@ TARGET_OP_GET_SUBSCRIPT: {
       THROW_ERROR(
           ERR_TYPE,
           "Check what type of value you are passing into the brackets [].",
-          "Invalid index type for this collection.");
+          "You tried to use a %s as an index for a List. Lists require a "
+          "Number or a Range.",
+          TYPE_NAME(indexVal));
     }
   } else if (IS_DICT(seqVal)) {
     ObjDict *dict = AS_DICT(seqVal);
@@ -1132,7 +1137,8 @@ TARGET_OP_GET_SUBSCRIPT: {
       THROW_ERROR(
           ERR_TYPE,
           "Check what type of value you are passing into the brackets [].",
-          "Invalid index type for this collection.");
+          "You tried to use a %s as a key for a Dict. Dicts require Strings.",
+          TYPE_NAME(indexVal));
     }
     Value result;
     if (tableGet(&dict->fields, indexVal, &result)) {
@@ -1223,7 +1229,9 @@ TARGET_OP_GET_SUBSCRIPT: {
       THROW_ERROR(
           ERR_TYPE,
           "Check what type of value you are passing into the brackets [].",
-          "Invalid index type for this collection.");
+          "You tried to use a %s as an index for a String. Strings require a "
+          "Number or a Range.",
+          TYPE_NAME(indexVal));
     }
   } else {
     THROW_ERROR(ERR_TYPE,
@@ -1292,28 +1300,31 @@ TARGET_OP_SET_SUBSCRIPT: {
   DISPATCH();
 }
 
+TARGET_OP_PUSH_SEQUENCE: {
+  vm.sequenceStack[vm.sequenceCount++] = peek(0); // Save a copy to the tracker
+  DISPATCH();
+}
+
+TARGET_OP_POP_SEQUENCE: {
+  vm.sequenceCount--; // Discard the tracker
+  DISPATCH();
+}
+
 TARGET_OP_GET_END_INDEX: {
-  Value seq = NIL_VAL;
-
-  // THE FIX: Scan backwards down the stack to find the collection!
-  for (Value *ptr = vm.stackTop - 1; ptr >= vm.stack; ptr--) {
-    if (IS_LIST(*ptr) || IS_STRING(*ptr)) {
-      seq = *ptr;
-      break;
-    }
-  }
-
-  if (IS_LIST(seq)) {
-    // 1-BASED INDEXING: The last index is exactly the count!
-    push(NUMBER_VAL(AS_LIST(seq)->count));
-  } else if (IS_STRING(seq)) {
-    // 1-BASED INDEXING: The last index is exactly the length!
-    push(NUMBER_VAL(AS_STRING(seq)->length));
-  } else {
+  if (vm.sequenceCount == 0) {
     THROW_ERROR(ERR_SYNTAX,
                 "The 'end' keyword can only be used inside brackets (like "
-                "list[1 to end]) to represent the final item.",
+                "list[1 to end]).",
                 "Cannot use 'end' index here.");
+  }
+
+  // Instantly grab the active collection!
+  Value seq = vm.sequenceStack[vm.sequenceCount - 1];
+
+  if (IS_LIST(seq)) {
+    push(NUMBER_VAL(AS_LIST(seq)->count));
+  } else if (IS_STRING(seq)) {
+    push(NUMBER_VAL(AS_STRING(seq)->length));
   }
   DISPATCH();
 }
