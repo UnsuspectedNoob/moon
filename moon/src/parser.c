@@ -36,7 +36,7 @@ static int loopingDepth = 0;
 
 // --- ADD THESE TWO LINES ---
 static int parseDepth = 0;
-#define MAX_AST_DEPTH 256
+#define MAX_AST_DEPTH 1024
 // ---------------------------
 
 static bool isExpectedLabel() {
@@ -82,6 +82,10 @@ static bool isPrepassLoaded(const char *path) {
 static void markPrepassLoaded(const char *path) {
   if (prepassLoadedCount < MAX_LOADED_FILES) {
     prepassLoadedFiles[prepassLoadedCount++] = my_strdup(path);
+  } else {
+    // THE FIX: Tell the user why the compiler is failing!
+    fprintf(stderr, "Error: Maximum number of loaded files (256) exceeded.\n");
+    exit(1);
   }
 }
 // --------------------------------------
@@ -532,7 +536,7 @@ static Node *variable() {
   // --------------------------
 
   char rootWord[256] = {0};
-  snprintf(rootWord, rootToken.length + 1, "%.*s", rootToken.length,
+  snprintf(rootWord, sizeof(rootWord), "%.*s", rootToken.length,
            rootToken.start);
 
   TrieNode *currentNode = getSignatureTrie(rootWord);
@@ -757,7 +761,6 @@ static bool isComparison(Token opToken) {
 
 static Node *castExpression(Node *left) {
   int line = parser.previous.line;
-  // Parse the right side (the Target Type) with exact CAST precedence!
   Node *right = parsePrecedence(PREC_CAST + 1);
   return newCastNode(left, right, line);
 }
@@ -1304,8 +1307,11 @@ static Node *addStatement() {
   initNodeArray(&values);
 
   // --- THE BLINDFOLD FIX ---
-  // We manually push "to" onto the expected label stack so the Pratt parser
-  // knows to stop when it sees it, rather than eating it as a range operator!
+  if (expectedLabelCount >= 256) {
+    error("Expression is too deeply nested.");
+    return NULL;
+  }
+
   expectedLabelStack[expectedLabelCount].hash = hashString("to", 2);
   expectedLabelStack[expectedLabelCount].depth = groupingDepth;
   expectedLabelCount++;
@@ -1609,6 +1615,7 @@ static Node *updateStatement() {
             "I was expecting 'as' or a math operator here.",
             "The update statement requires 'as' (to cast) or a math operator "
             "(+, -, *, /, %). e.g., 'update x as List' or 'update x * 2'.");
+    FREE(Node, rawTarget);
     return NULL;
   }
 
@@ -1943,6 +1950,15 @@ static Node *letDeclaration() {
         } else {
           advance();
           strcat(mangled, "_");
+
+          // Inside the letDeclaration while loop:
+          int currentLen = strlen(mangled);
+          if (currentLen + parser.previous.length + 5 >= 1024) {
+            errorAt(&parser.previous, ERR_SYNTAX,
+                    "Function signature is too long.",
+                    "Keep it under 1024 chars.");
+            break;
+          }
           strncat(mangled, parser.previous.start, parser.previous.length);
         }
       }
