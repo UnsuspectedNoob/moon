@@ -21,4 +21,4 @@ let primes up to (n: Number):
   give result
 end
 
-show primes up to 30000
+show primes up to 20

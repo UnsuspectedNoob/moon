@@ -16,6 +16,7 @@ typedef struct {
   Token name;
   int depth;
   bool isCaptured;
+  int slot; // physical VM slot
 } Local;
 
 typedef struct Compiler {
@@ -26,6 +27,7 @@ typedef struct Compiler {
   Local locals[UINT8_COUNT];
   int localCount;
   int scopeDepth;
+  int temporaries;
 } Compiler;
 
 extern Compiler *current;

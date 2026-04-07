@@ -122,11 +122,15 @@ typedef struct {
   Node *condition;
   Node *body;
 } WhilePayload;
+
 typedef struct {
   Token iterator;
+  Token indexVar; // <--- NEW: The second variable
+  bool hasIndex;  // <--- NEW: Did they use a comma?
   Node *sequence;
   Node *body;
 } ForPayload;
+
 typedef struct {
   Node **statements;
   int count;
@@ -251,7 +255,8 @@ Node *newInterpolationNode(Node **parts, int partCount, int line);
 
 Node *newLogicalNode(Node *left, Token opToken, Node *right, int line);
 Node *newWhileNode(Node *condition, Node *body, int line);
-Node *newForNode(Token iterator, Node *sequence, Node *body, int line);
+Node *newForNode(Token iterator, Token indexVar, bool hasIndex, Node *sequence,
+                 Node *body, int line);
 Node *newBreakNode(int line);
 Node *newSkipNode(int line);
 

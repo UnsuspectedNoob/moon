@@ -48,6 +48,6 @@ let quick sort of (list: List):
   give result
 end
 
-let a be [1000000 to 1]
+let a be [100 to 1]
 
 show sort a

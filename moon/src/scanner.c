@@ -83,14 +83,8 @@ static void skipWhitespace() {
 
     // Handle Comments (##)
     case '#':
-      if (peekNext() == '#') {
-        // Consume until end of line
-        while (peek() != '\n' && !isAtEnd())
-          advance();
-      } else {
-        while (peek() != '\n' && !isAtEnd())
-          advance();
-      }
+      while (peek() != '\n' && !isAtEnd())
+        advance();
       break;
     default:
       return;

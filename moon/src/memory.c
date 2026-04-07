@@ -2,6 +2,7 @@
 
 #include <stdlib.h>
 
+#include "emitter.h"
 #include "memory.h"
 #include "object.h"
 #include "vm.h"
@@ -14,7 +15,7 @@ void *reallocate(void *pointer, size_t oldSize, size_t newSize) {
   // 2. The Auto-Trigger!
   if (newSize > oldSize) {
     // Only trigger if the AST is done parsing AND we crossed the memory limit
-    if (vm.allowGC && vm.bytesAllocated > vm.nextGC) {
+    if (vm.allowGC) {
       collectGarbage();
     }
   }
@@ -96,6 +97,7 @@ static void markRoots() {
 
   // 3. The Globals
   markTable(&vm.globals);
+  markTable(&vm.loadedModules);
 
   // 4. The Native Blueprints
   markObject((Obj *)vm.anyType);
@@ -113,6 +115,15 @@ static void markRoots() {
     if (vm.charStrings[i] != NULL) {
       markObject((Obj *)vm.charStrings[i]);
     }
+  }
+
+  // --- 6. THE COMPILER SHIELD ---
+  // If the GC runs while we are compiling code (like in the REPL),
+  // we MUST protect the function currently being built!
+  Compiler *compiler = current;
+  while (compiler != NULL) {
+    markObject((Obj *)compiler->function);
+    compiler = compiler->enclosing;
   }
 }
 

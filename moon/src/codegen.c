@@ -8,6 +8,7 @@
 #include "parser.h"
 #include "scanner.h"
 
+extern bool isReplMode;
 // ==========================================
 // CODEGEN STATE (Scope & Locals)
 // ==========================================
@@ -92,9 +93,10 @@ static void walkNode(Node *node) {
   case NODE_BINARY: {
     // 1. Walk the left branch (pushes left value to stack)
     walkNode(node->as.binary.left);
-
+    current->temporaries++;
     // 2. Walk the right branch (pushes right value to stack)
     walkNode(node->as.binary.right);
+    current->temporaries--;
 
     // 3. Emit the operator instruction!
     // The VM will pop the two values, apply this operator, and push the result.
@@ -148,7 +150,16 @@ static void walkNode(Node *node) {
 
   case NODE_EXPRESSION_STMT: {
     walkNode(node->as.singleExpr.expression);
-    emitByte(OP_POP); // Discard the result so the VM stack doesn't overflow!
+
+    // --- THE CALCULATOR FIX ---
+    // If we are in the REPL, and we are at the top level (not inside a block or
+    // loop), print the result instead of throwing it in the garbage!
+    if (isReplMode && current->scopeDepth == 0) {
+      emitByte(OP_SHOW_REPL);
+    } else {
+      emitByte(OP_POP); // Standard script behavior
+    }
+    // --------------------------
     break;
   }
 
@@ -299,10 +310,21 @@ static void walkNode(Node *node) {
     beginScope();
 
     // 5. Register the Loop Variable
-    // Because we registered the ghosts, the compiler knows the stack is full,
-    // and correctly assigns 'item' to Slot 3!
     addLocal(node->as.forStmt.iterator);
     markInitialized();
+
+    // --- NEW: SECOND VARIABLE UNPACKING ---
+    if (node->as.forStmt.hasIndex) {
+      Token iterTok = syntheticToken(" iter");
+      int iterSlot = resolveLocal(current, &iterTok);
+
+      // Emit the magic extraction opcode!
+      emitBytes(OP_GET_ITER_VALUE, (uint8_t)iterSlot);
+
+      addLocal(node->as.forStmt.indexVar);
+      markInitialized();
+    }
+    // --------------------------------------
 
     // 6. Execute the body
     walkNode(node->as.forStmt.body);
@@ -405,32 +427,45 @@ static void walkNode(Node *node) {
   case NODE_LIST: {
     for (int i = 0; i < node->as.list.count; i++) {
       walkNode(node->as.list.items[i]);
+      current->temporaries++; // <-- TRACK EACH ITEM
     }
-    emitByte(OP_BUILD_LIST);
 
+    emitByte(OP_BUILD_LIST);
     uint16_t count = (uint16_t)node->as.list.count;
     emitByte((count >> 8) & 0xff); // High byte
     emitByte(count & 0xff);        // Low byte
+
+    // UNTRACK ALL ITEMS
+    current->temporaries -= node->as.list.count;
     break;
   }
 
   case NODE_DICT: {
     for (int i = 0; i < node->as.dictExpr.count; i++) {
       walkNode(node->as.dictExpr.keys[i]);
+      current->temporaries++; // <-- TRACK KEY
       walkNode(node->as.dictExpr.values[i]);
+      current->temporaries++; // <-- TRACK VALUE
     }
+
     emitByte(OP_BUILD_DICT);
     uint16_t count = (uint16_t)node->as.dictExpr.count;
     emitByte((count >> 8) & 0xff); // High byte
     emitByte(count & 0xff);        // Low byte
+
+    // UNTRACK ALL KEYS AND VALUES
+    current->temporaries -= (node->as.dictExpr.count * 2);
     break;
   }
 
   case NODE_RANGE: {
     // Evaluate the 3 parts of the range in order: start, end, step
     walkNode(node->as.range.start);
+    current->temporaries++; // <-- TRACK START
     walkNode(node->as.range.end);
+    current->temporaries++; // <-- TRACK START
     walkNode(node->as.range.step);
+    current->temporaries -= 2; // <-- UNTRACK START AND END BEFORE OP
 
     // VM pops all 3 and pushes the Range object
     emitByte(OP_RANGE);
@@ -443,7 +478,10 @@ static void walkNode(Node *node) {
     // 1. Tell the VM to remember this collection!
     emitByte(OP_PUSH_SEQUENCE);
 
+    current->temporaries++; // <-- TRACK SEQUENCE
     walkNode(node->as.subscript.index);
+    current->temporaries--; // <-- UNTRACK SEQUENCE BEFORE OP
+
     emitByte(OP_GET_SUBSCRIPT);
 
     // 2. We are done with the brackets, forget the collection!
@@ -490,7 +528,10 @@ static void walkNode(Node *node) {
       Node *expr = (node->as.set.valueCount == 1) ? node->as.set.values[0]
                                                   : node->as.set.values[i];
       walkNode(expr);
+      current->temporaries++; // <-- TRACK EACH EVALUATED VALUE ON THE STACK
     }
+
+    current->temporaries -= node->as.set.targetCount;
 
     // --- PHASE 3: Assign and Pop (Right-to-Left) ---
     // Because values are piled up on the stack, the last value is at the top!
@@ -537,21 +578,20 @@ static void walkNode(Node *node) {
 
   case NODE_CALL: {
     walkNode(node->as.call.callee);
+    current->temporaries++; // <-- TRACK CALLEE
+
     for (int i = 0; i < node->as.call.argCount; i++) {
       walkNode(node->as.call.arguments[i]);
+      current->temporaries++; // <-- TRACK EACH ARGUMENT
     }
+
     emitByte(OP_CALL);
-
     uint16_t count = (uint16_t)node->as.call.argCount;
-    emitByte((count >> 8) & 0xff);
-    emitByte(count & 0xff);
-    break;
-  }
+    emitByte((count >> 8) & 0xff); // High byte
+    emitByte(count & 0xff);        // Low byte
 
-  case NODE_CAST: {
-    walkNode(node->as.cast.left);  // Push the raw data
-    walkNode(node->as.cast.right); // Push the Target Blueprint
-    emitByte(OP_CAST);             // Smash them together!
+    // UNTRACK CALLEE + ALL ARGUMENTS
+    current->temporaries -= (1 + node->as.call.argCount);
     break;
   }
 
@@ -566,14 +606,30 @@ static void walkNode(Node *node) {
       emitByte((nameConstant >> 8) & 0xff);
       emitByte(nameConstant & 0xff);
     }
+
+    current->temporaries++; // <-- TRACK CALLEE
+
     for (int i = 0; i < node->as.phrasalCall.argCount; i++) {
       walkNode(node->as.phrasalCall.arguments[i]);
+      current->temporaries++; // <-- TRACK EACH ARGUMENT
     }
-    emitByte(OP_CALL);
 
+    emitByte(OP_CALL);
     uint16_t count = (uint16_t)node->as.phrasalCall.argCount;
-    emitByte((count >> 8) & 0xff);
-    emitByte(count & 0xff);
+    emitByte((count >> 8) & 0xff); // High byte
+    emitByte(count & 0xff);        // Low byte
+
+    // UNTRACK CALLEE + ALL ARGUMENTS
+    current->temporaries -= (1 + node->as.phrasalCall.argCount);
+    break;
+  }
+
+  case NODE_CAST: {
+    walkNode(node->as.cast.left);
+    current->temporaries++; // <-- TRACK LEFT
+    walkNode(node->as.cast.right);
+    current->temporaries--; // <-- UNTRACK LEFT BEFORE OP
+    emitByte(OP_CAST);
     break;
   }
 
@@ -655,26 +711,6 @@ static void walkNode(Node *node) {
     break;
   }
 
-  case NODE_INSTANTIATE: {
-    // 1. Evaluate the left side (pushes the Blueprint to the stack)
-    walkNode(node->as.instantiate.target);
-
-    // 2. Evaluate the custom overrides
-    for (int i = 0; i < node->as.instantiate.count; i++) {
-      Value nameVal =
-          OBJ_VAL(copyString(node->as.instantiate.propertyNames[i].start,
-                             node->as.instantiate.propertyNames[i].length));
-      emitConstant(nameVal);
-      walkNode(node->as.instantiate.values[i]);
-    }
-
-    // 3. Emit the instruction
-    emitByte(OP_INSTANTIATE);
-    uint16_t count = (uint16_t)node->as.instantiate.count;
-    emitByte((count >> 8) & 0xff);
-    emitByte(count & 0xff);
-    break;
-  }
   case NODE_LOAD: {
     // 1. Strip the quotes: '"math.moon"' becomes 'math.moon'
     ObjString *pathStr = copyString(node->as.loadStmt.path.start + 1,
@@ -689,16 +725,43 @@ static void walkNode(Node *node) {
   }
 
   case NODE_UNION_TYPE: {
-    // 1. Evaluate every type in the union (pushes them to the stack)
     for (int i = 0; i < node->as.unionType.count; i++) {
       walkNode(node->as.unionType.types[i]);
+      current->temporaries++; // <-- TRACK EACH TYPE
     }
 
-    // 2. Tell the VM to pop 'count' types and merge them into one ObjUnion!
     emitByte(OP_BUILD_UNION);
     uint16_t count = (uint16_t)node->as.unionType.count;
     emitByte((count >> 8) & 0xff); // High byte
     emitByte(count & 0xff);        // Low byte
+
+    // UNTRACK ALL TYPES
+    current->temporaries -= node->as.unionType.count;
+    break;
+  }
+
+  case NODE_INSTANTIATE: {
+    walkNode(node->as.instantiate.target);
+    current->temporaries++; // <-- TRACK THE TARGET BLUEPRINT/INSTANCE
+
+    for (int i = 0; i < node->as.instantiate.count; i++) {
+      Value nameVal =
+          OBJ_VAL(copyString(node->as.instantiate.propertyNames[i].start,
+                             node->as.instantiate.propertyNames[i].length));
+      emitConstant(nameVal);
+      current->temporaries++; // <-- TRACK PROPERTY NAME
+
+      walkNode(node->as.instantiate.values[i]);
+      current->temporaries++; // <-- TRACK PROPERTY VALUE
+    }
+
+    emitByte(OP_INSTANTIATE);
+    uint16_t count = (uint16_t)node->as.instantiate.count;
+    emitByte((count >> 8) & 0xff); // High byte
+    emitByte(count & 0xff);        // Low byte
+
+    // UNTRACK TARGET + ALL KEYS + ALL VALUES
+    current->temporaries -= (1 + (node->as.instantiate.count * 2));
     break;
   }
 
@@ -753,14 +816,11 @@ static void walkNode(Node *node) {
     markInitialized();
 
     if (node->as.comprehension.hasIndex) {
-      // The index is stored safely in the " iter" ghost variable.
-      // We fetch a copy of it to the top of the stack so the user's indexVar
-      // can claim it!
-      // Replace: int iterSlot = resolveLocal(current, &syntheticToken("
-      // iter"));
       Token iterTok = syntheticToken(" iter");
       int iterSlot = resolveLocal(current, &iterTok);
-      emitBytes(OP_GET_LOCAL, (uint8_t)iterSlot);
+
+      emitBytes(OP_GET_ITER_VALUE,
+                (uint8_t)iterSlot); // <--- CHANGED FROM OP_GET_LOCAL!
 
       addLocal(node->as.comprehension.indexVar);
       markInitialized();
@@ -770,18 +830,10 @@ static void walkNode(Node *node) {
     if (node->as.comprehension.isBlockMode) {
       walkNode(node->as.comprehension.body);
     } else {
-      // Expression Mode: Manually evaluate and emit the keep!
-      // Replace: int accSlot = resolveLocal(current, &syntheticToken(" acc"));
-      Token accTok = syntheticToken(" acc");
-      int accSlot = resolveLocal(current, &accTok);
-      if (node->as.comprehension.isDict) {
-        walkNode(node->as.comprehension.keepKey);
-        walkNode(node->as.comprehension.keepValue);
-        emitBytes(OP_KEEP_DICT, (uint8_t)accSlot);
-      } else {
-        walkNode(node->as.comprehension.keepValue);
-        emitBytes(OP_KEEP_LIST, (uint8_t)accSlot);
-      }
+      // Expression Mode: 'keepValue' is now fully pre-packaged as a
+      // NODE_KEEP (or a NODE_IF wrapping a NODE_KEEP).
+      // We just walk it, and it will emit the correct opcodes automatically!
+      walkNode(node->as.comprehension.keepValue);
     }
 
     // 7. Inner Cleanup
@@ -825,7 +877,9 @@ static void walkNode(Node *node) {
 
     if (node->as.keepStmt.key != NULL) {
       walkNode(node->as.keepStmt.key);
+      current->temporaries++; // <-- TRACK KEY
       walkNode(node->as.keepStmt.value);
+      current->temporaries--; // <--  untrack key before op
       emitBytes(OP_KEEP_DICT, (uint8_t)accSlot);
     } else {
       walkNode(node->as.keepStmt.value);

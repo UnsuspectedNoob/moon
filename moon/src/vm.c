@@ -9,11 +9,8 @@
 #include "sigtrie.h"
 #include <math.h>
 #include <stdarg.h>
-#include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #include "compiler.h"
 #include "debug.h"
@@ -74,7 +71,6 @@ static void runtimeErrorDetailed(ErrorType type, const char *hint,
   resetStack();
 }
 
-// The bridge for Native C-Functions to trigger MOON Panics!
 // The bridge for Native C-Functions to trigger MOON Panics!
 void throwNativeError(const char *hint, const char *format, ...) {
   char message[1024];
@@ -351,12 +347,13 @@ static InterpretResult run() {
       &&TARGET_OP_SET_PROPERTY,  &&TARGET_OP_GET_SUBSCRIPT,
       &&TARGET_OP_SET_SUBSCRIPT, &&TARGET_OP_GET_END_INDEX,
       &&TARGET_OP_RANGE,         &&TARGET_OP_FOR_ITER,
-      &&TARGET_OP_GET_ITER,      &&TARGET_OP_CALL,
-      &&TARGET_OP_TYPE_DEF,      &&TARGET_OP_INSTANTIATE,
-      &&TARGET_OP_DEFINE_METHOD, &&TARGET_OP_CAST,
-      &&TARGET_OP_LOAD,          &&TARGET_OP_KEEP_LIST,
-      &&TARGET_OP_KEEP_DICT,     &&TARGET_OP_RETURN,
-      &&TARGET_OP_PUSH_SEQUENCE, &&TARGET_OP_POP_SEQUENCE,
+      &&TARGET_OP_GET_ITER,      &&TARGET_OP_GET_ITER_VALUE,
+      &&TARGET_OP_CALL,          &&TARGET_OP_TYPE_DEF,
+      &&TARGET_OP_INSTANTIATE,   &&TARGET_OP_DEFINE_METHOD,
+      &&TARGET_OP_CAST,          &&TARGET_OP_LOAD,
+      &&TARGET_OP_KEEP_LIST,     &&TARGET_OP_KEEP_DICT,
+      &&TARGET_OP_RETURN,        &&TARGET_OP_PUSH_SEQUENCE,
+      &&TARGET_OP_POP_SEQUENCE,  &&TARGET_OP_SHOW_REPL,
   };
 
 #define READ_BYTE() (*ip++)
@@ -388,6 +385,7 @@ static InterpretResult run() {
       disassembleInstruction(&frame->function->chunk,                          \
                              (int)(ip - frame->function->chunk.code));         \
     }                                                                          \
+                                                                               \
     instruction = READ_BYTE();                                                 \
     goto *dispatchTable[instruction];                                          \
   } while (false)
@@ -652,6 +650,17 @@ TARGET_OP_POP: {
 
 TARGET_OP_DEFINE_GLOBAL: {
   ObjString *name = READ_STRING();
+
+  // --- THE REDECLARATION SHIELD ---
+  Value dummy;
+  if (tableGet(&vm.globals, OBJ_VAL(name), &dummy)) {
+    THROW_ERROR(ERR_REFERENCE,
+                "To change the value of an existing variable, use the 'set' "
+                "keyword (e.g., 'set a to 30').",
+                "Variable '%s' has already been declared.", name->chars);
+  }
+  // --------------------------------
+
   tableSet(&vm.globals, OBJ_VAL(name), peek(0));
   DISPATCH();
 }
@@ -1128,13 +1137,9 @@ TARGET_OP_GET_SUBSCRIPT: {
     }
   } else if (IS_DICT(seqVal)) {
     ObjDict *dict = AS_DICT(seqVal);
-    if (!IS_STRING(indexVal)) {
-      THROW_ERROR(
-          ERR_TYPE,
-          "Check what type of value you are passing into the brackets [].",
-          "You tried to use a %s as a key for a Dict. Dicts require Strings.",
-          TYPE_NAME(indexVal));
-    }
+
+    // --- DELETE THE ENTIRE !IS_STRING(indexVal) ERROR BLOCK HERE! ---
+
     Value result;
     if (tableGet(&dict->fields, indexVal, &result)) {
       pop();
@@ -1244,12 +1249,7 @@ TARGET_OP_SET_SUBSCRIPT: {
 
   if (IS_DICT(collectionVal)) {
     ObjDict *dict = AS_DICT(collectionVal);
-    if (!IS_STRING(indexVal)) {
-      THROW_ERROR(ERR_TYPE,
-                  "Dictionaries require string keys. Did you accidentally use "
-                  "a number or variable without quotes?",
-                  "Dictionary keys must be strings.");
-    }
+
     tableSet(&dict->fields, indexVal, value);
     pop();
     pop();
@@ -1352,15 +1352,15 @@ TARGET_OP_RANGE: {
 
   // 1. Determine where the loop starts
 TARGET_OP_GET_ITER: {
-  Value seq = peek(0); // Sequence is on stack
+  Value seq = peek(0);
 
-  // Strings, Lists, and Ranges all use the universal -1 index counter!
-  if (IS_LIST(seq) || IS_RANGE(seq) || IS_STRING(seq)) {
+  // ADD IS_DICT TO THE ALLOW LIST!
+  if (IS_LIST(seq) || IS_RANGE(seq) || IS_STRING(seq) || IS_DICT(seq)) {
     push(NUMBER_VAL(-1));
   } else {
     THROW_ERROR(ERR_TYPE,
                 "The 'for' loop needs a sequence it can step through.",
-                "Can only iterate over ranges, lists, or strings.");
+                "Can only iterate over ranges, lists, strings, or dicts.");
   }
   DISPATCH();
 }
@@ -1419,6 +1419,23 @@ TARGET_OP_FOR_ITER: {
       loopValue = OBJ_VAL(vm.charStrings[charByte]);
       hasNext = true;
     }
+  } else if (IS_DICT(seqVal)) {
+    // --- THE NEW HASH TABLE TRAVERSAL ---
+    ObjDict *dict = AS_DICT(seqVal);
+    int index = (int)AS_NUMBER(iteratorVal);
+    index++; // Move to next slot in the raw memory array
+
+    while (index < dict->fields.capacity) {
+      Entry *entry = &dict->fields.entries[index];
+      // Skip empty slots and deleted tombstones!
+      if (!IS_EMPTY(entry->key) && !IS_TOMB(entry->key)) {
+        frame->slots[slot] = NUMBER_VAL(index); // Save internal index
+        loopValue = entry->key;                 // Yield the Key!
+        hasNext = true;
+        break;
+      }
+      index++;
+    }
   }
 
   if (hasNext) {
@@ -1429,6 +1446,24 @@ TARGET_OP_FOR_ITER: {
     ip += offset;
   }
 
+  DISPATCH();
+}
+
+TARGET_OP_GET_ITER_VALUE: {
+  uint8_t slot = READ_BYTE();
+  Value seqVal = frame->slots[slot - 1]; // The Collection
+  Value iterVal = frame->slots[slot];    // The Raw Index
+
+  if (IS_DICT(seqVal)) {
+    // Dictionary Magic: Return the actual VALUE from the Hash Table!
+    ObjDict *dict = AS_DICT(seqVal);
+    int index = (int)AS_NUMBER(iterVal);
+    push(dict->fields.entries[index].value);
+  } else {
+    // List/String/Range Magic: Add 1 to align with MOON's 1-based indexing!
+    double moonIndex = AS_NUMBER(iterVal) + 1.0;
+    push(NUMBER_VAL(moonIndex));
+  }
   DISPATCH();
 }
 
@@ -1627,14 +1662,11 @@ TARGET_OP_TYPE_DEF: {
 
 TARGET_OP_DEFINE_METHOD: {
   ObjString *name = READ_STRING();
-  ObjFunction *method =
-      AS_FUNCTION(peek(0)); // The compiled method is at the top!
+  ObjFunction *method = AS_FUNCTION(peek(0));
   int arity = method->arity;
-
-  // The types are sitting right below the method on the stack
   Value *typesStart = vm.stackTop - 1 - arity;
 
-  // 1. Extract the Expected Types (UPGRADED)
+  // 1. Extract the Expected Types
   Value *signatures = ALLOCATE(Value, arity);
   for (int i = 0; i < arity; i++) {
     if (!IS_TYPE(typesStart[i]) && !IS_UNION(typesStart[i])) {
@@ -1646,36 +1678,46 @@ TARGET_OP_DEFINE_METHOD: {
     signatures[i] = typesStart[i];
   }
 
-  // 2. Does the MultiFunction folder already exist in globals?
+  // Does the MultiFunction folder already exist in globals?
   Value existing;
   ObjMultiFunction *multi = NULL;
   if (tableGet(&vm.globals, OBJ_VAL(name), &existing) &&
       IS_MULTI_FUNCTION(existing)) {
-    multi = AS_MULTI_FUNCTION(existing); // Yes, open the folder!
+    multi = AS_MULTI_FUNCTION(existing);
   } else {
-    multi = newMultiFunction(name, arity); // No, create a brand new folder!
-
+    multi = newMultiFunction(name, arity);
     push(OBJ_VAL(multi));
     tableSet(&vm.globals, OBJ_VAL(name), OBJ_VAL(multi));
     pop();
   }
 
-  // 3. Slide the method and signature into the arrays
+  // --- THE NEW SHIELD ---
+  // We must manually push the signatures to the stack to protect them
+  // from the GC while the MultiFunction arrays are expanding!
+  for (int i = 0; i < arity; i++) {
+    push(signatures[i]);
+  }
+
+  // Slide the method and signature into the arrays
   if (multi->methodCapacity < multi->methodCount + 1) {
     int oldCap = multi->methodCapacity;
     multi->methodCapacity = GROW_CAPACITY(oldCap);
     multi->methods = GROW_ARRAY(ObjFunction *, multi->methods, oldCap,
                                 multi->methodCapacity);
-
-    // UPGRADED: Cast to Value**
     multi->signatures =
         GROW_ARRAY(Value *, multi->signatures, oldCap, multi->methodCapacity);
   }
+
   multi->methods[multi->methodCount] = method;
   multi->signatures[multi->methodCount] = signatures;
   multi->methodCount++;
 
-  // 4. Clean up the stack (Pop the method and the types)
+  // --- DROP THE SHIELD ---
+  for (int i = 0; i < arity; i++) {
+    pop();
+  }
+
+  // Clean up the stack (Pop the method and the types)
   pop();
   vm.stackTop -= arity;
   DISPATCH();
@@ -2015,25 +2057,23 @@ TARGET_OP_LOAD: {
 }
 
 TARGET_OP_KEEP_LIST: {
-  // 1. The compiler compiled the local slot index as the operand
   uint8_t slot = READ_BYTE();
-
-  // 2. Grab the Accumulator list from the local stack slot
   Value listVal = frame->slots[slot];
-
-  // 3. Grab the evaluated expression off the top of the stack
   EXPECT_STACK(1);
-  Value item = pop();
 
-  // Sanity check (The C-compiler should guarantee this is always true)
+  // 1. PEEK: Shield the item on the stack so the GC can see it!
+  Value item = peek(0);
+
   if (!IS_LIST(listVal)) {
     THROW_ERROR(ERR_RUNTIME, "Fatal Compiler Bug: Accumulator is not a list.",
                 "Internal Error");
   }
 
-  // 4. Drop the item into the list!
+  // 2. MUTATE: Even if this triggers GC, 'item' is safely on the stack.
   appendList(AS_LIST(listVal), item);
 
+  // 3. POP: Cleanup
+  pop();
   DISPATCH();
 }
 
@@ -2042,24 +2082,22 @@ TARGET_OP_KEEP_DICT: {
   Value dictVal = frame->slots[slot];
 
   EXPECT_STACK(2);
-  Value value = pop(); // The value was evaluated last
-  Value key = pop();   // The key was evaluated first
+
+  // 1. PEEK: Shield both the value and the key!
+  Value value = peek(0);
+  Value key = peek(1);
 
   if (!IS_DICT(dictVal)) {
     THROW_ERROR(ERR_RUNTIME, "Fatal Compiler Bug: Accumulator is not a dict.",
                 "Internal Error");
   }
 
-  if (!IS_STRING(key)) {
-    THROW_ERROR(ERR_TYPE,
-                "Dictionary keys must be strings. Did you try to 'keep' a "
-                "number or a list as a key?",
-                "Invalid dictionary key in comprehension.");
-  }
-
-  // Drop the Key-Value pair into the Hash Table!
+  // 2. MUTATE: This triggers GC when the hash table resizes!
   tableSet(&AS_DICT(dictVal)->fields, key, value);
 
+  // 3. POP: Cleanup
+  pop(); // pop value
+  pop(); // pop key
   DISPATCH();
 }
 
@@ -2080,6 +2118,22 @@ TARGET_OP_RETURN: {
 
   // 2. LOAD: Restore caller's instruction pointer
   ip = frame->ip;
+  DISPATCH();
+}
+
+TARGET_OP_SHOW_REPL: {
+  // 1. PEEK: Shield the value from the GC!
+  Value value = peek(0);
+
+  if (!IS_NIL(value)) {
+    // 2. ALLOCATE: Even if this triggers the GC, 'value' is safe on the stack.
+    ObjString *str = valueToString(value);
+
+    printf(COLOR_DIM "< " COLOR_RESET "%s\n", str->chars);
+  }
+
+  // 3. POP: Now that we are done, safely discard it.
+  pop();
   DISPATCH();
 }
 
@@ -2138,11 +2192,12 @@ static void bootstrapCore() {
 bool isCoreBootstrapped = false;
 
 InterpretResult interpret(const char *source) {
+  vm.allowGC = false; // GC sleeps while we parse/compile
+
   // --- THE BOOTSTRAP GUARD ---
   if (!isCoreBootstrapped) {
-    initErrorEngine(coreLibrary); // Point errors to the embedded string
-    bootstrapCore();              // Compile & run the core
-    isCoreBootstrapped = true;    // Lock the door!
+    bootstrapCore();           // Compile & run the core
+    isCoreBootstrapped = true; // Lock the door!
   }
 
   // Give the error engine the raw string BEFORE compilation begins!

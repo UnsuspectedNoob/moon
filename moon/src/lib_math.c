@@ -87,10 +87,10 @@ void registerMathLibrary() {
 }
 
 // Define the array here!
-const char mathBootstrap[] = "let sine of (n: Number):\n"
+const char mathBootstrap[] = "let sin (n: Number):\n"
                              "    give __sin(n)\n"
                              "end\n"
-                             "let cosine of (n: Number):\n"
+                             "let cos (n: Number):\n"
                              "    give __cos(n)\n"
                              "end\n"
                              "let square root of (n: Number):\n"

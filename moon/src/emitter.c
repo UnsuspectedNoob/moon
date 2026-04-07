@@ -22,6 +22,7 @@ void initCompiler(Compiler *compiler, FunctionType type) {
   compiler->type = type;
   compiler->localCount = 0;
   compiler->scopeDepth = 0;
+  compiler->temporaries = 0;
 
   compiler->function = newFunction();
   current = compiler;
@@ -38,6 +39,7 @@ void initCompiler(Compiler *compiler, FunctionType type) {
   Local *local = &compiler->locals[compiler->localCount++];
   local->depth = 0;
   local->isCaptured = false;
+  local->slot = 0;
   local->name.start = "";
   local->name.length = 0;
 }
@@ -103,7 +105,10 @@ void addLocal(Token name) {
 
   Local *local = &current->locals[current->localCount++];
   local->name = name;
-  local->depth = -1; // Uninitialized
+  local->depth = -1;
+
+  // THE FIX: Lexical Scope + Temporary Padding = Physical Slot!
+  local->slot = (current->localCount - 1) + current->temporaries;
 }
 
 int resolveLocal(Compiler *compiler, Token *name) {
@@ -113,7 +118,7 @@ int resolveLocal(Compiler *compiler, Token *name) {
       if (local->depth == -1) {
         error("Can't read local variable in its own initializer.");
       }
-      return i;
+      return local->slot; // <--- RETURN THE PHYSICAL SLOT, NOT THE INDEX!
     }
   }
   return -1;

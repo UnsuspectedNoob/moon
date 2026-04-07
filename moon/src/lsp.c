@@ -78,7 +78,7 @@ typedef struct {
 } LspSymbol;
 
 // 3. The Memory Palace (Storage)
-static LspSymbol lspSymbols[500];
+static LspSymbol lspSymbols[1500];
 static int lspSymbolCount = 0;
 
 // --- THE BLUEPRINT REGISTRY ---
@@ -103,7 +103,7 @@ static bool isWalkingPaused = false;
 // 1. Adds a variable to the current room
 static void registerSymbol(const char *name, LspSymbolType type,
                            const char *blueprintName) {
-  if (lspSymbolCount >= 500)
+  if (lspSymbolCount >= 1500)
     return;
 
   for (int i = 0; i < lspSymbolCount; i++) {
@@ -239,8 +239,20 @@ static void analyzeNode(Node *node) {
                   : 63;
     strncpy(iterName, node->as.forStmt.iterator.start, len);
     iterName[len] = '\0';
-
     registerSymbol(iterName, LSP_TYPE_UNKNOWN, NULL);
+
+    // --- THE FIX: Register the Index Variable! ---
+    if (node->as.forStmt.hasIndex) {
+      char idxName[64];
+      int idxLen = node->as.forStmt.indexVar.length < 63
+                       ? node->as.forStmt.indexVar.length
+                       : 63;
+      strncpy(idxName, node->as.forStmt.indexVar.start, idxLen);
+      idxName[idxLen] = '\0';
+      registerSymbol(idxName, LSP_TYPE_NUMBER, NULL); // Indices are numbers!
+    }
+    // ---------------------------------------------
+
     analyzeNode(node->as.forStmt.sequence);
     analyzeNode(node->as.forStmt.body);
 
@@ -249,6 +261,45 @@ static void analyzeNode(Node *node) {
       popScope();
     break;
   }
+
+  case NODE_COMPREHENSION: {
+    currentScopeDepth++;
+    char iterName[64];
+    int len = node->as.comprehension.iterator.length < 63
+                  ? node->as.comprehension.iterator.length
+                  : 63;
+    strncpy(iterName, node->as.comprehension.iterator.start, len);
+    iterName[len] = '\0';
+    registerSymbol(iterName, LSP_TYPE_UNKNOWN, NULL);
+
+    if (node->as.comprehension.hasIndex) {
+      char idxName[64];
+      int idxLen = node->as.comprehension.indexVar.length < 63
+                       ? node->as.comprehension.indexVar.length
+                       : 63;
+      strncpy(idxName, node->as.comprehension.indexVar.start, idxLen);
+      idxName[idxLen] = '\0';
+      registerSymbol(idxName, LSP_TYPE_NUMBER, NULL);
+    }
+
+    analyzeNode(node->as.comprehension.sequence);
+
+    if (node->as.comprehension.isBlockMode) {
+      analyzeNode(node->as.comprehension.body);
+    } else {
+      analyzeNode(node->as.comprehension.keepKey);
+      analyzeNode(node->as.comprehension.keepValue);
+    }
+
+    if (!isWalkingPaused)
+      popScope();
+    break;
+  }
+
+  case NODE_KEEP:
+    analyzeNode(node->as.keepStmt.key);
+    analyzeNode(node->as.keepStmt.value);
+    break;
 
     // --- THE VARIABLES (Memory Registration) ---
   case NODE_LET: {

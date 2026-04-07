@@ -1,0 +1,14 @@
+
+implement index in for statement
+fix temporaries on stack
+update repl to print expressions
+change std math from sine to sin
+increase lsp symbols to 1500
+update lsp to recognise comprehension
+give repl new look with depth tracking
+gc currently runs on every allocation
+fix union type memory leak
+fix parser mangling algorithm
+ast inversion for keep statement
+fix ast inversion memory leaks
+fix multi-function building memory leaks

@@ -9,29 +9,29 @@
 typedef enum {
   OP_CONSTANT,
   OP_CONSTANT_LONG,
-  OP_NIL,           // New: for 'nil'
-  OP_TRUE,          // New: for 'true'
-  OP_FALSE,         // New: for 'false'
-  OP_POP,           // New: to clean up stack after statements
-  OP_GET_LOCAL,     // New: Access stack at index
-  OP_SET_LOCAL,     // New: Write to stack at index
-  OP_GET_GLOBAL,    // New: Get var
-  OP_DEFINE_GLOBAL, // New: Let var
-  OP_SET_GLOBAL,    // New: Set var
+  OP_NIL,
+  OP_TRUE,
+  OP_FALSE,
+  OP_POP,
+  OP_GET_LOCAL,
+  OP_SET_LOCAL,
+  OP_GET_GLOBAL,
+  OP_DEFINE_GLOBAL,
+  OP_SET_GLOBAL,
   OP_ADD,
   OP_ADD_INPLACE,
   OP_SUBTRACT,
   OP_MULTIPLY,
   OP_DIVIDE,
   OP_MOD,
-  OP_JUMP_IF_FALSE, // Conditional Jump forward
+  OP_JUMP_IF_FALSE,
   OP_NEGATE,
-  OP_JUMP,    // Unconditional Jump forward
-  OP_LOOP,    // Unconditional Jump BACKWARD
-  OP_EQUAL,   // New: == (is)
-  OP_GREATER, // New: >
-  OP_LESS,    // New: <
-  OP_NOT,     // New: not
+  OP_JUMP,
+  OP_LOOP,
+  OP_EQUAL,
+  OP_GREATER,
+  OP_LESS,
+  OP_NOT,
   OP_BUILD_STRING,
   OP_BUILD_LIST,
   OP_BUILD_DICT,
@@ -41,9 +41,10 @@ typedef enum {
   OP_GET_SUBSCRIPT,
   OP_SET_SUBSCRIPT,
   OP_GET_END_INDEX,
-  OP_RANGE, // Creates a range object (1 to 10)
+  OP_RANGE,
   OP_FOR_ITER,
-  OP_GET_ITER, // <--- Add this
+  OP_GET_ITER,
+  OP_GET_ITER_VALUE,
   OP_CALL,
   OP_TYPE_DEF,
   OP_INSTANTIATE,
@@ -55,6 +56,7 @@ typedef enum {
   OP_RETURN,
   OP_PUSH_SEQUENCE,
   OP_POP_SEQUENCE,
+  OP_SHOW_REPL,
 } OpCode;
 
 typedef struct {

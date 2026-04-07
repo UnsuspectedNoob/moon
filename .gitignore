@@ -2,3 +2,4 @@ moon/src/*.o
 moon/src/copy
 moon/moon
 moon_lsp.log
+moon/test

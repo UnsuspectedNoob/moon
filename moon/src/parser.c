@@ -4,6 +4,7 @@
 
 #include "ast.h"
 #include "error.h"
+#include "memory.h"
 #include "object.h"
 #include "parser.h"
 #include "scanner.h"
@@ -180,6 +181,9 @@ void hoistPhrases(const char *source) {
             strcat(mangled, "$0");
             finalizePhrase(currentNode, mangled);
           } else {
+            // --- THE BULLETPROOF TRACKER ---
+            bool lastWasLabel = false;
+
             while (next.type != TOKEN_COLON && next.type != TOKEN_EOF) {
               if (next.type == TOKEN_NEWLINE) {
                 next = scanToken();
@@ -187,6 +191,8 @@ void hoistPhrases(const char *source) {
               }
 
               if (next.type == TOKEN_LEFT_PAREN) {
+                lastWasLabel = false; // <--- We processed an argument block!
+
                 int arity = 0;
                 Token peek = scanToken();
                 if (peek.type != TOKEN_RIGHT_PAREN) {
@@ -199,6 +205,9 @@ void hoistPhrases(const char *source) {
                   }
                 }
 
+                // CRITICAL FIX: Sync 'next' to the RIGHT_PAREN we just found!
+                next = peek;
+
                 char buf[16];
                 sprintf(buf, "$%d", arity);
                 strcat(mangled, buf);
@@ -206,6 +215,8 @@ void hoistPhrases(const char *source) {
                 // Add Argument Node
                 currentNode = addArgumentBranch(currentNode, arity);
               } else {
+                lastWasLabel = true; // <--- We processed a word/label!
+
                 strcat(mangled, "_");
                 strncat(mangled, next.start, next.length);
 
@@ -215,6 +226,12 @@ void hoistPhrases(const char *source) {
               }
               next = scanToken();
             }
+
+            // If the very last thing we processed was a word, append $0!
+            if (lastWasLabel) {
+              strcat(mangled, "$0");
+            }
+
             finalizePhrase(currentNode, mangled);
           }
         }
@@ -633,6 +650,11 @@ static Node *variable() {
           lastGoodState = currentNode;
         continue;
       } else {
+        // --- THE PATCH 1 ---
+        // We hit a dead end. Destroy the orphaned argument nodes!
+        for (int i = 0; i < tempArgs.count; i++)
+          freeNode(tempArgs.items[i]);
+
         freeNodeArray(&tempArgs); // Free on dead end!
         break;
       }
@@ -646,6 +668,8 @@ static Node *variable() {
               "This phrasal function looks incomplete.",
               "You started a phrase but didn't finish it. Check the function's "
               "signature to see what words or arguments are missing.");
+      for (int i = 0; i < args.count; i++)
+        freeNode(args.items[i]);
       freeNodeArray(&args);
       return newVariableNode(rootToken, rootToken.line);
     }
@@ -666,6 +690,8 @@ static Node *variable() {
         "I don't recognize this phrasal function.",
         "Did you misspell a word, or forget to define this function earlier?");
   }
+  for (int i = 0; i < args.count; i++)
+    freeNode(args.items[i]);
 
   freeNodeArray(&args);
   return newVariableNode(rootToken, rootToken.line);
@@ -838,11 +864,27 @@ static Node *listComprehension(int line) {
 
   // The Dual-Mode Switch!
   if (match(TOKEN_KEEP)) {
-    keepValue = expression();
+    Node *expr = expression();
+
+    // --- AST INVERSION FIX ---
+    if (expr != NULL && expr->type == NODE_IF &&
+        expr->as.ifStmt.elseBranch == NULL) {
+      Node *cond = expr->as.ifStmt.condition;
+      Node *inner = expr->as.ifStmt.thenBranch;
+
+      Node *keepNode = newKeepNode(NULL, inner, line);
+      FREE(Node, expr); // Prevent the memory leak!
+      keepValue = newIfNode(cond, keepNode, NULL, line);
+    } else {
+      keepValue = newKeepNode(NULL, expr, line);
+    }
   } else if (match(TOKEN_COLON)) {
     isBlockMode = true;
-    TokenType terminators[] = {TOKEN_RIGHT_BRACKET};
+    Token blockOpener = parser.previous;   // <--- Capture the colon
+    TokenType terminators[] = {TOKEN_END}; // <--- Stop at 'end'!
     body = block(terminators, 1);
+    consumeBlockEnd(blockOpener,
+                    "list comprehension"); // <--- Safely eat the 'end'
   } else {
     errorAt(
         &parser.current, ERR_SYNTAX,
@@ -892,15 +934,33 @@ static Node *dictComprehension(int line) {
   Node *body = NULL;
 
   if (match(TOKEN_KEEP)) {
-    keepKey = expression();
+    Node *parsedKey = expression();
     consumeHint(TOKEN_COLON, ERR_SYNTAX, "I was expecting a colon ':' here.",
                 "Dictionary comprehensions require a key and a value separated "
                 "by a colon (e.g., keep name : id).");
-    keepValue = expression();
+    Node *expr = expression();
+
+    // --- AST INVERSION FIX ---
+    if (expr != NULL && expr->type == NODE_IF &&
+        expr->as.ifStmt.elseBranch == NULL) {
+      Node *cond = expr->as.ifStmt.condition;
+      Node *inner = expr->as.ifStmt.thenBranch;
+
+      Node *keepNode = newKeepNode(parsedKey, inner, line);
+      FREE(Node, expr); // Prevent the memory leak!
+      keepValue = newIfNode(cond, keepNode, NULL, line);
+    } else {
+      keepValue = newKeepNode(parsedKey, expr, line);
+    }
+    // We leave keepKey as NULL since keepValue now holds the complete Keep
+    // node!
   } else if (match(TOKEN_COLON)) {
     isBlockMode = true;
-    TokenType terminators[] = {TOKEN_RIGHT_BRACE};
+    Token blockOpener = parser.previous;   // <--- Capture the colon
+    TokenType terminators[] = {TOKEN_END}; // <--- Stop at 'end'!
     body = block(terminators, 1);
+    consumeBlockEnd(blockOpener,
+                    "dictionary comprehension"); // <--- Safely eat the 'end'
   } else {
     errorAt(
         &parser.current, ERR_SYNTAX,
@@ -1255,6 +1315,18 @@ static Node *forStatement() {
               "Provide a valid name for your loop iterator (e.g., 'for each "
               "item in list:').");
 
+  // --- NEW: GRAB THE COMMA! ---
+  Token indexVar;
+  bool hasIndex = false;
+  if (match(TOKEN_COMMA)) {
+    consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
+                "I was expecting an index/value variable name.",
+                "Provide a name for the second variable after the comma.");
+    indexVar = parser.previous;
+    hasIndex = true;
+  }
+  // ----------------------------
+
   if (check(TOKEN_IN))
     advance();
   else if (check(TOKEN_FROM))
@@ -1274,7 +1346,8 @@ static Node *forStatement() {
   }
   loopingDepth--;
 
-  return newForNode(iteratorName, sequence, body, line);
+  // Update the constructor call!
+  return newForNode(iteratorName, indexVar, hasIndex, sequence, body, line);
 }
 
 static Node *parseLValue() {
@@ -1416,6 +1489,7 @@ static Node *setStatement() {
     Node *setNode = newSetNode(targets.items, targets.count, values.items,
                                values.count, line);
 
+    FREE(Node, lastVal);
     freeNodeArray(&targets);
     freeNodeArray(&values); // FREE BEFORE RETURN!
     return newIfNode(cond, setNode, NULL, line);
@@ -1423,6 +1497,16 @@ static Node *setStatement() {
 
   if (values.count > 1 && values.count != targets.count) {
     error("Mismatch in assignment counts.");
+
+    // --- THE PATCH: Destroy the children before the container! ---
+    for (int i = 0; i < targets.count; i++)
+      freeNode(targets.items[i]);
+    for (int i = 0; i < values.count; i++)
+      freeNode(values.items[i]);
+
+    freeNodeArray(&targets);
+    freeNodeArray(&values);
+    return NULL;
   }
 
   Node *node = newSetNode(targets.items, targets.count, values.items,
@@ -1446,6 +1530,7 @@ static Node *giveStatement() {
     Node *cond = expr->as.ifStmt.condition;
     Node *inner = expr->as.ifStmt.thenBranch;
     Node *giveStmt = newSingleExprNode(NODE_RETURN, inner, line);
+    FREE(Node, expr);
     return newIfNode(cond, giveStmt, NULL, line); // Wrap the give!
   }
 
@@ -1465,16 +1550,16 @@ static Node *expressionStatement() {
       Node *lastArg = expr->as.phrasalCall.arguments[lastIdx];
       if (lastArg->type == NODE_IF && lastArg->as.ifStmt.elseBranch == NULL) {
         Node *cond = lastArg->as.ifStmt.condition;
-        // Put the raw string back into the argument slot
         expr->as.phrasalCall.arguments[lastIdx] = lastArg->as.ifStmt.thenBranch;
-        // Wrap the entire call in the If block
         Node *exprStmt = newSingleExprNode(NODE_EXPRESSION_STMT, expr, line);
+
+        FREE(Node, lastArg); // <--- THE PATCH
+
         return newIfNode(cond, exprStmt, NULL, line);
       }
     }
   }
 
-  // Do the exact same check for standard function calls!
   if (expr != NULL && expr->type == NODE_CALL) {
     int lastIdx = expr->as.call.argCount - 1;
     if (lastIdx >= 0) {
@@ -1483,6 +1568,9 @@ static Node *expressionStatement() {
         Node *cond = lastArg->as.ifStmt.condition;
         expr->as.call.arguments[lastIdx] = lastArg->as.ifStmt.thenBranch;
         Node *exprStmt = newSingleExprNode(NODE_EXPRESSION_STMT, expr, line);
+
+        FREE(Node, lastArg); // <--- THE PATCH
+
         return newIfNode(cond, exprStmt, NULL, line);
       }
     }
@@ -1494,6 +1582,8 @@ static Node *expressionStatement() {
     Node *cond = expr->as.ifStmt.condition;
     Node *inner = expr->as.ifStmt.thenBranch;
     Node *exprStmt = newSingleExprNode(NODE_EXPRESSION_STMT, inner, line);
+
+    FREE(Node, expr);
     return newIfNode(cond, exprStmt, NULL, line);
   }
 
@@ -1608,7 +1698,9 @@ static Node *updateStatement() {
     if (mathValue != NULL && mathValue->type == NODE_IF &&
         mathValue->as.ifStmt.elseBranch == NULL) {
       modifierCond = mathValue->as.ifStmt.condition;
+      Node *originalIf = mathValue; // <--- Save the pointer!
       mathValue = mathValue->as.ifStmt.thenBranch;
+      FREE(Node, originalIf); // <--- THE PATCH
     }
   } else {
     errorAt(&parser.current, ERR_SYNTAX,
@@ -1745,6 +1837,7 @@ static Node *keepStatement() {
     // 1. Rebuild the keep node with the raw inner value
     Node *keepNode = newKeepNode(key, innerValue, line);
 
+    FREE(Node, value);
     // 2. Wrap the keep node completely inside the IF block!
     return newIfNode(cond, keepNode, NULL, line);
   }
@@ -1830,7 +1923,6 @@ static Node *letDeclaration() {
   initTokenArray(&names);
 
   do {
-    // THE UX UPGRADE
     consumeHint(
         TOKEN_IDENTIFIER, ERR_SYNTAX, "I was expecting a variable name here.",
         "Variables need a name to identify them. e.g., 'let count be 10'");
@@ -1853,12 +1945,29 @@ static Node *letDeclaration() {
           &parser.previous, ERR_SYNTAX,
           "Statement modifiers aren't allowed on 'let' declarations.",
           "Try using a standard if-block, or a ternary (if...else) instead.");
+
+      // --- THE PATCH ---
+      for (int i = 0; i < exprs.count; i++)
+        freeNode(exprs.items[i]);
+
+      freeNodeArray(&exprs);
+      freeTokenArray(&names);
+      return NULL;
     }
+
     if (exprs.count != 1 && exprs.count != names.count) {
       errorAt(
           &parser.previous, ERR_SYNTAX, "Mismatch in assignment counts.",
           "When declaring multiple variables, you must provide exactly 1 value "
           "(to copy to all), or exactly match the number of variables.");
+
+      // --- THE PATCH ---
+      for (int i = 0; i < exprs.count; i++)
+        freeNode(exprs.items[i]);
+
+      freeNodeArray(&exprs);
+      freeTokenArray(&names);
+      return NULL; // <--- Ensure this aborts!
     }
 
     Node *node = newLetNode(names.items, names.count, exprs.items, exprs.count,
@@ -1867,23 +1976,24 @@ static Node *letDeclaration() {
     freeTokenArray(&names);
     return node;
   } else if (match(TOKEN_EQUAL)) {
-    // --- FOREIGN SYNTAX INTERCEPT: '=' instead of 'be' ---
     errorAt(&parser.previous, ERR_SYNTAX,
             "It looks like you used '=' to assign a variable.",
             "In MOON, we use the word 'be' for new variables. Try changing '=' "
             "to 'be' (e.g., 'let x be 10').");
 
-    // Graceful Recovery: We pretend they typed 'be' and parse the expressions
-    // anyway! This prevents a cascade of confusing follow-up errors.
     NodeArray exprs;
     initNodeArray(&exprs);
     do {
       writeNodeArray(&exprs, expression());
     } while (match(TOKEN_COMMA));
 
+    // --- THE PATCH ---
+    for (int i = 0; i < exprs.count; i++)
+      freeNode(exprs.items[i]);
+
     freeNodeArray(&exprs);
     freeTokenArray(&names);
-    return NULL; // Return NULL so we don't generate bad bytecode
+    return NULL;
   }
 
   Token rootName = names.items[0];
@@ -1904,18 +2014,31 @@ static Node *letDeclaration() {
     int line = rootName.line;
     TokenArray parameters;
     initTokenArray(&parameters);
-    NodeArray paramTypes;       // NEW
-    initNodeArray(&paramTypes); // NEW
+    NodeArray paramTypes;
+    initNodeArray(&paramTypes);
 
     char mangled[1024] = {0};
     strncat(mangled, rootName.start, rootName.length);
 
     if (check(TOKEN_COLON)) {
+      // Path A: Single-word zero-arity (e.g., 'let jump:')
       strcat(mangled, "$0");
     } else {
+      // Path B: Multi-word signatures
+      bool lastWasLabel = false; // <--- THE BULLETPROOF TRACKER
+
       while (!check(TOKEN_COLON) && !check(TOKEN_EOF) &&
              !check(TOKEN_NEWLINE)) {
         if (match(TOKEN_LEFT_PAREN)) {
+          lastWasLabel = false; // <--- We processed an argument block!
+
+          if (check(TOKEN_RIGHT_PAREN)) {
+            errorAt(&parser.current, ERR_SYNTAX,
+                    "Empty parentheses '()' are not allowed.",
+                    "If a function takes no arguments, just write its name "
+                    "without parentheses (e.g., 'let jump:').");
+          }
+
           int segmentArity = 0;
           if (!check(TOKEN_RIGHT_PAREN)) {
             do {
@@ -1924,11 +2047,10 @@ static Node *letDeclaration() {
                           "Provide a name for the function parameter.");
               writeTokenArray(&parameters, parser.previous);
 
-              // --- NEW: THE TYPE EXTRACTION ---
+              // Extract the type annotation
               if (match(TOKEN_COLON)) {
                 writeNodeArray(&paramTypes, parseTypeAnnotation());
               } else {
-                // Default to 'Any'
                 Token anyToken = {.type = TOKEN_IDENTIFIER,
                                   .start = "Any",
                                   .length = 3,
@@ -1936,22 +2058,22 @@ static Node *letDeclaration() {
                 writeNodeArray(&paramTypes,
                                newVariableNode(anyToken, parser.previous.line));
               }
-              // --------------------------------
-
               segmentArity++;
             } while (match(TOKEN_COMMA));
           }
+
           consumeHint(TOKEN_RIGHT_PAREN, ERR_SYNTAX,
                       "I couldn't find the closing parenthesis ')'.",
                       "Make sure to close your parameter list.");
+
           char buf[16];
           sprintf(buf, "$%d", segmentArity);
           strcat(mangled, buf);
         } else {
+          lastWasLabel = true; // <--- We processed a word/label!
           advance();
           strcat(mangled, "_");
 
-          // Inside the letDeclaration while loop:
           int currentLen = strlen(mangled);
           if (currentLen + parser.previous.length + 5 >= 1024) {
             errorAt(&parser.previous, ERR_SYNTAX,
@@ -1961,6 +2083,11 @@ static Node *letDeclaration() {
           }
           strncat(mangled, parser.previous.start, parser.previous.length);
         }
+      }
+
+      // If the very last thing we processed was a word, append $0!
+      if (lastWasLabel) {
+        strcat(mangled, "$0");
       }
     }
 

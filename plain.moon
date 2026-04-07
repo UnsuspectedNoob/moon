@@ -7,6 +7,7 @@ let greet:
   give "Hello there, `name`"
 end
 
+let sort:end
 let list be [5, 2, 3, 7, 1, 10, 8]
 sort list
 show list
@@ -15,6 +16,7 @@ let name be "Munachi"
 set name to "`name` Ukpai"
 add " Ukpai" to name
 set name, x to "both are changed to this"
+let a, b, c, d be ""
 set a, b, c, d to "a", "b", "c", "d"
 
 let i be 2

@@ -200,9 +200,12 @@ Node *newWhileNode(Node *condition, Node *body, int line) {
   return node;
 }
 
-Node *newForNode(Token iterator, Node *sequence, Node *body, int line) {
+Node *newForNode(Token iterator, Token indexVar, bool hasIndex, Node *sequence,
+                 Node *body, int line) {
   Node *node = allocateNode(NODE_FOR, line);
   node->as.forStmt.iterator = iterator;
+  node->as.forStmt.indexVar = indexVar; // <--- NEW
+  node->as.forStmt.hasIndex = hasIndex; // <--- NEW
   node->as.forStmt.sequence = sequence;
   node->as.forStmt.body = body;
   if (sequence != NULL)

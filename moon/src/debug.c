@@ -169,16 +169,14 @@ int disassembleInstruction(Chunk *chunk, int offset) {
     return simpleInstruction("OP_SET_SUBSCRIPT", offset);
   case OP_GET_END_INDEX:
     return simpleInstruction("OP_GET_END_INDEX", offset);
-  case OP_PUSH_SEQUENCE:
-    return simpleInstruction("OP_PUSH_SEQUENCE", offset);
-  case OP_POP_SEQUENCE:
-    return simpleInstruction("OP_POP_SEQUENCE", offset);
   case OP_RANGE:
     return simpleInstruction("OP_RANGE", offset);
   case OP_FOR_ITER:
     return forIterInstruction("OP_FOR_ITER", chunk, offset);
-  case OP_GET_ITER: // <--- Add this
+  case OP_GET_ITER:
     return simpleInstruction("OP_GET_ITER", offset);
+  case OP_GET_ITER_VALUE: // <--- ADD THIS
+    return byteInstruction("OP_GET_ITER_VALUE", chunk, offset);
   case OP_CAST:
     return simpleInstruction("OP_CAST", offset);
   case OP_TYPE_DEF:
@@ -195,7 +193,12 @@ int disassembleInstruction(Chunk *chunk, int offset) {
     return byteInstruction("OP_KEEP_DICT", chunk, offset);
   case OP_RETURN:
     return simpleInstruction("OP_RETURN", offset);
-
+  case OP_PUSH_SEQUENCE:
+    return simpleInstruction("OP_PUSH_SEQUENCE", offset);
+  case OP_POP_SEQUENCE:
+    return simpleInstruction("OP_POP_SEQUENCE", offset);
+  case OP_SHOW_REPL: // <--- ADD THIS
+    return simpleInstruction("OP_SHOW_REPL", offset);
   default:
     printf("Unknown opcode %d\n", instruction);
     return offset + 1;

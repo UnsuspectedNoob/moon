@@ -325,8 +325,26 @@ ObjMultiFunction *newMultiFunction(ObjString *name, int arity) {
 
 ObjUnion *newUnion(int count) {
   ObjUnion *unionObj = ALLOCATE_OBJ(ObjUnion, OBJ_UNION);
+
+  // 1. Lock into a GC-Safe State BEFORE allocating the array!
+  unionObj->count = 0;
+  unionObj->types = NULL;
+
   push(OBJ_VAL(unionObj)); // Shield it!
+
+  // 2. Trigger allocation. If this fires the GC, blackenObject will
+  // safely skip tracing because count is 0!
   unionObj->types = ALLOCATE(Value, count);
+
+  // 3. Initialize the raw C-memory with safe values. If the GC runs
+  // later, it won't crash trying to trace random C garbage.
+  for (int i = 0; i < count; i++) {
+    unionObj->types[i] = NIL_VAL;
+  }
+
+  // 4. Fully baked! Expose the count to the GC.
+  unionObj->count = count;
+
   pop(); // Unshield it!
   return unionObj;
 }
