@@ -241,7 +241,6 @@ static void analyzeNode(Node *node) {
     iterName[len] = '\0';
     registerSymbol(iterName, LSP_TYPE_UNKNOWN, NULL);
 
-    // --- THE FIX: Register the Index Variable! ---
     if (node->as.forStmt.hasIndex) {
       char idxName[64];
       int idxLen = node->as.forStmt.indexVar.length < 63

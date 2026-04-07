@@ -107,7 +107,6 @@ void addLocal(Token name) {
   local->name = name;
   local->depth = -1;
 
-  // THE FIX: Lexical Scope + Temporary Padding = Physical Slot!
   local->slot = (current->localCount - 1) + current->temporaries;
 }
 

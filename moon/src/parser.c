@@ -84,7 +84,6 @@ static void markPrepassLoaded(const char *path) {
   if (prepassLoadedCount < MAX_LOADED_FILES) {
     prepassLoadedFiles[prepassLoadedCount++] = my_strdup(path);
   } else {
-    // THE FIX: Tell the user why the compiler is failing!
     fprintf(stderr, "Error: Maximum number of loaded files (256) exceeded.\n");
     exit(1);
   }
@@ -205,7 +204,6 @@ void hoistPhrases(const char *source) {
                   }
                 }
 
-                // CRITICAL FIX: Sync 'next' to the RIGHT_PAREN we just found!
                 next = peek;
 
                 char buf[16];

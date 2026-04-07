@@ -90,7 +90,6 @@ bool tableGet(Table *table, Value key, Value *value) {
 }
 
 bool tableSet(Table *table, Value key, Value value) {
-  // THE BLACK HOLE FIX: Track both active items and tombstones!
   if (table->count + table->tombstones + 1 > table->capacity * TABLE_MAX_LOAD) {
     int capacity = GROW_CAPACITY(table->capacity);
     adjustCapacity(table, capacity);

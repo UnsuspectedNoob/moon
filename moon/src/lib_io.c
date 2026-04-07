@@ -130,7 +130,7 @@ const char ioBootstrap[] =
     "    give __io_read(path)\n"
     "end\n"
     "\n"
-    "let write (content: String) to file (path: String):\n"
+    "let write (content: String) to (path: String):\n"
     "    give __io_write(content, path)\n"
     "end\n"
     "\n"

@@ -136,14 +136,12 @@ Value pop() {
   return *vm.stackTop;
 }
 
-// FIX: Add peek() function
 Value peek(int distance) { return vm.stackTop[-1 - distance]; }
 
 static bool isFalsey(Value value) {
   return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
 }
 
-// FIX: Add concatenate() function for strings
 static void concatenate() {
   ObjString *right = AS_STRING(peek(0));
   ObjString *left = AS_STRING(peek(1));
