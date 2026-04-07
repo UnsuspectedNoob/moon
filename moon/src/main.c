@@ -65,7 +65,6 @@ static void repl() {
     int currentDepth = calculateBlockDepth(source);
 
     // 1. The Dynamic Prompt!
-    // 1. The Dynamic Prompt!
     if (currentDepth == 0) {
       printf(COLOR_CYAN " moon" COLOR_DIM " > " COLOR_RESET);
     } else {
