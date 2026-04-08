@@ -145,24 +145,24 @@ ObjString *copyString(const char *chars, int length) {
 }
 
 ObjString *copyStringUnescaped(const char *chars, int length) {
-  // Optimistic allocation: The result will be at most 'length' bytes.
   char *heapChars = ALLOCATE(char, length + 1);
   int dest = 0;
-
   for (int i = 0; i < length; i++) {
-    // Check for double backtick escape
-    if (chars[i] == '`' && i + 1 < length && chars[i + 1] == '`') {
-      heapChars[dest++] = '`'; // Write one
-      i++;                     // Skip the second one
+    // Squish double pipes into a single pipe!
+    if (chars[i] == '|' && i + 1 < length && chars[i + 1] == '|') {
+      heapChars[dest++] = '|';
+      i++; // Skip the second one
+    }
+    // Squish double backticks into a single backtick!
+    else if (chars[i] == '`' && i + 1 < length && chars[i + 1] == '`') {
+      heapChars[dest++] = '`';
+      i++;
     } else {
+      // Normal character
       heapChars[dest++] = chars[i];
     }
   }
-
   heapChars[dest] = '\0';
-
-  // takeString hashes the content, checks the intern table,
-  // and either adopts our 'heapChars' or frees it and returns the existing one.
   return takeString(heapChars, dest);
 }
 

@@ -6,7 +6,7 @@
 show "--- 1. VARIABLES, MATH & CASTING ---"
 let number be 10
 let is_valid be true
-let text be "42"
+let text be |42|
 
 add 5 to number
 update number * 2
@@ -19,23 +19,23 @@ show "Math & Casting OK: `parsed_num`"
 
 
 show "--- 2. CONTROL FLOW & MODIFIERS ---"
-let status be "pending"
+let status be |pending|
 
 if number > 10:
-    set status to "high"
+    set status to |high|
 else if number == 2:
-    set status to "perfect"
+    set status to |perfect|
 else:
-    set status to "low"
+    set status to |low|
 end
 
 unless is_valid is false:
-  set status to "validated"
+  set status to |validated|
 end
 
 # Statement Modifiers
-set status to "overridden" if parsed_num is 42
-give "Error!" unless status = "overridden"
+set status to |overridden| if parsed_num is 42
+give "Error!" unless status = |overridden|
 
 show "Control Flow OK: `status`"
 
@@ -61,22 +61,22 @@ show "Loops OK: `loop_sum`"
 
 
 show "--- 4. COLLECTIONS & SLICING ---"
-let heroes be ["Arthur", "Merlin", "Lancelot", "Gawain"]
-let stats be {"level": 99, "class": "Mage"}
+let heroes be [|Arthur|, |Merlin|, |Lancelot|, |Gawain|]
+let stats be {|level|: 99, |class|: |Mage|}
 
 # 1-Based Indexing & Slicing
 let first_hero be heroes[1]
 let sub_team be heroes[2 to end]
-let mage_level be stats["level"]
+let mage_level be stats[|level|]
 
 # Negative Indexing (Last item)
 let last_hero be heroes[-1]
 
 # In-place collection mutation
-update heroes + ["Percival"]
-update stats["level"] + 1
+update heroes + [|Percival|]
+update stats[|level|] + 1
 
-show "Collections OK: `sub_team` | Level: `stats["level"]`"
+show "Collections OK: `sub_team` | Level: `stats[|level|]`"
 
 
 show "--- 5. MULTIPLE DISPATCH & UNION TYPES ---"
@@ -94,7 +94,7 @@ let process collection (text: String):
 end
 
 let list_result be process collection [1, 2, 3]
-let str_result be process collection "moon"
+let str_result be process collection |moon|
 
 show "Multiple Dispatch OK: `list_result` | `str_result`"
 
@@ -102,20 +102,20 @@ show "Multiple Dispatch OK: `list_result` | `str_result`"
 show "--- 6. BLUEPRINTS & OOP ---"
 
 type Player:
-  name: "Unknown",
+  name: |Unknown|,
   health: 100,
   is_alive: true,
 end
 
 # Instantiation
 let p1 be Player {
-  name: "Munachi",
+  name: |Munachi|,
   health: 50
 }
 
 # The 'with' Keyword (Clone and Override)
 let p2 be Player with
-  name: "Emrys",
+  name: |Emrys|,
   health: 200
 end
 
@@ -141,7 +141,7 @@ let pieces be split "A,B,C" by ","
 let reversed be reverse [1, 2, 3]
 let joined be join reversed with "-"
 let popped be pop from pieces
-let idx be index of "B" in pieces
+let idx be index of |B| in pieces
 
 show "StdLib OK: Root=`root`, Pow=`pow`, Joined=`joined`, Popped=`popped`"
 

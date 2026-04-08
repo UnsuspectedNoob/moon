@@ -1,7 +1,7 @@
 show "--- INITIALIZING MAGIC SYSTEM ---"
 
 type Mage:
-  name: "Unknown",
+  name: |Unknown|,
   essencePool: 100
 end
 

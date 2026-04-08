@@ -4,7 +4,6 @@
 #include <string.h>
 
 #include "scanner.h"
-#include <stdbool.h>
 
 Scanner scanner;
 
@@ -14,6 +13,7 @@ void initScanner(const char *source) {
   scanner.line = 1;
   scanner.column = 1;
   scanner.interpolationDepth = 0;
+  scanner.preserveComments = false;
 }
 
 // -- Helper Functions --
@@ -80,11 +80,14 @@ static void skipWhitespace() {
       advance();
       break;
 
-    // Handle Comments (##)
+      // Handle Comments (##)
     case '#':
+      if (scanner.preserveComments)
+        return; // <-- Crucial!
       while (peek() != '\n' && !isAtEnd())
         advance();
       break;
+
     default:
       return;
     }
@@ -314,41 +317,37 @@ static Token number() {
 static Token string(bool isResuming) {
   for (;;) {
     char c = peek();
-
     if (isAtEnd())
-      return errorToken("Unterminated string.");
+      return errorToken(
+          "Unterminated string. Make sure to close it with a '|'.");
 
-    if (c == '"') {
-      advance(); // Consume the quote
+    // --- THE NEW ESCAPE HATCH (Double Pipe) ---
+    if (c == '|' && peekNext() == '|') {
+      advance(); // Consume first |
+      advance(); // Consume second |
+      continue;
+    }
+    // ------------------------------------------
 
-      // If we are resuming an outer string, this quote finishes the entire
-      // interpolation!
+    if (c == '|') {
+      advance(); // Consume the closing '|'
       if (isResuming) {
         scanner.interpolationDepth--;
         return makeToken(TOKEN_STRING_CLOSE);
       }
-
-      // Otherwise, it's just a normal string ending (like "not").
       return makeToken(TOKEN_STRING);
     }
 
     if (c == '`') {
-      // Check for escape (double backtick)
       if (peekNext() == '`') {
         advance();
         advance();
         continue;
       }
-
       advance(); // Consume the single backtick
-
-      // If we are resuming an outer string, this backtick just opens another
-      // hole!
       if (isResuming) {
         return makeToken(TOKEN_STRING_MIDDLE);
       }
-
-      // Otherwise, we are opening the very first hole from a fresh string
       scanner.interpolationDepth++;
       return makeToken(TOKEN_STRING_OPEN);
     }
@@ -418,18 +417,27 @@ Token scanToken() {
     return makeToken(match('=') ? TOKEN_LESS_EQUAL : TOKEN_LESS);
   case '>':
     return makeToken(match('=') ? TOKEN_GREATER_EQUAL : TOKEN_GREATER);
-  case '"':
-    return string(false);
-  case '`':
+  case '`': {
     if (scanner.interpolationDepth > 0) {
       return string(true); // Resume string scanning
     }
     return errorToken("Unexpected backtick.");
+  }
 
-  case '\'':
+  case '\'': {
     if (match('s'))
       return makeToken(TOKEN_POSSESSIVE);
     return errorToken("Unexpected character (orphan single quote).");
+  }
+
+  case '|':
+    return string(false);
+
+  case '#': {
+    while (peek() != '\n' && !isAtEnd())
+      advance();
+    return makeToken(TOKEN_COMMENT);
+  }
   }
 
   return errorToken("Unexpected character.");

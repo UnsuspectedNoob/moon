@@ -464,16 +464,16 @@ static Node *expression() {
 }
 
 static Node *string() {
-  // We chop off the leading and trailing quotes (+1 and -2)
-  ObjString *str =
-      copyString(parser.previous.start + 1, parser.previous.length - 2);
-
+  // Use copyStringUnescaped, and chop off 1 pipe from front and back (+1, -2)
+  ObjString *str = copyStringUnescaped(parser.previous.start + 1,
+                                       parser.previous.length - 2);
   return newLiteralNode(OBJ_VAL(str), parser.previous.line);
 }
 
-// Helper to chop off the quotes and backticks (+1 and -2)
 static Node *extractInterpolationString(Token token) {
-  ObjString *str = copyString(token.start + 1, token.length - 2);
+  // Use copyStringUnescaped, and chop off 1 pipe/backtick from front and back
+  // (+1, -2)
+  ObjString *str = copyStringUnescaped(token.start + 1, token.length - 2);
   return newLiteralNode(OBJ_VAL(str), token.line);
 }
 
@@ -978,6 +978,7 @@ static Node *dictComprehension(int line) {
 
 static Node *list() {
   int line = parser.previous.line;
+  ignoreNewlines();
 
   if (check(TOKEN_FOR))
     return listComprehension(line);
@@ -1009,6 +1010,7 @@ static Node *list() {
 
 static Node *dict() {
   int line = parser.previous.line;
+  ignoreNewlines();
 
   if (check(TOKEN_FOR))
     return dictComprehension(line);
@@ -1882,6 +1884,18 @@ static Node *statement() {
     stmt = expressionStatement();
   }
 
+  // --- 3. THE GLOBAL MODIFIER CATCH ---
+  // Catches trailing modifiers for break, skip, quit, and load!
+  if (match(TOKEN_IF)) {
+    Node *cond = expression();
+    stmt = newIfNode(cond, stmt, NULL, parser.previous.line);
+  } else if (match(TOKEN_UNLESS)) {
+    Node *cond = expression();
+    Token notToken = {TOKEN_NOT, "not", 3, parser.previous.line, 0};
+    Node *invertedCond = newUnaryNode(notToken, cond, parser.previous.line);
+    stmt = newIfNode(invertedCond, stmt, NULL, parser.previous.line);
+  }
+
   return stmt;
 }
 
@@ -2047,6 +2061,7 @@ static Node *letDeclaration() {
 
               // Extract the type annotation
               if (match(TOKEN_COLON)) {
+                ignoreNewlines();
                 writeNodeArray(&paramTypes, parseTypeAnnotation());
               } else {
                 Token anyToken = {.type = TOKEN_IDENTIFIER,

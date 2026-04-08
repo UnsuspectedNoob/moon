@@ -1,6 +1,8 @@
 #ifndef MOON_SCANNER_H
 #define MOON_SCANNER_H
 
+#include <stdbool.h>
+
 typedef enum {
   // Single-character tokens
   TOKEN_LEFT_PAREN,
@@ -75,6 +77,7 @@ typedef enum {
   TOKEN_WITH,
 
   TOKEN_NEWLINE,
+  TOKEN_COMMENT,
   TOKEN_ERROR,
   TOKEN_EOF
 } TokenType;
@@ -93,14 +96,13 @@ typedef struct {
   int line;
   int column;
   int interpolationDepth;
+  bool preserveComments;
 } Scanner;
 
 extern Scanner scanner;
 
 // Initialize the scanner with the source code string
 void initScanner(const char *source);
-
-#include <stdbool.h>
 
 // Scan the next token from the source
 Token scanToken();
