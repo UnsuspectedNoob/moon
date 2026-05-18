@@ -1420,6 +1420,13 @@ static Node *addStatement() {
             "This isn't a valid target for 'add'.",
             "You can only add to variables, subscripts, or properties (e.g., "
             "'add 5 to player's score').");
+
+    // --- THE AST LEAK FIX ---
+    // Free the orphaned expressions and the invalid target!
+    for (int i = 0; i < values.count; i++)
+      freeNode(values.items[i]);
+    freeNodeArray(&values);
+    freeNode(target);
     return NULL;
   }
 

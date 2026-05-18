@@ -80,12 +80,28 @@ static Value splitNative(int argCount, Value *args) {
   push(OBJ_VAL(list)); // GC Protection!
 
   if (delim->length == 0) {
-    // Split by character if delimiter is empty ""
-    for (int i = 0; i < string->length; i++) {
-      ObjString *charStr = copyString(string->chars + i, 1);
+    // --- THE UTF-8 EMOJI FIX ---
+    // Split by actual Unicode character boundaries, not just bytes!
+    int i = 0;
+    while (i < string->length) {
+      int charLen = 1;
+      unsigned char c = string->chars[i];
+      if ((c & 0xE0) == 0xC0)
+        charLen = 2;
+      else if ((c & 0xF0) == 0xE0)
+        charLen = 3;
+      else if ((c & 0xF8) == 0xF0)
+        charLen = 4;
+
+      // Prevent buffer overreads on malformed UTF-8
+      if (i + charLen > string->length)
+        charLen = string->length - i;
+
+      ObjString *charStr = copyString(string->chars + i, charLen);
       push(OBJ_VAL(charStr)); // GC Protection
       appendList(list, OBJ_VAL(charStr));
       pop();
+      i += charLen;
     }
   } else {
     // Split by delimiter

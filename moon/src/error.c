@@ -201,12 +201,11 @@ void reportRuntimeError(ObjString *moduleName, int line, ErrorType type,
   // --- THE VAULT LOOKUP ---
   Value sourceVal;
   if (moduleName != NULL &&
-      tableGet(&vm.loadedModules, OBJ_VAL(moduleName), &sourceVal)) {
+      tableGet(&vm.loadedModules, OBJ_VAL(moduleName), &sourceVal) &&
+      IS_STRING(sourceVal)) {
     const char *oldSource = globalSource;
     globalSource = AS_CSTRING(sourceVal);
-
     printSnippet(line, 0, 0); // Draw the squiggles!
-
     globalSource = oldSource;
   } else {
     fprintf(stderr, COLOR_DIM "  (Source code unavailable)\n\n" COLOR_RESET);

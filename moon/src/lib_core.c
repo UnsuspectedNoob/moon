@@ -25,18 +25,21 @@ static Value showNative(int argCount, Value *args) {
 
 static Value askNative(int argCount, Value *args) {
   if (argCount != 1)
-    return NIL_VAL; // Arity Shield
-
+    return NIL_VAL;
   ObjString *prompt = valueToString(args[0]);
   printf("%s", prompt->chars);
   fflush(stdout);
 
-  char buffer[1024];
+  char buffer[4096];
   if (fgets(buffer, sizeof(buffer), stdin) != NULL) {
     size_t length = strlen(buffer);
     if (length > 0 && buffer[length - 1] == '\n') {
       buffer[length - 1] = '\0';
       length--;
+    } else {
+      int ch;
+      while ((ch = getchar()) != '\n' && ch != EOF)
+        ;
     }
     return OBJ_VAL(copyString(buffer, (int)length));
   }

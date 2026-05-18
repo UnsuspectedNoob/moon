@@ -299,6 +299,25 @@ static Token identifier() {
 }
 
 static Token number() {
+  // --- THE HEX/BINARY FIX ---
+  if (peek() == '0') {
+    char next = peekNext();
+    if (next == 'x' || next == 'X') {
+      advance();
+      advance(); // Consume 0x
+      while (isDigit(peek()) || (peek() >= 'a' && peek() <= 'f') ||
+             (peek() >= 'A' && peek() <= 'F'))
+        advance();
+      return makeToken(TOKEN_NUMBER);
+    } else if (next == 'b' || next == 'B') {
+      advance();
+      advance(); // Consume 0b
+      while (peek() == '0' || peek() == '1')
+        advance();
+      return makeToken(TOKEN_NUMBER);
+    }
+  }
+
   while (isDigit(peek()))
     advance();
 
@@ -317,9 +336,11 @@ static Token number() {
 static Token string(bool isResuming) {
   for (;;) {
     char c = peek();
-    if (isAtEnd())
+    if (isAtEnd()) {
+      scanner.interpolationDepth = 0; // <--- THE REPL UNLOCK FIX
       return errorToken(
           "Unterminated string. Make sure to close it with a '|'.");
+    }
 
     // --- THE NEW ESCAPE HATCH (Double Pipe) ---
     if (c == '|' && peekNext() == '|') {
@@ -438,6 +459,8 @@ Token scanToken() {
       advance();
     return makeToken(TOKEN_COMMENT);
   }
+  case ';':
+    return errorToken("MOON does not use semicolons. Just press Enter!");
   }
 
   return errorToken("Unexpected character.");

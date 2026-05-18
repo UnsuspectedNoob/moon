@@ -1,6 +1,7 @@
 // vm.c
 
 #include "vm.h"
+#include "cast.h"
 #include "lib_core.h"
 #include "lib_io.h"
 #include "lib_list.h"
@@ -14,7 +15,6 @@
 
 #include "compiler.h"
 #include "debug.h"
-#include "error.h"
 #include "memory.h"
 #include "object.h"
 #include "table.h"
@@ -30,8 +30,8 @@ static void resetStack() { vm.stackTop = vm.stack; }
 // ==========================================
 
 // The Master Runtime Error function that talks to error.c
-static void runtimeErrorDetailed(ErrorType type, const char *hint,
-                                 const char *format, ...) {
+void runtimeErrorDetailed(ErrorType type, const char *hint, const char *format,
+                          ...) {
   // 1. Safely format the dynamic message into a string buffer
   char message[1024];
   va_list args;
@@ -138,7 +138,7 @@ Value pop() {
 
 Value peek(int distance) { return vm.stackTop[-1 - distance]; }
 
-static bool isFalsey(Value value) {
+bool isFalsey(Value value) {
   return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
 }
 
@@ -158,6 +158,18 @@ bool valuesEqual(Value a, Value b) {
   // Fast path: Exact same memory address, or identical numbers/booleans
   if (a == b)
     return true;
+
+  // --- THE IEEE 754 EPSILON SHIELD ---
+  // If they are both numbers but failed the exact bit-match above,
+  // check if they are microscopically close!
+  if (IS_NUMBER(a) && IS_NUMBER(b)) {
+    double numA = AS_NUMBER(a);
+    double numB = AS_NUMBER(b);
+    // 1e-14 is tight enough to fix 0.1+0.2=0.3, but precise enough to not break
+    // real math
+    return fabs(numA - numB) < 1e-14;
+  }
+  // -----------------------------------
 
   // The String Liberation: Deep character comparison
   if (IS_STRING(a) && IS_STRING(b)) {
@@ -601,17 +613,19 @@ TARGET_OP_MOD: {
                 "Modulo by zero.");
   }
 
-  // --- THE FAST PATH ---
   int intA = (int)a;
   int intB = (int)b;
 
-  // If casting them to ints didn't lose any decimal data, use the CPU
-  // hardware!
   if (a == intA && b == intB) {
-    push(NUMBER_VAL(intA % intB));
+    int mod = intA % intB;
+    if (mod < 0)
+      mod += (intB < 0 ? -intB : intB); // Force positive wrap-around
+    push(NUMBER_VAL(mod));
   } else {
-    // Otherwise, fall back to the safe, slower C library
-    push(NUMBER_VAL(fmod(a, b)));
+    double mod = fmod(a, b);
+    if (mod < 0.0)
+      mod += (b < 0.0 ? -b : b);
+    push(NUMBER_VAL(mod));
   }
   DISPATCH();
 }
@@ -837,18 +851,20 @@ TARGET_OP_BUILD_LIST: {
       ObjRange *range = AS_RANGE(item);
       double start = range->start;
       double end = range->end;
-      double step = range->step; // The new step value!
+      double step = range->step;
 
-      // Expand counting up (e.g., 1 to 10 by 2)
-      if (start <= end) {
-        for (double val = start; val <= end; val += step) {
-          appendList(list, NUMBER_VAL(val));
+      // --- THE FLOATING-POINT DRIFT FIX ---
+      // Calculate exact number of steps safely using round() to absorb float
+      // fuzziness
+      if (start <= end && step > 0) {
+        int count = (int)round((end - start) / step) + 1;
+        for (int k = 0; k < count; k++) {
+          appendList(list, NUMBER_VAL(start + (k * step)));
         }
-      }
-      // Expand counting down (e.g., 10 to 1 by 2)
-      else {
-        for (double val = start; val >= end; val -= step) {
-          appendList(list, NUMBER_VAL(val));
+      } else if (start >= end && step > 0) {
+        int count = (int)round((start - end) / step) + 1;
+        for (int k = 0; k < count; k++) {
+          appendList(list, NUMBER_VAL(start - (k * step)));
         }
       }
     } else {
@@ -1541,16 +1557,17 @@ TARGET_OP_CALL: {
         if (IS_UNION(expectedVal)) {
           ObjUnion *unionObj = AS_UNION(expectedVal);
           bool matchedUnion = false;
-
           for (int k = 0; k < unionObj->count; k++) {
             if (AS_TYPE(unionObj->types[k]) == actualType) {
               matchedUnion = true;
               break;
             }
           }
-
           if (matchedUnion) {
-            currentScore += 2; // EXACT MATCH inside the union!
+            // THE TIE-BREAKER
+            // A tight union (2 items) scores higher than a loose union (5
+            // items). Exact match gets +20. Unions get 10 minus their width!
+            currentScore += (15 - unionObj->count);
           } else {
             isMatch = false; // Hard fail
             break;
@@ -1559,13 +1576,12 @@ TARGET_OP_CALL: {
         // --- THE STANDARD CHECK ---
         else {
           ObjType *expectedType = AS_TYPE(expectedVal);
-
           if (expectedType == actualType) {
-            currentScore += 3; // EXACT MATCH
+            currentScore += 20; // EXACT MATCH is king
           } else if (expectedType == vm.anyType) {
-            currentScore += 1; // WILDCARD
+            currentScore += 1; // WILDCARD is the absolute fallback
           } else {
-            isMatch = false; // Hard fail
+            isMatch = false;
             break;
           }
         }
@@ -1722,8 +1738,8 @@ TARGET_OP_DEFINE_METHOD: {
 }
 
 TARGET_OP_CAST: {
-  Value typeVal = pop(); // The Target Blueprint
-  Value val = pop();     // The Raw Data
+  Value typeVal = pop();
+  Value val = pop();
 
   if (!IS_TYPE(typeVal)) {
     THROW_ERROR(ERR_TYPE,
@@ -1731,259 +1747,16 @@ TARGET_OP_CAST: {
                 "String, or a custom type).",
                 "Invalid cast target.");
   }
-  ObjType *targetType = AS_TYPE(typeVal);
 
-  // --- THE FAST-PATH IDENTITY CHECK ---
-  if (targetType == getObjType(val)) {
-    push(val); // It's already the correct type! Just push it back and move on.
-    DISPATCH();
+  Value castResult;
+  if (!executeCast(val, AS_TYPE(typeVal), &castResult)) {
+    // If the helper failed, it already printed the error.
+    // We just need to sync the register and halt the VM.
+    frame->ip = ip;
+    return INTERPRET_RUNTIME_ERROR;
   }
 
-  // GROUP 0: Reflection (The typeof operator)
-  if (targetType == vm.typeType) {
-    push(OBJ_VAL(getObjType(val)));
-  }
-  // GROUP 1: To String (Universal)
-  else if (targetType == vm.stringType) {
-    if (IS_LIST(val)) {
-      ObjList *list = AS_LIST(val);
-
-      // 1. Array to hold the stringified versions of each item
-      ObjString **strings = malloc(sizeof(ObjString *) * list->count);
-      int totalLength = 0;
-
-      // 2. First Pass: Convert everything to a string and protect it from the
-      // GC!
-      for (int i = 0; i < list->count; i++) {
-        strings[i] = valueToString(list->items[i]);
-        push(OBJ_VAL(strings[i])); // Pushed to VM stack to prevent GC sweep
-        totalLength += strings[i]->length;
-      }
-
-      // 3. Second Pass: Allocate the exact memory needed and smash them
-      // together
-      char *chars = ALLOCATE(char, totalLength + 1);
-      char *dest = chars;
-      for (int i = 0; i < list->count; i++) {
-        memcpy(dest, strings[i]->chars, strings[i]->length);
-        dest += strings[i]->length;
-      }
-      chars[totalLength] = '\0';
-
-      // 4. Create the final MOON string
-      ObjString *result = takeString(chars, totalLength);
-
-      // 5. Cleanup: Pop the temporary strings off the VM stack and free the C
-      // array
-      vm.stackTop -= list->count;
-      free(strings);
-
-      push(OBJ_VAL(result));
-    } else {
-      // For everything else, use the standard stringifier
-      push(OBJ_VAL(valueToString(val)));
-    }
-  }
-  // GROUP 2: To Bool
-  else if (targetType == vm.boolType) {
-    if (IS_STRING(val)) {
-      ObjString *s = AS_STRING(val);
-      if (strcmp(s->chars, "true") == 0)
-        push(BOOL_VAL(true));
-      else if (strcmp(s->chars, "false") == 0)
-        push(BOOL_VAL(false));
-      else
-        THROW_ERROR(ERR_TYPE, "String must be exactly 'true' or 'false'.",
-                    "Invalid string to bool cast.");
-    } else {
-      push(BOOL_VAL(!isFalsey(val)));
-    }
-  }
-
-  // GROUP 3: To Number
-  else if (targetType == vm.numberType) {
-    if (IS_STRING(val)) {
-      ObjString *s = AS_STRING(val);
-      char *end;
-      double num = strtod(s->chars, &end);
-
-      if (*end != '\0') {
-        THROW_ERROR(ERR_TYPE,
-                    "Make sure the string only contains digits, a decimal "
-                    "point, or a minus sign.",
-                    "Cannot cast the string '%s' to a Number.", s->chars);
-      }
-      push(NUMBER_VAL(num));
-    } else if (IS_BOOL(val)) {
-      push(NUMBER_VAL(AS_BOOL(val) ? 1.0 : 0.0));
-    }
-    // --- THE NEW LIST TO NUMBER CAST ---
-    else if (IS_LIST(val)) {
-      ObjList *list = AS_LIST(val);
-      double result = 0.0;
-
-      for (int i = 0; i < list->count; i++) {
-        if (!IS_NUMBER(list->items[i])) {
-          THROW_ERROR(ERR_TYPE,
-                      "A list can only be cast to a Number if every single "
-                      "item inside it is a number.",
-                      "Found a %s inside the list. Cannot cast to Number.",
-                      TYPE_NAME(list->items[i]));
-        }
-        // Horner's Method: Shift the total left by one decimal place, then add
-        // the new digit! [2, 3, 5] -> (0*10)+2=2 -> (2*10)+3=23 ->
-        // (23*10)+5=235
-        result = (result * 10.0) + AS_NUMBER(list->items[i]);
-      }
-
-      push(NUMBER_VAL(result));
-    }
-    // -----------------------------------
-    else {
-      // Don't forget to update the fallback error message!
-      THROW_ERROR(ERR_TYPE,
-                  "Can only cast Strings, Bools, and Lists to Numbers.",
-                  "Invalid cast to Number.");
-    }
-  }
-
-  // GROUP 4a: To List
-  else if (targetType == vm.listType) {
-    if (IS_RANGE(val)) {
-      ObjRange *r = AS_RANGE(val);
-      ObjList *l = newList();
-      push(OBJ_VAL(l));
-      if (r->start <= r->end) {
-        for (double i = r->start; i <= r->end; i += r->step)
-          appendList(l, NUMBER_VAL(i));
-      } else {
-        for (double i = r->start; i >= r->end; i -= r->step)
-          appendList(l, NUMBER_VAL(i));
-      }
-      pop();
-      push(OBJ_VAL(l));
-    } else if (IS_STRING(val)) {
-      ObjString *s = AS_STRING(val);
-      ObjList *l = newList();
-      push(OBJ_VAL(l));
-      for (int i = 0; i < s->length; i++) {
-        appendList(l, OBJ_VAL(vm.charStrings[(uint8_t)s->chars[i]]));
-      }
-      pop();
-      push(OBJ_VAL(l));
-    } else if (IS_NUMBER(val)) {
-      // 1. We cheat! We convert the number to a string first so we can parse
-      // its characters.
-      ObjString *s = valueToString(val);
-      push(OBJ_VAL(s)); // GC Protection
-
-      ObjList *l = newList();
-      push(OBJ_VAL(l)); // GC Protection
-
-      // 2. Loop through the stringified number
-      for (int i = 0; i < s->length; i++) {
-        char c = s->chars[i];
-
-        if (c >= '0' && c <= '9') {
-          // If it's a digit, subtract '0' (ASCII 48) to get the actual math
-          // number!
-          appendList(l, NUMBER_VAL(c - '0'));
-        } else {
-          // If it's a decimal point (or a minus sign/exponent), keep it as a
-          // string
-          appendList(l, OBJ_VAL(vm.charStrings[(uint8_t)c]));
-        }
-      }
-
-      // 3. Clean up the stack
-      pop();            // Pop list
-      pop();            // Pop string
-      push(OBJ_VAL(l)); // Push list back as the final result
-    } else if (IS_DICT(val)) {
-      ObjDict *d = AS_DICT(val);
-      ObjList *l = newList();
-      push(OBJ_VAL(l));
-      for (int i = 0; i < d->fields.capacity; i++) {
-        Entry *e = &d->fields.entries[i];
-        if (!IS_EMPTY(e->key) && !IS_TOMB(e->key)) {
-          ObjList *pair = newList();
-          push(OBJ_VAL(pair));
-          appendList(pair, e->key);
-          appendList(pair, e->value);
-          pop();
-          appendList(l, OBJ_VAL(pair));
-        }
-      }
-      pop();
-      push(OBJ_VAL(l));
-    } else {
-      THROW_ERROR(ERR_TYPE, "Cannot cast this type to a List.",
-                  "Invalid cast to List.");
-    }
-  }
-  // GROUP 4b: To Dict
-  else if (targetType == vm.dictType) {
-    if (IS_LIST(val)) {
-      ObjList *l = AS_LIST(val);
-      ObjDict *d = newDict();
-      push(OBJ_VAL(d));
-      for (int i = 0; i < l->count; i++) {
-        if (!IS_LIST(l->items[i]))
-          THROW_ERROR(ERR_TYPE,
-                      "List items must be key-value pairs (lists of 2) to cast "
-                      "to Dict.",
-                      "Invalid list to dict cast.");
-        ObjList *pair = AS_LIST(l->items[i]);
-        if (pair->count != 2)
-          THROW_ERROR(ERR_TYPE, "Pairs must have exactly 2 items.",
-                      "Invalid list to dict cast.");
-        tableSet(&d->fields, pair->items[0], pair->items[1]);
-      }
-      pop();
-      push(OBJ_VAL(d));
-    } else if (IS_INSTANCE(val)) {
-      ObjInstance *inst = AS_INSTANCE(val);
-      ObjDict *d = newDict();
-      push(OBJ_VAL(d));
-      tableAddAll(&inst->fields, &d->fields);
-      pop();
-      push(OBJ_VAL(d));
-    } else {
-      THROW_ERROR(ERR_TYPE, "Cannot cast this type to a Dict.",
-                  "Invalid cast to Dict.");
-    }
-  }
-  // GROUP 5: Hydration (Dict to Custom Type)
-  else if (!targetType->isNative) {
-    if (!IS_DICT(val))
-      THROW_ERROR(ERR_TYPE, "Can only hydrate a Blueprint using a Dictionary.",
-                  "Invalid hydration cast.");
-    ObjDict *d = AS_DICT(val);
-    ObjInstance *inst = newInstance(targetType);
-    push(OBJ_VAL(inst));
-
-    tableAddAll(&targetType->properties, &inst->fields); // Load defaults
-
-    // Apply overrides and enforce strictness
-    for (int i = 0; i < d->fields.capacity; i++) {
-      Entry *e = &d->fields.entries[i];
-      if (!IS_EMPTY(e->key) && !IS_TOMB(e->key)) {
-        Value dummy;
-        if (!tableGet(&targetType->properties, e->key, &dummy)) {
-          THROW_ERROR(ERR_TYPE,
-                      "Dictionary contains a key not present on the Blueprint.",
-                      "Strict hydration failure.");
-        }
-        tableSet(&inst->fields, e->key, e->value);
-      }
-    }
-    pop();
-    push(OBJ_VAL(inst));
-  } else {
-    THROW_ERROR(ERR_TYPE, "Cannot cast to this native type directly.",
-                "Invalid cast target.");
-  }
-
+  push(castResult);
   DISPATCH();
 }
 

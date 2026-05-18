@@ -125,6 +125,11 @@ static void markRoots() {
     markObject((Obj *)compiler->function);
     compiler = compiler->enclosing;
   }
+
+  // --- 7. THE SEQUENCE SHIELD (Phase 1 Fix) ---
+  for (int i = 0; i < vm.sequenceCount; i++) {
+    markValue(vm.sequenceStack[i]);
+  }
 }
 
 // --- PHASE 2: TRACE THE GRAPH ---
@@ -358,6 +363,10 @@ void collectGarbage() {
   // Phase 5: Calculate the next GC threshold!
   // We dynamically scale the threshold based on how much memory survived.
   vm.nextGC = vm.bytesAllocated * 2;
+
+  if (vm.nextGC < 1024 * 1024) {
+    vm.nextGC = 1024 * 1024;
+  }
 
 #ifdef DEBUG_PRINT_CODE
   if (vm.debugMode) {

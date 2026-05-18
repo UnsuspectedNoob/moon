@@ -22,7 +22,8 @@ typedef enum {
   LSP_TYPE_LIST,
   LSP_TYPE_DICTIONARY,
   LSP_TYPE_FUNCTION,
-  LSP_TYPE_BLUEPRINT
+  LSP_TYPE_BLUEPRINT,
+  LSP_TYPE_UNION,
 } LspSymbolType;
 
 // --- THE SPELLCHECKING ORACLE (For the LSP) ---
@@ -431,6 +432,8 @@ static void analyzeNode(Node *node) {
             tempName[len] = '\0';
             bpName = tempName;
           }
+        } else if (expr->type == NODE_UNION_TYPE) {
+          guessedType = LSP_TYPE_UNION;
         }
 
         analyzeNode(expr);
@@ -659,8 +662,16 @@ static void analyzeNode(Node *node) {
 
   case NODE_INSTANTIATE:
     analyzeNode(node->as.instantiate.target);
-    for (int i = 0; i < node->as.instantiate.count; i++)
+    for (int i = 0; i < node->as.instantiate.count; i++) {
+
+      // --- THE KEY COLORING FIX ---
+      // Send token type 9 (Property) to NeoVim!
+      addSemToken(node->as.instantiate.propertyNames[i].line,
+                  node->as.instantiate.propertyNames[i].column,
+                  node->as.instantiate.propertyNames[i].length, 9);
+
       analyzeNode(node->as.instantiate.values[i]);
+    }
     break;
 
   case NODE_CAST:
@@ -821,6 +832,8 @@ static void sendHoverResponse(cJSON *id, int cursorLine, int cursorCol) {
         typeStr = "Blueprint";
       else if (lspSymbols[i].type == LSP_TYPE_FUNCTION)
         typeStr = "Function";
+      else if (lspSymbols[i].type == LSP_TYPE_UNION)
+        typeStr = "Union Type";
 
       // Extract docstring
       char docBuf[256];

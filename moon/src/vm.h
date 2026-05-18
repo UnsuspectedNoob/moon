@@ -2,6 +2,7 @@
 #define MOON_VM_H
 
 #include "chunk.h"
+#include "error.h"
 #include "object.h"
 #include "table.h"
 #include "value.h"
@@ -89,8 +90,11 @@ typedef struct {
 void push(Value value);
 Value pop();
 Value peek(int distance);
+bool isFalsey(Value value);
 void defineNative(const char *name, NativeFn function);
 void throwNativeError(const char *hint, const char *format, ...);
+void runtimeErrorDetailed(ErrorType type, const char *hint, const char *format,
+                          ...);
 
 extern bool isCoreBootstrapped;
 
