@@ -35,8 +35,7 @@ void initCompiler(Compiler *compiler, FunctionType type) {
   compiler->function->isTopLevel = (type == TYPE_SCRIPT);
 
   if (type != TYPE_SCRIPT) {
-    current->function->name =
-        copyString(parser.previous.start, parser.previous.length);
+    current->function->name = copyString("<anonymous>", 11);
   }
 
   Local *local = &compiler->locals[compiler->localCount++];

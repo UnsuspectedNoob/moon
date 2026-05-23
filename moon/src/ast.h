@@ -14,7 +14,7 @@ typedef enum {
   NODE_SUBSCRIPT,
   NODE_PROPERTY,
   NODE_CAST,
-  NODE_CALL,
+
   NODE_PHRASAL_CALL,
   NODE_INTERPOLATION,
   NODE_EXPRESSION_STMT,
@@ -204,6 +204,7 @@ struct sNode {
   NodeType type;
   Node *parent;
   int line;
+  bool usesIt;
 
   union {
     LiteralPayload literal;
@@ -243,6 +244,7 @@ Node *newUnaryNode(Token opToken, Node *right, int line);
 Node *newBinaryNode(Node *left, Token opToken, Node *right, int line);
 Node *newSubscriptNode(Node *target, Node *index, int line);
 Node *newEndNode(int line);
+bool containsItNode(Node *node);
 
 Node *newBlockNode(Node **statements, int count, int line);
 Node *newLetNode(Token *names, int nameCount, Node **exprs, int exprCount,
@@ -269,7 +271,7 @@ Node *newDictNode(Node **keys, Node **values, int count, int line);
 Node *newRangeNode(Node *start, Node *end, Node *step, int line);
 Node *newPropertyNode(Node *target, Token name, int line);
 
-Node *newCallNode(Node *callee, Node **arguments, int argCount, int line);
+
 
 Node *newTypeNode(Token name, Token *propertyNames, Node **defaultValues,
                   int count, int line);

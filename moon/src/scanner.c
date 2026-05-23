@@ -57,16 +57,18 @@ static Token makeToken(TokenType type) {
   token.length = (int)(scanner.current - scanner.start);
   token.line = scanner.line;
   token.column = scanner.column - token.length;
+  token.errorMessage = NULL;
   return token;
 }
 
 static Token errorToken(const char *message) {
   Token token;
   token.type = TOKEN_ERROR;
-  token.start = message;
-  token.length = (int)strlen(message);
+  token.start = scanner.current - 1;
+  token.length = 1;
   token.line = scanner.line;
-  token.column = scanner.column - token.length;
+  token.column = scanner.column - 1;
+  token.errorMessage = message;
   return token;
 }
 
@@ -179,6 +181,8 @@ static TokenType identifierType() {
         return checkKeyword(2, 0, "", TOKEN_IN); // in
       case 's':
         return checkKeyword(2, 0, "", TOKEN_IS); // is
+      case 't':
+        return checkKeyword(2, 0, "", TOKEN_IT); // it
       }
     }
     break;
@@ -348,6 +352,14 @@ static Token string(bool isResuming) {
       advance(); // Consume second "
       continue;
     }
+    
+    // --- STANDARD ESCAPE SEQUENCES ---
+    if (c == '\\') {
+      advance(); // Consume '\'
+      advance(); // Consume the escaped character
+      continue;
+    }
+    
     // ------------------------------------------
 
     if (c == '"') {
@@ -356,7 +368,10 @@ static Token string(bool isResuming) {
         scanner.interpolationDepth--;
         return makeToken(TOKEN_STRING_CLOSE);
       }
-      return makeToken(TOKEN_STRING);
+      Token t = makeToken(TOKEN_STRING);
+      // DEBUG:
+      // printf("DEBUG STRING: %.*s\n", t.length, t.start);
+      return t;
     }
 
     if (c == '`') {

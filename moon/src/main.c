@@ -79,6 +79,7 @@ static void repl() {
       // Print the branch connector for the current line
       printf("├─> " COLOR_RESET);
     }
+    fflush(stdout);
 
     // 2. Grab the input
     if (!fgets(line, sizeof(line), stdin)) {

@@ -1,6 +1,7 @@
 #include "ast.h"
 #include "memory.h"
 #include <stdlib.h>
+#include <string.h>
 
 // -- Compiling the dynamic arrays
 DEFINE_ARRAY(Node *, NodeArray)
@@ -9,9 +10,11 @@ DEFINE_ARRAY(Token, TokenArray)
 // Helper to allocate a raw node
 static Node *allocateNode(NodeType type, int line) {
   Node *node = ALLOCATE(Node, 1);
+  memset(node, 0, sizeof(Node));
   node->type = type;
   node->parent = NULL; // Default to NULL, parser links this later
   node->line = line;
+  node->usesIt = false;
   return node;
 }
 
@@ -25,6 +28,8 @@ Node *newLiteralNode(Value value, int line) {
 
 Node *newBinaryNode(Node *left, Token operator, Node *right, int line) {
   Node *node = allocateNode(NODE_BINARY, line);
+  if (left != NULL && left->usesIt) { node->usesIt = true; }
+  if (right != NULL && right->usesIt) { node->usesIt = true; }
   node->as.binary.left = left;
   node->as.binary.opToken = operator;
   node->as.binary.right = right;
@@ -40,6 +45,9 @@ Node *newBinaryNode(Node *left, Token operator, Node *right, int line) {
 
 Node *newIfNode(Node *condition, Node *thenBranch, Node *elseBranch, int line) {
   Node *node = allocateNode(NODE_IF, line);
+  if (condition != NULL && condition->usesIt) { node->usesIt = true; }
+  if (thenBranch != NULL && thenBranch->usesIt) { node->usesIt = true; }
+  if (elseBranch != NULL && elseBranch->usesIt) { node->usesIt = true; }
   node->as.ifStmt.condition = condition;
   node->as.ifStmt.thenBranch = thenBranch;
   node->as.ifStmt.elseBranch = elseBranch;
@@ -56,12 +64,16 @@ Node *newIfNode(Node *condition, Node *thenBranch, Node *elseBranch, int line) {
 
 Node *newVariableNode(Token name, int line) {
   Node *node = allocateNode(NODE_VARIABLE, line);
+  if (name.length == 3 && name.start[0] == ' ' && name.start[1] == 'i' && name.start[2] == 't') {
+    node->usesIt = true;
+  }
   node->as.variable.name = name;
   return node;
 }
 
 Node *newUnaryNode(Token opToken, Node *right, int line) {
   Node *node = allocateNode(NODE_UNARY, line);
+  if (right != NULL && right->usesIt) { node->usesIt = true; }
   node->as.unary.opToken = opToken;
   node->as.unary.right = right;
   if (right != NULL)
@@ -71,6 +83,9 @@ Node *newUnaryNode(Token opToken, Node *right, int line) {
 
 Node *newRangeNode(Node *start, Node *end, Node *step, int line) {
   Node *node = allocateNode(NODE_RANGE, line);
+  if (start != NULL && start->usesIt) { node->usesIt = true; }
+  if (end != NULL && end->usesIt) { node->usesIt = true; }
+  if (step != NULL && step->usesIt) { node->usesIt = true; }
   node->as.range.start = start;
   node->as.range.end = end;
   node->as.range.step = step;
@@ -85,6 +100,7 @@ Node *newRangeNode(Node *start, Node *end, Node *step, int line) {
 
 Node *newListNode(Node **items, int count, int line) {
   Node *node = allocateNode(NODE_LIST, line);
+  if (items != NULL) { for (int i = 0; i < count; i++) { if (items[i] != NULL && items[i]->usesIt) node->usesIt = true; } }
   node->as.list.count = count;
   node->as.list.items = ALLOCATE(Node *, count);
   for (int i = 0; i < count; i++) {
@@ -98,6 +114,8 @@ Node *newListNode(Node **items, int count, int line) {
 Node *newDictNode(Node **keys, Node **values, int count, int line) {
   // 1. Use the unified AST allocator
   Node *node = allocateNode(NODE_DICT, line);
+  if (keys != NULL) { for (int i = 0; i < count; i++) { if (keys[i] != NULL && keys[i]->usesIt) node->usesIt = true; } }
+  if (values != NULL) { for (int i = 0; i < count; i++) { if (values[i] != NULL && values[i]->usesIt) node->usesIt = true; } }
 
   node->as.dictExpr.count = count;
 
@@ -119,6 +137,8 @@ Node *newDictNode(Node **keys, Node **values, int count, int line) {
 
 Node *newSubscriptNode(Node *left, Node *index, int line) {
   Node *node = allocateNode(NODE_SUBSCRIPT, line);
+  if (left != NULL && left->usesIt) { node->usesIt = true; }
+  if (index != NULL && index->usesIt) { node->usesIt = true; }
   node->as.subscript.left = left;
   node->as.subscript.index = index;
   if (left)
@@ -132,6 +152,7 @@ Node *newEndNode(int line) { return allocateNode(NODE_END, line); }
 
 Node *newBlockNode(Node **statements, int count, int line) {
   Node *node = allocateNode(NODE_BLOCK, line);
+  if (statements != NULL) { for (int i = 0; i < count; i++) { if (statements[i] != NULL && statements[i]->usesIt) node->usesIt = true; } }
   node->as.block.count = count;
   node->as.block.statements = ALLOCATE(Node *, count);
   for (int i = 0; i < count; i++) {
@@ -145,6 +166,8 @@ Node *newBlockNode(Node **statements, int count, int line) {
 Node *newSetNode(Node **targets, int targetCount, Node **values, int valueCount,
                  int line) {
   Node *node = allocateNode(NODE_SET, line);
+  if (targets != NULL) { for (int i = 0; i < targetCount; i++) { if (targets[i] != NULL && targets[i]->usesIt) node->usesIt = true; } }
+  if (values != NULL) { for (int i = 0; i < valueCount; i++) { if (values[i] != NULL && values[i]->usesIt) node->usesIt = true; } }
 
   node->as.set.targetCount = targetCount;
   node->as.set.valueCount = valueCount;
@@ -168,6 +191,7 @@ Node *newSetNode(Node **targets, int targetCount, Node **values, int valueCount,
 
 Node *newSingleExprNode(NodeType type, Node *expression, int line) {
   Node *node = allocateNode(type, line); // Used for SHOW, RETURN, EXPR_STMT
+  if (expression != NULL && expression->usesIt) { node->usesIt = true; }
   node->as.singleExpr.expression = expression;
   if (expression != NULL)
     expression->parent = node;
@@ -176,6 +200,8 @@ Node *newSingleExprNode(NodeType type, Node *expression, int line) {
 
 Node *newLogicalNode(Node *left, Token opToken, Node *right, int line) {
   Node *node = allocateNode(NODE_LOGICAL, line);
+  if (left != NULL && left->usesIt) { node->usesIt = true; }
+  if (right != NULL && right->usesIt) { node->usesIt = true; }
   node->as.binary.left = left; // We can reuse the binary payload structurally
   node->as.binary.opToken = opToken;
   node->as.binary.right = right;
@@ -190,6 +216,8 @@ Node *newLogicalNode(Node *left, Token opToken, Node *right, int line) {
 
 Node *newWhileNode(Node *condition, Node *body, int line) {
   Node *node = allocateNode(NODE_WHILE, line);
+  if (condition != NULL && condition->usesIt) { node->usesIt = true; }
+  if (body != NULL && body->usesIt) { node->usesIt = true; }
   node->as.whileStmt.condition = condition;
   node->as.whileStmt.body = body;
   if (condition != NULL)
@@ -203,6 +231,7 @@ Node *newWhileNode(Node *condition, Node *body, int line) {
 Node *newForNode(Token iterator, Token indexVar, bool hasIndex, Node *sequence,
                  Node *body, int line) {
   Node *node = allocateNode(NODE_FOR, line);
+  if (sequence != NULL && sequence->usesIt) { node->usesIt = true; }
   node->as.forStmt.iterator = iterator;
   node->as.forStmt.indexVar = indexVar; // <--- NEW
   node->as.forStmt.hasIndex = hasIndex; // <--- NEW
@@ -220,6 +249,7 @@ Node *newBreakNode(int line) {
   node->type = NODE_BREAK;
   node->parent = NULL;
   node->line = line;
+  node->usesIt = false;
   return node;
 }
 
@@ -228,12 +258,14 @@ Node *newSkipNode(int line) {
   node->type = NODE_SKIP;
   node->parent = NULL;
   node->line = line;
+  node->usesIt = false;
   return node;
 }
 
 Node *newPhrasalCallNode(Token mangledName, Node **args, int argCount,
                          int line) {
   Node *node = allocateNode(NODE_PHRASAL_CALL, line);
+  if (args != NULL) { for (int i = 0; i < argCount; i++) { if (args[i] != NULL && args[i]->usesIt) node->usesIt = true; } }
   node->as.phrasalCall.mangledName = mangledName;
   node->as.phrasalCall.argCount = argCount;
   node->as.phrasalCall.arguments = ALLOCATE(Node *, argCount);
@@ -249,6 +281,7 @@ Node *newPhrasalCallNode(Token mangledName, Node **args, int argCount,
 Node *newLetNode(Token *names, int nameCount, Node **exprs, int exprCount,
                  int line) {
   Node *node = allocateNode(NODE_LET, line);
+  if (exprs != NULL) { for (int i = 0; i < exprCount; i++) { if (exprs[i] != NULL && exprs[i]->usesIt) node->usesIt = true; } }
 
   node->as.let.nameCount = nameCount;
   node->as.let.exprCount = exprCount;
@@ -274,6 +307,7 @@ Node *newLetNode(Token *names, int nameCount, Node **exprs, int exprCount,
 
 Node *newInterpolationNode(Node **parts, int partCount, int line) {
   Node *node = allocateNode(NODE_INTERPOLATION, line);
+  if (parts != NULL) { for (int i = 0; i < partCount; i++) { if (parts[i] != NULL && parts[i]->usesIt) node->usesIt = true; } }
   node->as.interpolation.partCount = partCount;
   node->as.interpolation.parts = ALLOCATE(Node *, partCount);
 
@@ -287,6 +321,7 @@ Node *newInterpolationNode(Node **parts, int partCount, int line) {
 
 Node *newPropertyNode(Node *target, Token name, int line) {
   Node *node = allocateNode(NODE_PROPERTY, line);
+  if (target != NULL && target->usesIt) { node->usesIt = true; }
   node->as.property.target = target;
   node->as.property.name = name;
   if (target != NULL)
@@ -294,20 +329,6 @@ Node *newPropertyNode(Node *target, Token name, int line) {
   return node;
 }
 
-Node *newCallNode(Node *callee, Node **arguments, int argCount, int line) {
-  Node *node = allocateNode(NODE_CALL, line);
-  node->as.call.callee = callee;
-  node->as.call.argCount = argCount;
-  node->as.call.arguments = ALLOCATE(Node *, argCount);
-  for (int i = 0; i < argCount; i++) {
-    node->as.call.arguments[i] = arguments[i];
-    if (arguments[i] != NULL)
-      arguments[i]->parent = node;
-  }
-  if (callee != NULL)
-    callee->parent = node;
-  return node;
-}
 
 Node *newFunctionNode(Token name, Token *parameters, Node **paramTypes,
                       int paramCount, Node *body, int line) {
@@ -350,6 +371,7 @@ Node *newTypeNode(Token name, Token *propertyNames, Node **defaultValues,
 Node *newInstantiateNode(Node *target, Token *propertyNames, Node **values,
                          int count, int line) {
   Node *node = allocateNode(NODE_INSTANTIATE, line);
+  if (target != NULL && target->usesIt) { node->usesIt = true; }
   node->as.instantiate.target = target;
   node->as.instantiate.count = count;
   node->as.instantiate.propertyNames = ALLOCATE(Token, count);
@@ -369,6 +391,8 @@ Node *newInstantiateNode(Node *target, Token *propertyNames, Node **values,
 
 Node *newCastNode(Node *left, Node *right, int line) {
   Node *node = allocateNode(NODE_CAST, line);
+  if (left != NULL && left->usesIt) { node->usesIt = true; }
+  if (right != NULL && right->usesIt) { node->usesIt = true; }
   node->as.cast.left = left;
   node->as.cast.right = right;
   if (left)
@@ -386,6 +410,7 @@ Node *newLoadNode(Token path, int line) {
 
 Node *newUnionTypeNode(Node **types, int count, int line) {
   Node *node = allocateNode(NODE_UNION_TYPE, line);
+  if (types != NULL) { for (int i = 0; i < count; i++) { if (types[i] != NULL && types[i]->usesIt) node->usesIt = true; } }
   node->as.unionType.count = count;
   node->as.unionType.types = ALLOCATE(Node *, count);
   for (int i = 0; i < count; i++) {
@@ -425,6 +450,8 @@ Node *newComprehensionNode(Token iterator, Token indexVar, bool hasIndex,
 
 Node *newKeepNode(Node *key, Node *value, int line) {
   Node *node = allocateNode(NODE_KEEP, line);
+  if (key != NULL && key->usesIt) { node->usesIt = true; }
+  if (value != NULL && value->usesIt) { node->usesIt = true; }
   node->as.keepStmt.key = key;
   node->as.keepStmt.value = value;
   if (key)
@@ -504,11 +531,7 @@ void freeNode(Node *root) {
       for (int i = 0; i < node->as.interpolation.partCount; i++)
         writeNodeArray(&worklist, node->as.interpolation.parts[i]);
       break;
-    case NODE_CALL:
-      writeNodeArray(&worklist, node->as.call.callee);
-      for (int i = 0; i < node->as.call.argCount; i++)
-        writeNodeArray(&worklist, node->as.call.arguments[i]);
-      break;
+    
     case NODE_PHRASAL_CALL:
       for (int i = 0; i < node->as.phrasalCall.argCount; i++)
         writeNodeArray(&worklist, node->as.phrasalCall.arguments[i]);
@@ -591,9 +614,7 @@ void freeNode(Node *root) {
       FREE_ARRAY(Node *, node->as.interpolation.parts,
                  node->as.interpolation.partCount);
       break;
-    case NODE_CALL:
-      FREE_ARRAY(Node *, node->as.call.arguments, node->as.call.argCount);
-      break;
+    
     case NODE_PHRASAL_CALL:
       FREE_ARRAY(Node *, node->as.phrasalCall.arguments,
                  node->as.phrasalCall.argCount);

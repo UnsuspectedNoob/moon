@@ -40,6 +40,10 @@ ObjFunction *compile(const char *source, ObjModule *module) {
 
   // --- ADD THIS SAFETY CATCH ---
   // If emitting bytecode threw an error (like "too many constants"), abort!
+  // Note: We do NOT need to manually free `function` or its bytecode Chunk here. 
+  // It is tracked by the VM as an ObjFunction, and because we are returning NULL 
+  // without storing it in a GC Root, the Garbage Collector will automatically sweep 
+  // it away on the next cycle!
   if (parser.hadError)
     return NULL;
 

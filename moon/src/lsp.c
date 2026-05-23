@@ -610,11 +610,7 @@ static void analyzeNode(Node *node) {
     analyzeNode(node->as.unary.right);
     break;
 
-  case NODE_CALL:
-    analyzeNode(node->as.call.callee);
-    for (int i = 0; i < node->as.call.argCount; i++)
-      analyzeNode(node->as.call.arguments[i]);
-    break;
+
 
   case NODE_PHRASAL_CALL:
     for (int i = 0; i < node->as.phrasalCall.argCount; i++)

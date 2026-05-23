@@ -157,6 +157,22 @@ ObjString *copyStringUnescaped(const char *chars, int length) {
     else if (chars[i] == '`' && i + 1 < length && chars[i + 1] == '`') {
       heapChars[dest++] = '`';
       i++;
+    } 
+    // Standard Escape Sequences
+    else if (chars[i] == '\\' && i + 1 < length) {
+      i++; // Skip the backslash
+      switch (chars[i]) {
+        case 'n': heapChars[dest++] = '\n'; break;
+        case 't': heapChars[dest++] = '\t'; break;
+        case 'r': heapChars[dest++] = '\r'; break;
+        case '\\': heapChars[dest++] = '\\'; break;
+        case '"': heapChars[dest++] = '"'; break;
+        case '0': heapChars[dest++] = '\0'; break;
+        default: 
+          heapChars[dest++] = '\\';
+          heapChars[dest++] = chars[i];
+          break;
+      }
     } else {
       // Normal character
       heapChars[dest++] = chars[i];

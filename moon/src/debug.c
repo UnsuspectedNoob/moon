@@ -355,14 +355,6 @@ void printAST(Node *node, int indent) {
     }
     break;
 
-  case NODE_CALL:
-    printf("[CALL]\n");
-    printAST(node->as.call.callee, indent + 1);
-    for (int i = 0; i < node->as.call.argCount; i++) {
-      printAST(node->as.call.arguments[i], indent + 2);
-    }
-    break;
-
   case NODE_PROPERTY:
     printf("[PROPERTY ACCESS: %.*s]\n", node->as.property.name.length,
            node->as.property.name.start);

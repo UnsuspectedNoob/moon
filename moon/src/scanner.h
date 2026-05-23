@@ -57,6 +57,7 @@ typedef enum {
   TOKEN_IF,
   TOKEN_IN,
   TOKEN_IS,
+  TOKEN_IT,
   TOKEN_KEEP,
   TOKEN_LET,
   TOKEN_LOAD,
@@ -88,6 +89,7 @@ typedef struct {
   int length;        // Length of the token
   int line;          // Line number for error reporting
   int column;        // Track horizontal positioning
+  const char *errorMessage; // Dedicated field for scanner errors
 } Token;
 
 typedef struct {

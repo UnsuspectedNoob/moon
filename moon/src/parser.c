@@ -34,6 +34,7 @@ static int expectedLabelCount = 0;
 static int groupingDepth = 0; // Tracks if we are inside () or []
 static Node *currentStickySubject = NULL;
 static int loopingDepth = 0;
+static Token makeHiddenToken(const char *text, int line);
 
 // --- ADD THESE TWO LINES ---
 static int parseDepth = 0;
@@ -116,6 +117,7 @@ bool isMathOperator(Token opToken) {
 
 void errorAt(Token *token, ErrorType type, const char *message,
              const char *hint) {
+  fprintf(stderr, "DEBUG: errorAt called with message: %s\n", message);
   if (parser.panicMode)
     return;
   parser.panicMode = true;
@@ -190,7 +192,12 @@ void advance() {
     if (parser.current.type != TOKEN_ERROR)
       break;
 
-    errorAt(&parser.current, ERR_SYNTAX, parser.current.start, NULL);
+    // Use the stowed errorMessage, otherwise fallback to the token text
+    const char *message = parser.current.errorMessage != NULL 
+                            ? parser.current.errorMessage 
+                            : parser.current.start;
+
+    errorAt(&parser.current, ERR_SYNTAX, message, NULL);
   }
 }
 
@@ -318,7 +325,7 @@ static Node *expression() {
     Node *cond = expression();
 
     // Invert the condition for 'unless'
-    Token notToken = {TOKEN_NOT, "not", 3, line, 0};
+    Token notToken = {TOKEN_NOT, "not", 3, line, 0, NULL};
     cond = newUnaryNode(notToken, cond, line);
 
     if (match(TOKEN_THEN)) {
@@ -399,6 +406,11 @@ static Node *literal() {
   default:
     return NULL;
   }
+}
+
+static Node *implicitIt() {
+  Token itToken = makeHiddenToken(" it", parser.previous.line);
+  return newVariableNode(itToken, parser.previous.line);
 }
 
 static Node *variable() {
@@ -629,7 +641,7 @@ static Node *stickyPrefix() {
                                    right, opToken.line);
 
   if (invert) {
-    Token notToken = {TOKEN_NOT, "not", 3, opToken.line, 0};
+    Token notToken = {TOKEN_NOT, "not", 3, opToken.line, 0, NULL};
     return newUnaryNode(notToken, stickyNode, opToken.line);
   }
 
@@ -679,7 +691,7 @@ static Node *binary(Node *left) {
 
   // If we caught a 'not', wrap the whole binary expression!
   if (invert) {
-    Token notToken = {TOKEN_NOT, "not", 3, opToken.line, 0};
+    Token notToken = {TOKEN_NOT, "not", 3, opToken.line, 0, NULL};
     return newUnaryNode(notToken, binNode, opToken.line);
   }
 
@@ -740,9 +752,29 @@ static Node *listComprehension(int line) {
       Node *cond = expr->as.ifStmt.condition;
       Node *inner = expr->as.ifStmt.thenBranch;
 
-      Node *keepNode = newKeepNode(NULL, inner, line);
-      FREE(Node, expr); // Prevent the memory leak!
-      keepValue = newIfNode(cond, keepNode, NULL, line);
+      if ((cond != NULL && cond->usesIt)) {
+        Token itToken = makeHiddenToken(" it", line);
+        Token *letNames = ALLOCATE(Token, 1);
+        letNames[0] = itToken;
+        Node **letExprs = ALLOCATE(Node *, 1);
+        letExprs[0] = inner;
+        Node *letIt = newLetNode(letNames, 1, letExprs, 1, line);
+
+        Node *itVar = newVariableNode(itToken, line);
+        Node *keepNode = newKeepNode(NULL, itVar, line);
+        Node *ifStmt = newIfNode(cond, keepNode, NULL, line);
+
+        Node **blockStmts = ALLOCATE(Node *, 2);
+        blockStmts[0] = letIt;
+        blockStmts[1] = ifStmt;
+
+        FREE(Node, expr);
+        keepValue = newBlockNode(blockStmts, 2, line);
+      } else {
+        Node *keepNode = newKeepNode(NULL, inner, line);
+        FREE(Node, expr); // Prevent the memory leak!
+        keepValue = newIfNode(cond, keepNode, NULL, line);
+      }
     } else {
       keepValue = newKeepNode(NULL, expr, line);
     }
@@ -814,9 +846,29 @@ static Node *dictComprehension(int line) {
       Node *cond = expr->as.ifStmt.condition;
       Node *inner = expr->as.ifStmt.thenBranch;
 
-      Node *keepNode = newKeepNode(parsedKey, inner, line);
-      FREE(Node, expr); // Prevent the memory leak!
-      keepValue = newIfNode(cond, keepNode, NULL, line);
+      if ((cond != NULL && cond->usesIt)) {
+        Token itToken = makeHiddenToken(" it", line);
+        Token *letNames = ALLOCATE(Token, 1);
+        letNames[0] = itToken;
+        Node **letExprs = ALLOCATE(Node *, 1);
+        letExprs[0] = inner;
+        Node *letIt = newLetNode(letNames, 1, letExprs, 1, line);
+
+        Node *itVar = newVariableNode(itToken, line);
+        Node *keepNode = newKeepNode(parsedKey, itVar, line);
+        Node *ifStmt = newIfNode(cond, keepNode, NULL, line);
+
+        Node **blockStmts = ALLOCATE(Node *, 2);
+        blockStmts[0] = letIt;
+        blockStmts[1] = ifStmt;
+
+        FREE(Node, expr);
+        keepValue = newBlockNode(blockStmts, 2, line);
+      } else {
+        Node *keepNode = newKeepNode(parsedKey, inner, line);
+        FREE(Node, expr); // Prevent the memory leak!
+        keepValue = newIfNode(cond, keepNode, NULL, line);
+      }
     } else {
       keepValue = newKeepNode(parsedKey, expr, line);
     }
@@ -1098,7 +1150,7 @@ static Node *ifStatement(bool invert) {
   Node *condition = expression();
 
   if (invert) {
-    Token notToken = {TOKEN_NOT, "not", 3, line, 0};
+    Token notToken = {TOKEN_NOT, "not", 3, line, 0, NULL};
     condition = newUnaryNode(notToken, condition, line);
   }
 
@@ -1153,7 +1205,7 @@ static Node *whileLogic(bool invert) {
   Node *condition = expression();
 
   if (invert) {
-    Token notToken = {TOKEN_NOT, "not", 3, line, 0};
+    Token notToken = {TOKEN_NOT, "not", 3, line, 0, NULL};
     condition = newUnaryNode(notToken, condition, line);
   }
 
@@ -1318,11 +1370,44 @@ static Node *addStatement() {
   // --- OPTIONAL: AST INVERSION (Statement Modifiers) ---
   if (match(TOKEN_IF)) {
     Node *cond = expression();
+    if ((cond != NULL && cond->usesIt)) {
+      Token itToken = makeHiddenToken(" it", line);
+      Token *letNames = ALLOCATE(Token, 1);
+      letNames[0] = itToken;
+      Node **letExprs = ALLOCATE(Node *, 1);
+      letExprs[0] = cloneNode(target);
+      Node *letIt = newLetNode(letNames, 1, letExprs, 1, line);
+      
+      Node *ifStmt = newIfNode(cond, addNode, NULL, line);
+
+      Node **blockStmts = ALLOCATE(Node *, 2);
+      blockStmts[0] = letIt;
+      blockStmts[1] = ifStmt;
+
+      return newBlockNode(blockStmts, 2, line);
+    }
     return newIfNode(cond, addNode, NULL, line);
   } else if (match(TOKEN_UNLESS)) {
     Node *cond = expression();
-    Token notToken = {TOKEN_NOT, "not", 3, line, 0};
+    Token notToken = {TOKEN_NOT, "not", 3, line, 0, NULL};
     Node *invertedCond = newUnaryNode(notToken, cond, line);
+
+    if ((invertedCond != NULL && invertedCond->usesIt)) {
+      Token itToken = makeHiddenToken(" it", line);
+      Token *letNames = ALLOCATE(Token, 1);
+      letNames[0] = itToken;
+      Node **letExprs = ALLOCATE(Node *, 1);
+      letExprs[0] = cloneNode(target);
+      Node *letIt = newLetNode(letNames, 1, letExprs, 1, line);
+      
+      Node *ifStmt = newIfNode(invertedCond, addNode, NULL, line);
+
+      Node **blockStmts = ALLOCATE(Node *, 2);
+      blockStmts[0] = letIt;
+      blockStmts[1] = ifStmt;
+
+      return newBlockNode(blockStmts, 2, line);
+    }
     return newIfNode(invertedCond, addNode, NULL, line);
   }
 
@@ -1366,6 +1451,26 @@ static Node *setStatement() {
     Node *setNode = newSetNode(targets.items, targets.count, values.items,
                                values.count, line);
 
+    if ((cond != NULL && cond->usesIt)) {
+      Token itToken = makeHiddenToken(" it", line);
+      Token *letNames = ALLOCATE(Token, 1);
+      letNames[0] = itToken;
+      Node **letExprs = ALLOCATE(Node *, 1);
+      letExprs[0] = cloneNode(targets.items[0]);
+      Node *letIt = newLetNode(letNames, 1, letExprs, 1, line);
+      
+      Node *ifStmt = newIfNode(cond, setNode, NULL, line);
+
+      Node **blockStmts = ALLOCATE(Node *, 2);
+      blockStmts[0] = letIt;
+      blockStmts[1] = ifStmt;
+
+      FREE(Node, lastVal);
+      freeNodeArray(&targets);
+      freeNodeArray(&values);
+      return newBlockNode(blockStmts, 2, line);
+    }
+
     FREE(Node, lastVal);
     freeNodeArray(&targets);
     freeNodeArray(&values); // FREE BEFORE RETURN!
@@ -1406,6 +1511,28 @@ static Node *giveStatement() {
       expr->as.ifStmt.elseBranch == NULL) {
     Node *cond = expr->as.ifStmt.condition;
     Node *inner = expr->as.ifStmt.thenBranch;
+
+    // THE GHOST VARIABLE DESUGARING
+    if ((cond != NULL && cond->usesIt)) {
+      Token itToken = makeHiddenToken(" it", line);
+      Token *letNames = ALLOCATE(Token, 1);
+      letNames[0] = itToken;
+      Node **letExprs = ALLOCATE(Node *, 1);
+      letExprs[0] = inner;
+      Node *letIt = newLetNode(letNames, 1, letExprs, 1, line);
+
+      Node *itVar = newVariableNode(itToken, line);
+      Node *giveStmt = newSingleExprNode(NODE_RETURN, itVar, line);
+      Node *ifStmt = newIfNode(cond, giveStmt, NULL, line);
+
+      Node **blockStmts = ALLOCATE(Node *, 2);
+      blockStmts[0] = letIt;
+      blockStmts[1] = ifStmt;
+
+      FREE(Node, expr);
+      return newBlockNode(blockStmts, 2, line);
+    }
+
     Node *giveStmt = newSingleExprNode(NODE_RETURN, inner, line);
     FREE(Node, expr);
     return newIfNode(cond, giveStmt, NULL, line); // Wrap the give!
@@ -1437,21 +1564,6 @@ static Node *expressionStatement() {
     }
   }
 
-  if (expr != NULL && expr->type == NODE_CALL) {
-    int lastIdx = expr->as.call.argCount - 1;
-    if (lastIdx >= 0) {
-      Node *lastArg = expr->as.call.arguments[lastIdx];
-      if (lastArg->type == NODE_IF && lastArg->as.ifStmt.elseBranch == NULL) {
-        Node *cond = lastArg->as.ifStmt.condition;
-        expr->as.call.arguments[lastIdx] = lastArg->as.ifStmt.thenBranch;
-        Node *exprStmt = newSingleExprNode(NODE_EXPRESSION_STMT, expr, line);
-
-        FREE(Node, lastArg); // <--- THE PATCH
-
-        return newIfNode(cond, exprStmt, NULL, line);
-      }
-    }
-  }
 
   // The standard AST Inversion (for normal assignments/math)
   if (expr != NULL && expr->type == NODE_IF &&
@@ -1663,24 +1775,76 @@ static Node *updateStatement() {
     FREE(Node, rawTarget);
   }
 
-  // --- 4. RE-WRAP THE AST ---
-  // If we unwrapped a stolen modifier earlier, apply it to the whole statement
-  // now!
+  // --- 4. RE-WRAP THE AST & APPLY GHOST VARIABLES ---
+  Node *rawTargetBackup = cloneNode(rawTarget);
   if (modifierCond != NULL) {
+    if ((modifierCond != NULL && modifierCond->usesIt)) {
+      Token itToken = makeHiddenToken(" it", line);
+      Token *letNames = ALLOCATE(Token, 1);
+      letNames[0] = itToken;
+      Node **letExprs = ALLOCATE(Node *, 1);
+      letExprs[0] = rawTargetBackup; // The L-Value!
+      Node *letIt = newLetNode(letNames, 1, letExprs, 1, line);
+      
+      Node *ifStmt = newIfNode(modifierCond, finalNode, NULL, line);
+
+      Node **blockStmts = ALLOCATE(Node *, 2);
+      blockStmts[0] = letIt;
+      blockStmts[1] = ifStmt;
+
+      return newBlockNode(blockStmts, 2, line);
+    }
+    FREE(Node, rawTargetBackup);
     return newIfNode(modifierCond, finalNode, NULL, line);
   }
 
   // --- OPTIONAL: AST INVERSION (Statement Modifiers) ---
   if (match(TOKEN_IF)) {
     Node *cond = expression();
+    if ((cond != NULL && cond->usesIt)) {
+      Token itToken = makeHiddenToken(" it", line);
+      Token *letNames = ALLOCATE(Token, 1);
+      letNames[0] = itToken;
+      Node **letExprs = ALLOCATE(Node *, 1);
+      letExprs[0] = rawTargetBackup;
+      Node *letIt = newLetNode(letNames, 1, letExprs, 1, line);
+      
+      Node *ifStmt = newIfNode(cond, finalNode, NULL, line);
+
+      Node **blockStmts = ALLOCATE(Node *, 2);
+      blockStmts[0] = letIt;
+      blockStmts[1] = ifStmt;
+
+      return newBlockNode(blockStmts, 2, line);
+    }
+    FREE(Node, rawTargetBackup);
     return newIfNode(cond, finalNode, NULL, line);
   } else if (match(TOKEN_UNLESS)) {
     Node *cond = expression();
-    Token notToken = {TOKEN_NOT, "not", 3, line, 0};
+    Token notToken = {TOKEN_NOT, "not", 3, line, 0, NULL};
     Node *invertedCond = newUnaryNode(notToken, cond, line);
+
+    if ((invertedCond != NULL && invertedCond->usesIt)) {
+      Token itToken = makeHiddenToken(" it", line);
+      Token *letNames = ALLOCATE(Token, 1);
+      letNames[0] = itToken;
+      Node **letExprs = ALLOCATE(Node *, 1);
+      letExprs[0] = rawTargetBackup;
+      Node *letIt = newLetNode(letNames, 1, letExprs, 1, line);
+      
+      Node *ifStmt = newIfNode(invertedCond, finalNode, NULL, line);
+
+      Node **blockStmts = ALLOCATE(Node *, 2);
+      blockStmts[0] = letIt;
+      blockStmts[1] = ifStmt;
+
+      return newBlockNode(blockStmts, 2, line);
+    }
+    FREE(Node, rawTargetBackup);
     return newIfNode(invertedCond, finalNode, NULL, line);
   }
 
+  FREE(Node, rawTargetBackup);
   return finalNode;
 }
 
@@ -1727,6 +1891,27 @@ static Node *keepStatement() {
       value->as.ifStmt.elseBranch == NULL) {
     Node *cond = value->as.ifStmt.condition;
     Node *innerValue = value->as.ifStmt.thenBranch;
+
+    // THE GHOST VARIABLE DESUGARING
+    if ((cond != NULL && cond->usesIt)) {
+      Token itToken = makeHiddenToken(" it", line);
+      Token *letNames = ALLOCATE(Token, 1);
+      letNames[0] = itToken;
+      Node **letExprs = ALLOCATE(Node *, 1);
+      letExprs[0] = innerValue;
+      Node *letIt = newLetNode(letNames, 1, letExprs, 1, line);
+
+      Node *itVar = newVariableNode(itToken, line);
+      Node *keepNode = newKeepNode(key, itVar, line);
+      Node *ifStmt = newIfNode(cond, keepNode, NULL, line);
+
+      Node **blockStmts = ALLOCATE(Node *, 2);
+      blockStmts[0] = letIt;
+      blockStmts[1] = ifStmt;
+
+      FREE(Node, value);
+      return newBlockNode(blockStmts, 2, line);
+    }
 
     // 1. Rebuild the keep node with the raw inner value
     Node *keepNode = newKeepNode(key, innerValue, line);
@@ -1785,7 +1970,7 @@ static Node *statement() {
     stmt = newIfNode(cond, stmt, NULL, parser.previous.line);
   } else if (match(TOKEN_UNLESS)) {
     Node *cond = expression();
-    Token notToken = {TOKEN_NOT, "not", 3, parser.previous.line, 0};
+    Token notToken = {TOKEN_NOT, "not", 3, parser.previous.line, 0, NULL};
     Node *invertedCond = newUnaryNode(notToken, cond, parser.previous.line);
     stmt = newIfNode(invertedCond, stmt, NULL, parser.previous.line);
   }
@@ -2055,29 +2240,6 @@ static Node *grouping() {
   return expr;
 }
 
-static Node *call(Node *callee) {
-  int line = parser.previous.line;
-  NodeArray args;
-  initNodeArray(&args);
-
-  groupingDepth++; // Protect the arguments!
-  if (!check(TOKEN_RIGHT_PAREN)) {
-    do {
-      writeNodeArray(&args, expression());
-    } while (match(TOKEN_COMMA));
-  }
-  groupingDepth--; // Coming back out!
-
-  consumeHint(TOKEN_RIGHT_PAREN, ERR_SYNTAX,
-              "I couldn't find the closing parenthesis ')'.",
-              "Make sure you close any opened parentheses in your math, logic, "
-              "or function calls.");
-
-  Node *node = newCallNode(callee, args.items, args.count, line);
-  freeNodeArray(&args);
-  return node;
-}
-
 static Node *declaration() {
   ignoreNewlines();
   if (check(TOKEN_EOF))
@@ -2103,7 +2265,7 @@ static Node *declaration() {
 
 ParseRule rules[] = {
     [TOKEN_AS] = {NULL, castExpression, PREC_CAST},
-    [TOKEN_LEFT_PAREN] = {grouping, call, PREC_CALL},
+    [TOKEN_LEFT_PAREN] = {grouping, NULL, PREC_NONE},
     [TOKEN_LEFT_BRACE] = {dict, instantiate, PREC_CALL}, // <--- Updated!
     [TOKEN_WITH] = {NULL, instantiateWith, PREC_CALL},   // <--- New!
     [TOKEN_MINUS] = {unary, binary, PREC_TERM},
@@ -2125,6 +2287,7 @@ ParseRule rules[] = {
     [TOKEN_TRUE] = {literal, NULL, PREC_NONE},
     [TOKEN_FALSE] = {literal, NULL, PREC_NONE},
     [TOKEN_IDENTIFIER] = {variable, NULL, PREC_NONE},
+    [TOKEN_IT] = {implicitIt, NULL, PREC_NONE},
     [TOKEN_IF] = {NULL, NULL, PREC_NONE},
     [TOKEN_UNLESS] = {NULL, NULL, PREC_NONE},
     [TOKEN_NOT] = {unary, NULL, PREC_NONE},

@@ -576,24 +576,6 @@ static void walkNode(Node *node) {
     break;
   }
 
-  case NODE_CALL: {
-    walkNode(node->as.call.callee);
-    current->temporaries++; // <-- TRACK CALLEE
-
-    for (int i = 0; i < node->as.call.argCount; i++) {
-      walkNode(node->as.call.arguments[i]);
-      current->temporaries++; // <-- TRACK EACH ARGUMENT
-    }
-
-    emitByte(OP_CALL);
-    uint16_t count = (uint16_t)node->as.call.argCount;
-    emitByte((count >> 8) & 0xff); // High byte
-    emitByte(count & 0xff);        // Low byte
-
-    // UNTRACK CALLEE + ALL ARGUMENTS
-    current->temporaries -= (1 + node->as.call.argCount);
-    break;
-  }
 
   case NODE_PHRASAL_CALL: {
     int arg = resolveLocal(current, &node->as.phrasalCall.mangledName);
