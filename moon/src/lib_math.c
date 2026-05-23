@@ -77,31 +77,10 @@ void registerMathLibrary() {
   // Seed the random number generator once during boot
   srand((unsigned int)time(NULL) * time(NULL));
 
-  // Expose the protected functions to the MOON namespace
-  defineNative("__sin", sinNative);
-  defineNative("__cos", cosNative);
-  defineNative("__sqrt", sqrtNative);
-  defineNative("__pow", powNative);
-  defineNative("__random", randomNative);
-  defineNative("__floor", floorNative);
+  REGISTER_PHRASE(NULL, "sin", "$1", 1, "sin$1", sinNative, vm.numberType);
+  REGISTER_PHRASE(NULL, "cos", "$1", 1, "cos$1", cosNative, vm.numberType);
+  REGISTER_PHRASE(NULL, "square", "root,of,$1", 1, "square_root_of$1", sqrtNative, vm.numberType);
+  REGISTER_PHRASE(NULL, "power", "of,$1,to,$1", 2, "power_of$1_to$1", powNative, vm.numberType, vm.numberType);
+  REGISTER_PHRASE(NULL, "floor", "of,$1", 1, "floor_of$1", floorNative, vm.numberType);
+  REGISTER_PHRASE(NULL, "random", "from,$1,to,$1", 2, "random_from$1_to$1", randomNative, vm.numberType, vm.numberType);
 }
-
-// Define the array here!
-const char mathBootstrap[] = "let sin (n: Number):\n"
-                             "    give __sin(n)\n"
-                             "end\n"
-                             "let cos (n: Number):\n"
-                             "    give __cos(n)\n"
-                             "end\n"
-                             "let square root of (n: Number):\n"
-                             "    give __sqrt(n)\n"
-                             "end\n"
-                             "let power of (base: Number) to (exp: Number):\n"
-                             "    give __pow(base, exp)\n"
-                             "end\n"
-                             "let floor of (n: Number):\n"
-                             "    give __floor(n)\n"
-                             "end\n"
-                             "let random from (min: Number) to (max: Number):\n"
-                             "    give __random(min, max)\n"
-                             "end\n";

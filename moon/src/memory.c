@@ -164,6 +164,13 @@ static void blackenObject(Obj *object) {
     break;
   }
 
+  case OBJ_MODULE: {
+    ObjModule *module = (ObjModule *)object;
+    markObject((Obj *)module->name);
+    markTable(&module->fields);
+    break;
+  }
+
   case OBJ_TYPE_BLUEPRINT: {
     ObjType *type = (ObjType *)object;
     markObject((Obj *)type->name); // Rescue the Blueprint's name
@@ -174,6 +181,7 @@ static void blackenObject(Obj *object) {
   case OBJ_FUNCTION: {
     ObjFunction *function = (ObjFunction *)object;
     markObject((Obj *)function->name);
+    markObject((Obj *)function->module); // Keep the module alive!
     markArray(&function->chunk
                    .constants); // Rescue the literals trapped in the bytecode!
     break;
@@ -184,7 +192,7 @@ static void blackenObject(Obj *object) {
     markObject((Obj *)multi->name);
 
     for (int i = 0; i < multi->methodCount; i++) {
-      markObject((Obj *)multi->methods[i]); // Rescue the compiled chunks!
+      markValue(multi->methods[i]); // Rescue the compiled chunks or native fns!
 
       // Rescue the 2D array of Type Signatures!
       if (multi->signatures[i] != NULL) {
@@ -288,6 +296,13 @@ void freeObject(Obj *object) {
     break;
   }
 
+  case OBJ_MODULE: {
+    ObjModule *module = (ObjModule *)object;
+    freeTable(&module->fields);
+    FREE(ObjModule, object);
+    break;
+  }
+
   case OBJ_MULTI_FUNCTION: {
     ObjMultiFunction *multi = (ObjMultiFunction *)object;
 
@@ -303,7 +318,7 @@ void freeObject(Obj *object) {
 
     // Free the methods array
     if (multi->methods != NULL) {
-      FREE_ARRAY(ObjFunction *, multi->methods, multi->methodCapacity);
+      FREE_ARRAY(Value, multi->methods, multi->methodCapacity);
     }
 
     FREE(ObjMultiFunction, object);

@@ -43,7 +43,7 @@ static int levenshteinDistance(const char *s1, const char *s2) {
 }
 
 // Scans the global environment to find the closest matching variable name.
-const char *findVariableSuggestion(const char *misspelled) {
+const char *findVariableSuggestion(Table *globals, const char *misspelled) {
   const char *bestMatch = NULL;
   int minDistance = 999;
 
@@ -51,9 +51,9 @@ const char *findVariableSuggestion(const char *misspelled) {
   // For a 3-letter word, 1 edit is okay. For a 10-letter word, 3 edits is okay.
   int maxAllowedDistance = (strlen(misspelled) <= 3) ? 1 : 2;
 
-  // Scan every variable currently registered in the VM!
-  for (int i = 0; i < vm.globals.capacity; i++) {
-    Entry *entry = &vm.globals.entries[i];
+  // Scan every variable currently registered in the table!
+  for (int i = 0; i < globals->capacity; i++) {
+    Entry *entry = &globals->entries[i];
 
     // Skip empty slots and tombstones
     if (IS_EMPTY(entry->key) || IS_TOMB(entry->key))
@@ -199,14 +199,18 @@ void reportRuntimeError(ObjString *moduleName, int line, ErrorType type,
   fprintf(stderr, "The program crashed while trying to execute this:\n");
 
   // --- THE VAULT LOOKUP ---
-  Value sourceVal;
+  Value modVal;
   if (moduleName != NULL &&
-      tableGet(&vm.loadedModules, OBJ_VAL(moduleName), &sourceVal) &&
-      IS_STRING(sourceVal)) {
-    const char *oldSource = globalSource;
-    globalSource = AS_CSTRING(sourceVal);
-    printSnippet(line, 0, 0); // Draw the squiggles!
-    globalSource = oldSource;
+      tableGet(&vm.loadedModules, OBJ_VAL(moduleName), &modVal) &&
+      IS_MODULE(modVal)) {
+
+    ObjModule *mod = AS_MODULE(modVal);
+    if (mod->source != NULL) {
+      const char *oldSource = globalSource;
+      globalSource = mod->source->chars;
+      printSnippet(line, 0, 0); // Draw the squiggles!
+      globalSource = oldSource;
+    }
   } else {
     fprintf(stderr, COLOR_DIM "  (Source code unavailable)\n\n" COLOR_RESET);
   }

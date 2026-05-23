@@ -159,3 +159,28 @@ void finalizePhrase(TrieNode *endNode, const char *mangledName) {
     free(endNode->mangledName);
   endNode->mangledName = my_strdup(mangledName);
 }
+
+void registerSignature(const char *root, const char *path, const char *mangledName) {
+  TrieNode *current = startPhrase(root, strlen(root));
+
+  if (path == NULL || strlen(path) == 0) {
+    finalizePhrase(current, mangledName);
+    return;
+  }
+
+  char *pathCopy = my_strdup(path);
+  char *token = strtok(pathCopy, ",");
+
+  while (token != NULL) {
+    if (token[0] == '$') {
+      int arity = atoi(token + 1);
+      current = addArgumentBranch(current, arity);
+    } else {
+      current = addLabelBranch(current, token, strlen(token));
+    }
+    token = strtok(NULL, ",");
+  }
+
+  finalizePhrase(current, mangledName);
+  free(pathCopy);
+}

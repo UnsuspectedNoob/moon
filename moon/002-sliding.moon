@@ -21,4 +21,4 @@ let max sum in (list) with (k) items:
   give maxSum
 end
 
-show max sum in [2 to 100 by 2] with 2 items
+show max sum in [1 to 10, 10 to 1] with 2 items

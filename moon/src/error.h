@@ -39,6 +39,6 @@ void reportRuntimeError(ObjString *moduleName, int line, ErrorType type,
                         const char *message, const char *hint);
 
 // The Spellchecking Oracle
-const char *findVariableSuggestion(const char *misspelled);
+const char *findVariableSuggestion(Table *globals, const char *misspelled);
 
 #endif

@@ -67,27 +67,6 @@ static char *my_strdup(const char *s) {
   return dup;
 }
 
-// --- THE CIRCULAR DEPENDENCY SHIELD ---
-#define MAX_LOADED_FILES 256
-static char *prepassLoadedFiles[MAX_LOADED_FILES];
-static int prepassLoadedCount = 0;
-
-static bool isPrepassLoaded(const char *path) {
-  for (int i = 0; i < prepassLoadedCount; i++) {
-    if (strcmp(prepassLoadedFiles[i], path) == 0)
-      return true;
-  }
-  return false;
-}
-
-static void markPrepassLoaded(const char *path) {
-  if (prepassLoadedCount < MAX_LOADED_FILES) {
-    prepassLoadedFiles[prepassLoadedCount++] = my_strdup(path);
-  } else {
-    fprintf(stderr, "Error: Maximum number of loaded files (256) exceeded.\n");
-    exit(1);
-  }
-}
 // --------------------------------------
 
 // You will need to expose your readFile helper from main.c or rewrite a quick
@@ -129,116 +108,7 @@ bool isMathOperator(Token opToken) {
   }
 }
 
-void hoistPhrases(const char *source) {
-  initScanner(source);
-  Token token = scanToken();
 
-  while (token.type != TOKEN_EOF) {
-    // --- THE RECURSIVE MODULE JUMP ---
-    if (token.type == TOKEN_LOAD) {
-      Token pathToken = scanToken();
-      if (pathToken.type == TOKEN_STRING) {
-        // 1. Extract the file path (chop off quotes)
-        char path[1024] = {0};
-        strncpy(path, pathToken.start + 1, pathToken.length - 2);
-
-        // 2. Check the Shield!
-        if (!isPrepassLoaded(path)) {
-          markPrepassLoaded(path);
-
-          // 3. Read the external file
-          char *externalSource = readFile(path);
-          if (externalSource != NULL) {
-            // 4. THE RECURSION: Save the current scanner state!
-            Scanner previousScanner = scanner;
-
-            // 5. Dive into the new file and extract its verbs
-            hoistPhrases(externalSource);
-            free(externalSource);
-
-            // 6. Restore the scanner to pick up where we left off
-            scanner = previousScanner;
-          }
-        }
-      }
-    }
-    // ---------------------------------
-    else if (token.type == TOKEN_LET) {
-      Token nameToken = scanToken();
-      if (nameToken.type == TOKEN_IDENTIFIER) {
-        Token next = scanToken();
-
-        if (next.type != TOKEN_BE && next.type != TOKEN_COMMA) {
-          char mangled[1024] = {0};
-          strncat(mangled, nameToken.start, nameToken.length);
-
-          // Build the root node instantly
-          TrieNode *currentNode =
-              startPhrase(nameToken.start, nameToken.length);
-
-          if (next.type == TOKEN_COLON) {
-            strcat(mangled, "$0");
-            finalizePhrase(currentNode, mangled);
-          } else {
-            // --- THE BULLETPROOF TRACKER ---
-            bool lastWasLabel = false;
-
-            while (next.type != TOKEN_COLON && next.type != TOKEN_EOF) {
-              if (next.type == TOKEN_NEWLINE) {
-                next = scanToken();
-                continue;
-              }
-
-              if (next.type == TOKEN_LEFT_PAREN) {
-                lastWasLabel = false; // <--- We processed an argument block!
-
-                int arity = 0;
-                Token peek = scanToken();
-                if (peek.type != TOKEN_RIGHT_PAREN) {
-                  arity = 1;
-                  while (peek.type != TOKEN_RIGHT_PAREN &&
-                         peek.type != TOKEN_EOF) {
-                    if (peek.type == TOKEN_COMMA)
-                      arity++;
-                    peek = scanToken();
-                  }
-                }
-
-                next = peek;
-
-                char buf[16];
-                sprintf(buf, "$%d", arity);
-                strcat(mangled, buf);
-
-                // Add Argument Node
-                currentNode = addArgumentBranch(currentNode, arity);
-              } else {
-                lastWasLabel = true; // <--- We processed a word/label!
-
-                strcat(mangled, "_");
-                strncat(mangled, next.start, next.length);
-
-                // Add Label Node
-                currentNode =
-                    addLabelBranch(currentNode, next.start, next.length);
-              }
-              next = scanToken();
-            }
-
-            // If the very last thing we processed was a word, append $0!
-            if (lastWasLabel) {
-              strcat(mangled, "$0");
-            }
-
-            finalizePhrase(currentNode, mangled);
-          }
-        }
-      }
-    }
-    token = scanToken();
-  }
-  initScanner(source);
-}
 
 // ==========================================
 // 3. ERROR HANDLING
@@ -1818,8 +1688,25 @@ static Node *loadStatement() {
   int line = parser.previous.line;
   consumeHint(TOKEN_STRING, ERR_SYNTAX, "I was expecting a file path here.",
               "The load statement requires a file path in quotes (e.g., load "
-              "\"math.moon\").");
-  return newLoadNode(parser.previous, line);
+              "\"math.moon\" as math).");
+  Token pathToken = parser.previous;
+
+  consumeHint(TOKEN_AS, ERR_SYNTAX, "I was expecting 'as' here.",
+              "The load statement requires an alias (e.g., load \"math.moon\" "
+              "as math).");
+
+  consumeHint(
+      TOKEN_IDENTIFIER, ERR_SYNTAX, "I was expecting a variable name here.",
+      "The load statement needs an identifier to assign the module to.");
+  Token aliasToken = parser.previous;
+
+  Node *loadExpr = newLoadNode(pathToken, line);
+
+  // Desugar into 'let aliasToken be loadExpr'
+  Token names[1] = {aliasToken};
+  Node *exprs[1] = {loadExpr};
+
+  return newLetNode(names, 1, exprs, 1, line);
 }
 
 static Node *keepStatement() {
@@ -2038,10 +1925,12 @@ static Node *letDeclaration() {
 
     char mangled[1024] = {0};
     strncat(mangled, rootName.start, rootName.length);
+    TrieNode *currentNode = startPhrase(rootName.start, rootName.length);
 
     if (check(TOKEN_COLON)) {
       // Path A: Single-word zero-arity (e.g., 'let jump:')
       strcat(mangled, "$0");
+      finalizePhrase(currentNode, mangled);
     } else {
       // Path B: Multi-word signatures
       bool lastWasLabel = false; // <--- THE BULLETPROOF TRACKER
@@ -2089,6 +1978,7 @@ static Node *letDeclaration() {
           char buf[16];
           sprintf(buf, "$%d", segmentArity);
           strcat(mangled, buf);
+          currentNode = addArgumentBranch(currentNode, segmentArity);
         } else {
           lastWasLabel = true; // <--- We processed a word/label!
           advance();
@@ -2102,6 +1992,7 @@ static Node *letDeclaration() {
             break;
           }
           strncat(mangled, parser.previous.start, parser.previous.length);
+          currentNode = addLabelBranch(currentNode, parser.previous.start, parser.previous.length);
         }
       }
 
@@ -2109,6 +2000,7 @@ static Node *letDeclaration() {
       if (lastWasLabel) {
         strcat(mangled, "$0");
       }
+      finalizePhrase(currentNode, mangled);
     }
 
     consumeHint(
@@ -2260,33 +2152,18 @@ static void resetParserState() {
 
   // ONLY wipe long-term memory if we are running in the Language Server!
   if (isLspMode) {
-    // Free prepass loaded files to prevent caching stale ASTs during live
-    // editing
-    for (int i = 0; i < prepassLoadedCount; i++) {
-      free(prepassLoadedFiles[i]);
-    }
-    prepassLoadedCount = 0;
+
 
     // Destroy the old Signature Trie so deleted/edited functions don't haunt
     // the parser!
     freeSignatureTable();
     initSignatureTable();
-
-    // --- THE STDLIB RESCUE ---
-    // We just wiped the brain, so we must re-teach the LSP the Standard
-    // Library!
-    hoistPhrases(coreLibrary);
-    hoistPhrases(ioBootstrap);
-    hoistPhrases(listBootstrap);
-    hoistPhrases(mathBootstrap);
-    hoistPhrases(stringBootstrap);
   }
 }
 
 Node *parseSource(const char *source) {
+  initScanner(source);
   resetParserState();
-
-  hoistPhrases(source);
 
   parser.hadError = false;
   parser.panicMode = false;

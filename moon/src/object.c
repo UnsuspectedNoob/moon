@@ -148,9 +148,9 @@ ObjString *copyStringUnescaped(const char *chars, int length) {
   char *heapChars = ALLOCATE(char, length + 1);
   int dest = 0;
   for (int i = 0; i < length; i++) {
-    // Squish double pipes into a single pipe!
-    if (chars[i] == '|' && i + 1 < length && chars[i + 1] == '|') {
-      heapChars[dest++] = '|';
+    // Squish double quotes into a single quote!
+    if (chars[i] == '"' && i + 1 < length && chars[i + 1] == '"') {
+      heapChars[dest++] = '"';
       i++; // Skip the second one
     }
     // Squish double backticks into a single backtick!
@@ -170,6 +170,10 @@ void printObject(Value value) {
   switch (OBJ_TYPE(value)) {
   case OBJ_DICT:
     printf("<dict>");
+    break;
+
+  case OBJ_MODULE:
+    printf("<module %s>", AS_MODULE(value)->name->chars);
     break;
 
   case OBJ_RANGE: {
@@ -236,7 +240,9 @@ ObjFunction *newFunction() {
   ObjFunction *function = ALLOCATE_OBJ(ObjFunction, OBJ_FUNCTION);
   function->arity = 0;
   function->name = NULL;
-  function->moduleName = NULL;
+  function->module = NULL;
+  function->homeGlobals = NULL;
+  function->isTopLevel = false;
   initChunk(&function->chunk);
   return function;
 }
@@ -260,6 +266,14 @@ ObjDict *newDict() {
   ObjDict *dict = ALLOCATE_OBJ(ObjDict, OBJ_DICT);
   initTable(&dict->fields);
   return dict;
+}
+
+ObjModule *newModule(ObjString *name) {
+  ObjModule *module = ALLOCATE_OBJ(ObjModule, OBJ_MODULE);
+  module->name = name;
+  module->source = NULL; // <--- ADD THIS
+  initTable(&module->fields);
+  return module;
 }
 
 void appendList(ObjList *list, Value value) {

@@ -9,8 +9,9 @@
 // ==========================================
 
 Compiler *current = NULL;
+ObjModule *currentModule = NULL;
+Table *currentGlobals = NULL;
 int currentLine = 0;
-ObjString *currentModuleName = NULL;
 
 // ==========================================
 // COMPILER INITIALIZATION
@@ -29,7 +30,9 @@ void initCompiler(Compiler *compiler, FunctionType type) {
   compiler->chunk = &compiler->function->chunk;
 
   // --- THE MODULE TAG ---
-  compiler->function->moduleName = currentModuleName;
+  compiler->function->module = currentModule;
+  compiler->function->homeGlobals = currentGlobals;
+  compiler->function->isTopLevel = (type == TYPE_SCRIPT);
 
   if (type != TYPE_SCRIPT) {
     current->function->name =

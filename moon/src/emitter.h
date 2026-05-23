@@ -31,7 +31,8 @@ typedef struct Compiler {
 } Compiler;
 
 extern Compiler *current;
-extern ObjString *currentModuleName;
+extern ObjModule *currentModule;
+extern Table *currentGlobals;
 extern int currentLine;
 
 // ==========================================

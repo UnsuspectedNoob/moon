@@ -1,11 +1,9 @@
 
-let gcd of (a) and (b):
-  give a if b is 0
+let memo be {}
+show memo
+set memo.0 to 10
+show memo.1
 
-  give gcd of b and a mod b
+let fib(n):
+  give memo.n if it is not nil
 end
-
-show gcd of ((ask |A? |) as Number) and ((ask |B? |) as Number)
-
-let x be 3
-if x = 3 show 3

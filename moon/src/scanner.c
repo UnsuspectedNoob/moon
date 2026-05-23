@@ -339,19 +339,19 @@ static Token string(bool isResuming) {
     if (isAtEnd()) {
       scanner.interpolationDepth = 0; // <--- THE REPL UNLOCK FIX
       return errorToken(
-          "Unterminated string. Make sure to close it with a '|'.");
+          "Unterminated string. Make sure to close it with a '\"'.");
     }
 
-    // --- THE NEW ESCAPE HATCH (Double Pipe) ---
-    if (c == '|' && peekNext() == '|') {
-      advance(); // Consume first |
-      advance(); // Consume second |
+    // --- THE NEW ESCAPE HATCH (Double Quote) ---
+    if (c == '"' && peekNext() == '"') {
+      advance(); // Consume first "
+      advance(); // Consume second "
       continue;
     }
     // ------------------------------------------
 
-    if (c == '|') {
-      advance(); // Consume the closing '|'
+    if (c == '"') {
+      advance(); // Consume the closing '"'
       if (isResuming) {
         scanner.interpolationDepth--;
         return makeToken(TOKEN_STRING_CLOSE);
@@ -451,7 +451,7 @@ Token scanToken() {
     return errorToken("Unexpected character (orphan single quote).");
   }
 
-  case '|':
+  case '"':
     return string(false);
 
   case '#': {

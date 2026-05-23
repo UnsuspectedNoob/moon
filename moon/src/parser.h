@@ -18,9 +18,7 @@ typedef struct {
 
 extern Parser parser;
 
-// --- Expose the new AST Builder! ---
 
-void hoistPhrases(const char *source);
 Node *parseSource(const char *source);
 
 // ==========================================

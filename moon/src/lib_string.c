@@ -128,26 +128,8 @@ static Value splitNative(int argCount, Value *args) {
 // --- THE HANDSHAKE ---
 
 void registerStringLibrary() {
-  defineNative("__str_upper", upperNative);
-  defineNative("__str_lower", lowerNative);
-  defineNative("__str_trim", trimNative);
-  defineNative("__str_split", splitNative);
+  REGISTER_PHRASE(NULL, "uppercase", "$1", 1, "uppercase$1", upperNative, vm.stringType);
+  REGISTER_PHRASE(NULL, "lowercase", "$1", 1, "lowercase$1", lowerNative, vm.stringType);
+  REGISTER_PHRASE(NULL, "trim", "$1", 1, "trim$1", trimNative, vm.stringType);
+  REGISTER_PHRASE(NULL, "split", "$1,by,$1", 2, "split$1_by$1", splitNative, vm.stringType, vm.stringType);
 }
-
-// --- THE MOON WRAPPERS ---
-
-const char stringBootstrap[] = "let uppercase (s: String):\n"
-                               "    give __str_upper(s)\n"
-                               "end\n"
-                               "\n"
-                               "let lowercase (s: String):\n"
-                               "    give __str_lower(s)\n"
-                               "end\n"
-                               "\n"
-                               "let trim (s: String):\n"
-                               "    give __str_trim(s)\n"
-                               "end\n"
-                               "\n"
-                               "let split (s: String) by (delim: String):\n"
-                               "    give __str_split(s, delim)\n"
-                               "end\n";

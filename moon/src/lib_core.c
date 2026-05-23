@@ -48,19 +48,7 @@ static Value askNative(int argCount, Value *args) {
 
 // The Handshake
 void registerCoreLibrary() {
-  // We use the exact names your core.h MOON wrapper expects
-  defineNative("__show", showNative);
-  defineNative("__ask", askNative);
-  defineNative("__clock", clockNative);
+  REGISTER_PHRASE(NULL, "show", "$1", 1, "show$1", showNative, vm.anyType);
+  REGISTER_PHRASE(NULL, "ask", "$1", 1, "ask$1", askNative, vm.stringType);
+  REGISTER_PHRASE_0(NULL, "clock", NULL, "clock$0", clockNative);
 }
-
-// Define the actual array here! (Notice the [])
-const char coreLibrary[] = "let show (stuff):\n"
-                           "    give __show(stuff)\n"
-                           "end\n"
-                           "let ask (prompt: String):\n"
-                           "    give __ask(prompt)\n"
-                           "end\n"
-                           "let clock:\n"
-                           "    give __clock()\n"
-                           "end\n";

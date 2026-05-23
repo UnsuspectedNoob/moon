@@ -15,8 +15,10 @@
 
 #include "compiler.h"
 #include "debug.h"
+#include "emitter.h"
 #include "memory.h"
 #include "object.h"
+#include "subscript.h"
 #include "table.h"
 #include "value.h"
 
@@ -49,7 +51,8 @@ void runtimeErrorDetailed(ErrorType type, const char *hint, const char *format,
   int line = function->chunk.lines[instruction];
 
   // 3. Call the beautiful Error Engine!
-  reportRuntimeError(function->moduleName, line, type, message, hint);
+  reportRuntimeError(function->module ? function->module->name : NULL, line,
+                     type, message, hint);
 
   // 4. Print the modernized Stack Trace
   fprintf(stderr, "Stack Trace:\n");
@@ -91,7 +94,8 @@ void throwNativeError(const char *hint, const char *format, ...) {
   size_t instruction = frame->ip - function->chunk.code - 1;
   int line = function->chunk.lines[instruction];
 
-  reportRuntimeError(function->moduleName, line, ERR_RUNTIME, message, hint);
+  reportRuntimeError(function->module ? function->module->name : NULL, line,
+                     ERR_RUNTIME, message, hint);
 
   // --- ADD THE MISSING STACK TRACE ---
   fprintf(stderr, "Stack Trace:\n");
@@ -207,6 +211,93 @@ void defineNative(const char *name, NativeFn function) {
   pop();
 }
 
+void defineModuleNative(ObjModule *module, const char *name,
+                        NativeFn function) {
+  // Push the name as a string constant
+  push(OBJ_VAL(copyString(name, (int)strlen(name))));
+  // Push the native function object
+  push(OBJ_VAL(newNative(function)));
+
+  // Directly bind into the module's hash table
+  tableSet(&module->fields, peek(1), peek(0));
+
+  pop(); // pop native function
+  pop(); // pop name
+}
+
+void registerNativePhrasal(ObjModule *module, const char *root, const char *path,
+                           int arity, const char *mangledName, NativeFn function,
+                           ObjType **expectedTypes) {
+  // 1. Build the phrasal Trie
+  registerSignature(root, path, mangledName);
+
+  // 2. Set up the MultiFunction struct
+  ObjString *nameStr = copyString(mangledName, (int)strlen(mangledName));
+  push(OBJ_VAL(nameStr));
+
+  Table *targetTable = module != NULL ? &module->fields : &vm.globals;
+
+  Value existing;
+  ObjMultiFunction *multi = NULL;
+  if (tableGet(targetTable, OBJ_VAL(nameStr), &existing) &&
+      IS_MULTI_FUNCTION(existing)) {
+    multi = AS_MULTI_FUNCTION(existing);
+  } else {
+    multi = newMultiFunction(nameStr, arity);
+    push(OBJ_VAL(multi));
+    tableSet(targetTable, OBJ_VAL(nameStr), OBJ_VAL(multi));
+
+    // --- ROOT NAME ALIAS ---
+    const char *dollar = strchr(mangledName, '$');
+    if (dollar != NULL) {
+      int rootLen = (int)(dollar - mangledName);
+      ObjString *rootName = copyString(mangledName, rootLen);
+      push(OBJ_VAL(rootName)); // GC shield
+      tableSet(targetTable, OBJ_VAL(rootName), OBJ_VAL(multi));
+      pop(); // pop rootName
+    }
+    // -----------------------
+
+    pop(); // pop multi
+  }
+
+  // Create signatures array
+  Value *signatures = NULL;
+  if (arity > 0 && expectedTypes != NULL) {
+    signatures = ALLOCATE(Value, arity);
+    for (int i = 0; i < arity; i++) {
+      signatures[i] = OBJ_VAL(expectedTypes[i]);
+    }
+  }
+
+  // Protect signatures while arrays expand
+  for (int i = 0; i < arity; i++) {
+    if (signatures) push(signatures[i]);
+  }
+
+  if (multi->methodCapacity < multi->methodCount + 1) {
+    int oldCap = multi->methodCapacity;
+    multi->methodCapacity = GROW_CAPACITY(oldCap);
+    multi->methods = GROW_ARRAY(Value, multi->methods, oldCap,
+                                multi->methodCapacity);
+    multi->signatures =
+        GROW_ARRAY(Value *, multi->signatures, oldCap, multi->methodCapacity);
+  }
+
+  ObjNative *native = newNative(function);
+  push(OBJ_VAL(native));
+
+  multi->methods[multi->methodCount] = OBJ_VAL(native);
+  multi->signatures[multi->methodCount] = signatures;
+  multi->methodCount++;
+
+  pop(); // native
+  for (int i = 0; i < arity; i++) {
+    if (signatures) pop(); // signatures
+  }
+  pop(); // nameStr
+}
+
 // --- NATIVE GETTER LOGIC ---
 static Value listLengthGetter(int argCount, Value *args) {
   (void)argCount;
@@ -284,6 +375,7 @@ void initVM() {
   vm.rangeType = defineNativeType("Range");
   vm.functionType = defineNativeType("Function");
   vm.nilType = defineNativeType("Nil");
+  vm.moduleType = defineNativeType("Module");
 
   // Inject Native Getters into the Blueprints!
   defineNativeGetter(vm.listType, "length", listLengthGetter);
@@ -322,6 +414,8 @@ ObjType *getObjType(Value val) {
       return AS_INSTANCE(val)->type;
     case OBJ_TYPE_BLUEPRINT:
       return vm.typeType; // <-- A Blueprint is an object of type 'Type'!
+    case OBJ_MODULE:
+      return vm.moduleType;
     default:
       return vm.anyType;
     }
@@ -665,7 +759,7 @@ TARGET_OP_DEFINE_GLOBAL: {
 
   // --- THE REDECLARATION SHIELD ---
   Value dummy;
-  if (tableGet(&vm.globals, OBJ_VAL(name), &dummy)) {
+  if (tableGet(frame->globals, OBJ_VAL(name), &dummy)) {
     THROW_ERROR(ERR_REFERENCE,
                 "To change the value of an existing variable, use the 'set' "
                 "keyword (e.g., 'set a to 30').",
@@ -673,7 +767,7 @@ TARGET_OP_DEFINE_GLOBAL: {
   }
   // --------------------------------
 
-  tableSet(&vm.globals, OBJ_VAL(name), peek(0));
+  tableSet(frame->globals, OBJ_VAL(name), peek(0));
   DISPATCH();
 }
 
@@ -681,25 +775,32 @@ TARGET_OP_GET_GLOBAL: {
   ObjString *name = READ_STRING();
   Value value;
 
-  if (!tableGet(&vm.globals, OBJ_VAL(name), &value)) {
-    // --- THE ORACLE INTERCEPT ---
-    const char *suggestion = findVariableSuggestion(name->chars);
+  if (!tableGet(frame->globals, OBJ_VAL(name), &value)) {
+    // Fallback to Universe scope (vm.globals)
+    if (!tableGet(&vm.globals, OBJ_VAL(name), &value)) {
+      // --- THE ORACLE INTERCEPT ---
+      const char *suggestion =
+          findVariableSuggestion(frame->globals, name->chars);
+      if (suggestion == NULL)
+        suggestion = findVariableSuggestion(&vm.globals, name->chars);
 
-    if (suggestion != NULL) {
-      // 1. Build the dynamic hint string first!
-      char hintBuf[256];
-      snprintf(hintBuf, sizeof(hintBuf),
-               "Did you mean '" COLOR_CYAN "%s" COLOR_RESET "'?", suggestion);
+      if (suggestion != NULL) {
+        // 1. Build the dynamic hint string first!
+        char hintBuf[256];
+        snprintf(hintBuf, sizeof(hintBuf),
+                 "Did you mean '" COLOR_CYAN "%s" COLOR_RESET "'?", suggestion);
 
-      // 2. Throw the error with the properly aligned arguments
-      THROW_ERROR(ERR_REFERENCE, hintBuf, "Undefined variable '%s'.",
-                  name->chars);
-    } else {
-      // No close matches found. Fall back to the standard error.
-      THROW_ERROR(ERR_REFERENCE,
-                  "Did you misspell the variable name, or forget to declare it "
-                  "with 'let'?",
-                  "Undefined variable '%s'.", name->chars);
+        // 2. Throw the error with the properly aligned arguments
+        THROW_ERROR(ERR_REFERENCE, hintBuf, "Undefined variable '%s'.",
+                    name->chars);
+      } else {
+        // No close matches found. Fall back to the standard error.
+        THROW_ERROR(
+            ERR_REFERENCE,
+            "Did you misspell the variable name, or forget to declare it "
+            "with 'let'?",
+            "Undefined variable '%s'.", name->chars);
+      }
     }
   }
 
@@ -709,28 +810,40 @@ TARGET_OP_GET_GLOBAL: {
 
 TARGET_OP_SET_GLOBAL: {
   ObjString *name = READ_STRING();
-  if (tableSet(&vm.globals, OBJ_VAL(name), peek(0))) {
-    // tableSet returns true if it's a NEW key.
-    // 'set' is only for EXISTING keys. Delete it and error.
-    tableDelete(&vm.globals, OBJ_VAL(name));
-    // --- THE ORACLE INTERCEPT ---
-    const char *suggestion = findVariableSuggestion(name->chars);
 
-    if (suggestion != NULL) {
-      // 1. Build the dynamic hint string first!
-      char hintBuf[256];
-      snprintf(hintBuf, sizeof(hintBuf),
-               "Did you mean '" COLOR_CYAN "%s" COLOR_RESET "'?", suggestion);
+  // Try to set in current module first
+  if (tableSet(frame->globals, OBJ_VAL(name), peek(0))) {
+    // It didn't exist in the module. Delete the new entry.
+    tableDelete(frame->globals, OBJ_VAL(name));
 
-      // 2. Throw the error with the properly aligned arguments
-      THROW_ERROR(ERR_REFERENCE, hintBuf, "Undefined variable '%s'.",
-                  name->chars);
+    // Check if it exists in Universe scope instead
+    Value dummy;
+    if (tableGet(&vm.globals, OBJ_VAL(name), &dummy)) {
+      tableSet(&vm.globals, OBJ_VAL(name), peek(0));
     } else {
-      // No close matches found. Fall back to the standard error.
-      THROW_ERROR(ERR_REFERENCE,
-                  "Did you misspell the variable name, or forget to declare it "
-                  "with 'let'?",
-                  "Undefined variable '%s'.", name->chars);
+      // --- THE ORACLE INTERCEPT ---
+      const char *suggestion =
+          findVariableSuggestion(frame->globals, name->chars);
+      if (suggestion == NULL)
+        suggestion = findVariableSuggestion(&vm.globals, name->chars);
+
+      if (suggestion != NULL) {
+        // 1. Build the dynamic hint string first!
+        char hintBuf[256];
+        snprintf(hintBuf, sizeof(hintBuf),
+                 "Did you mean '" COLOR_CYAN "%s" COLOR_RESET "'?", suggestion);
+
+        // 2. Throw the error with the properly aligned arguments
+        THROW_ERROR(ERR_REFERENCE, hintBuf, "Undefined variable '%s'.",
+                    name->chars);
+      } else {
+        // No close matches found. Fall back to the standard error.
+        THROW_ERROR(
+            ERR_REFERENCE,
+            "Did you misspell the variable name, or forget to declare it "
+            "with 'let'?",
+            "Undefined variable '%s'.", name->chars);
+      }
     }
   }
 
@@ -1013,6 +1126,16 @@ TARGET_OP_GET_PROPERTY: {
     // dictionary method on the Blueprint (like dict.keys)
   }
 
+  // --- THE MODULE FIX ---
+  else if (IS_MODULE(target)) {
+    ObjModule *module = AS_MODULE(target);
+    if (tableGet(&module->fields, OBJ_VAL(name), &value)) {
+      pop();
+      push(value);
+      DISPATCH();
+    }
+  }
+
   // 3. BLUEPRINT LOOKUP: Check the Shared Blueprint!
   // This automatically catches native C-getters (like list.length),
   // AND it will catch shared methods for custom types later!
@@ -1057,12 +1180,15 @@ TARGET_OP_SET_PROPERTY: {
   else if (IS_DICT(target)) {
     ObjDict *dict = AS_DICT(target);
     tableSet(&dict->fields, OBJ_VAL(name), value);
+  } else if (IS_MODULE(target)) {
+    ObjModule *module = AS_MODULE(target);
+    tableSet(&module->fields, OBJ_VAL(name), value);
   } else {
-    THROW_ERROR(
-        ERR_TYPE,
-        "You cannot set properties on primitive values like Numbers or "
-        "Strings.",
-        "Only object instances and dictionaries have mutable properties.");
+    THROW_ERROR(ERR_TYPE,
+                "You cannot set properties on primitive values like Numbers or "
+                "Strings.",
+                "Only object instances, dictionaries, and modules have mutable "
+                "properties.");
   }
 
   pop();       // Pop value
@@ -1072,240 +1198,31 @@ TARGET_OP_SET_PROPERTY: {
 }
 
 TARGET_OP_GET_SUBSCRIPT: {
-  Value indexVal = peek(0); // Popped from stack!
-  Value seqVal = peek(1);   // Popped from stack!
+  Value indexVal = pop();
+  Value seqVal = pop();
+  Value result;
 
-  if (IS_LIST(seqVal)) {
-    ObjList *list = AS_LIST(seqVal);
-
-    if (IS_NUMBER(indexVal)) {
-      int userIndex = (int)AS_NUMBER(indexVal);
-      if (userIndex == 0) {
-        THROW_ERROR(ERR_RUNTIME,
-                    "You tried to access an index that doesn't exist. "
-                    "Remember, MOON lists start at index 1!",
-                    "Index out of bounds.");
-      }
-
-      int index = userIndex > 0 ? userIndex - 1 : list->count + userIndex;
-
-      if (index < 0 || index >= list->count) {
-        THROW_ERROR(ERR_RUNTIME,
-                    "You tried to access an index that doesn't exist. "
-                    "Remember, MOON lists start at index 1!",
-                    "Index out of bounds.");
-      }
-
-      pop();
-      pop();
-      push(list->items[index]);
-    } else if (IS_RANGE(indexVal)) {
-      ObjRange *range = AS_RANGE(indexVal);
-      int start = (int)range->start;
-      int end = (int)range->end;
-      int step = (int)range->step; // Extract the custom step size!
-
-      // 1-based indexing rules (with negative wrap-around)
-      if (start < 0)
-        start = list->count + start + 1;
-      if (end < 0)
-        end = list->count + end + 1;
-      start--;
-      end--;
-
-      ObjList *resultList = newList();
-      push(OBJ_VAL(resultList)); // GC Protection
-
-      // --- GOING FORWARD ---
-      if (start <= end) {
-        if (start < 0)
-          start = 0;
-        if (end >= list->count)
-          end = list->count - 1;
-        for (int i = start; i <= end; i += step) {
-          appendList(resultList, list->items[i]);
-        }
-      }
-      // --- GOING BACKWARD ---
-      else {
-        if (start >= list->count)
-          start = list->count - 1;
-        if (end < 0)
-          end = 0;
-        for (int i = start; i >= end; i -= step) {
-          appendList(resultList, list->items[i]);
-        }
-      }
-
-      pop(); // resultList
-      pop(); // indexVal
-      pop(); // seqVal
-      push(OBJ_VAL(resultList));
-    } else {
-      THROW_ERROR(
-          ERR_TYPE,
-          "Check what type of value you are passing into the brackets [].",
-          "You tried to use a %s as an index for a List. Lists require a "
-          "Number or a Range.",
-          TYPE_NAME(indexVal));
-    }
-  } else if (IS_DICT(seqVal)) {
-    ObjDict *dict = AS_DICT(seqVal);
-
-    // --- DELETE THE ENTIRE !IS_STRING(indexVal) ERROR BLOCK HERE! ---
-
-    Value result;
-    if (tableGet(&dict->fields, indexVal, &result)) {
-      pop();
-      pop();
-      push(result);
-    } else {
-      pop();
-      pop();
-      push(NIL_VAL); // Safe cache miss!
-    }
-  } else if (IS_STRING(seqVal)) {
-    ObjString *str = AS_STRING(seqVal);
-
-    if (IS_NUMBER(indexVal)) {
-      int userIndex = (int)AS_NUMBER(indexVal);
-      if (userIndex == 0) {
-        THROW_ERROR(
-            ERR_RUNTIME,
-            "You tried to access an index that doesn't exist. Remember, "
-            "MOON strings start at index 1!",
-            "Index out of bounds.");
-      }
-
-      int index = userIndex > 0 ? userIndex - 1 : str->length + userIndex;
-
-      if (index < 0 || index >= str->length) {
-        THROW_ERROR(
-            ERR_RUNTIME,
-            "You tried to access an index that doesn't exist. Remember, "
-            "MOON strings start at index 1!",
-            "Index out of bounds.");
-      }
-
-      uint8_t charByte = (uint8_t)str->chars[index];
-      pop();
-      pop();
-      push(OBJ_VAL(vm.charStrings[charByte]));
-    }
-    // --- NEW: STRING SLICING ---
-    else if (IS_RANGE(indexVal)) {
-      ObjRange *range = AS_RANGE(indexVal);
-      int start = (int)range->start;
-      int end = (int)range->end;
-      int step = (int)range->step;
-
-      if (start < 0)
-        start = str->length + start + 1;
-      if (end < 0)
-        end = str->length + end + 1;
-      start--;
-      end--;
-
-      // Pre-allocate the maximum possible size for the new string
-      int maxLen = abs(start - end) + 1;
-      char *chars = ALLOCATE(char, maxLen + 1);
-      int dest = 0;
-
-      // --- GOING FORWARD ---
-      if (start <= end) {
-        if (start < 0)
-          start = 0;
-        if (end >= str->length)
-          end = str->length - 1;
-        for (int i = start; i <= end; i += step) {
-          chars[dest++] = str->chars[i];
-        }
-      }
-      // --- GOING BACKWARD ---
-      else {
-        if (start >= str->length)
-          start = str->length - 1;
-        if (end < 0)
-          end = 0;
-        for (int i = start; i >= end; i -= step) {
-          chars[dest++] = str->chars[i];
-        }
-      }
-      chars[dest] = '\0';
-
-      // Hand the C string to the MOON string pool
-      ObjString *resultStr = takeString(chars, dest);
-
-      pop();
-      pop();
-      push(OBJ_VAL(resultStr));
-    } else {
-      THROW_ERROR(
-          ERR_TYPE,
-          "Check what type of value you are passing into the brackets [].",
-          "You tried to use a %s as an index for a String. Strings require a "
-          "Number or a Range.",
-          TYPE_NAME(indexVal));
-    }
-  } else {
-    THROW_ERROR(ERR_TYPE,
-                "You can only use brackets [] to access items in Lists, "
-                "Dictionaries, or Strings.",
-                "Type is not subscriptable.");
+  if (!executeGetSubscript(seqVal, indexVal, &result)) {
+    frame->ip = ip; // Sync register back to memory
+    return INTERPRET_RUNTIME_ERROR;
   }
+
+  push(result);
   DISPATCH();
 }
 
 TARGET_OP_SET_SUBSCRIPT: {
-  Value value = peek(0);
-  Value indexVal = peek(1);
-  Value collectionVal = peek(2);
+  Value value = pop();
+  Value indexVal = pop();
+  Value collectionVal = pop();
+  Value result;
 
-  if (IS_DICT(collectionVal)) {
-    ObjDict *dict = AS_DICT(collectionVal);
-
-    tableSet(&dict->fields, indexVal, value);
-    pop();
-    pop();
-    pop();
-    push(value);
-  } else if (IS_LIST(collectionVal)) {
-    ObjList *list = AS_LIST(collectionVal);
-    if (!IS_NUMBER(indexVal)) {
-      THROW_ERROR(ERR_TYPE,
-                  "List indices must be numbers. Check if you accidentally "
-                  "passed a string or another type inside the brackets.",
-                  "List index must be a number.");
-    }
-    // --- THE NEGATIVE INDEX FIX (SET) ---
-    int userIndex = (int)AS_NUMBER(indexVal);
-
-    if (userIndex == 0) {
-      THROW_ERROR(ERR_RUNTIME,
-                  "You tried to access an index that doesn't exist. Remember, "
-                  "MOON lists start at index 1!",
-                  "Index out of bounds.");
-    }
-
-    int index = userIndex > 0 ? userIndex - 1 : list->count + userIndex;
-
-    if (index < 0 || index >= list->count) {
-      THROW_ERROR(ERR_RUNTIME,
-                  "You tried to access an index that doesn't exist. Remember, "
-                  "MOON lists start at index 1!",
-                  "Index out of bounds.");
-    }
-    list->items[index] = value;
-    pop();
-    pop();
-    pop();
-    push(value);
-  } else {
-    THROW_ERROR(ERR_TYPE,
-                "You can only use bracket assignment (like set target[key] to "
-                "value) to modify Lists and Dictionaries.",
-                "Can only assign to lists and dictionaries.");
+  if (!executeSetSubscript(collectionVal, indexVal, value, &result)) {
+    frame->ip = ip;
+    return INTERPRET_RUNTIME_ERROR;
   }
+
+  push(result); // Push value back for chained assignments
   DISPATCH();
 }
 
@@ -1515,6 +1432,8 @@ TARGET_OP_CALL: {
     // 2. SWITCH: Create new frame
     CallFrame *newFrame = &vm.frames[vm.frameCount++];
     newFrame->function = function;
+    newFrame->globals =
+        function->homeGlobals ? function->homeGlobals : &vm.globals;
     // Note: We don't need to set newFrame->ip yet, we'll load it into local
     // 'ip'
     newFrame->ip = function->chunk.code;
@@ -1539,7 +1458,7 @@ TARGET_OP_CALL: {
     Value *args = vm.stackTop - argCount;
 
     // --- THE SYMMETRIC SCORING ENGINE ---
-    ObjFunction *bestMethod = NULL;
+    Value bestMethodVal = NIL_VAL;
     int bestScore = -1;
     bool isAmbiguous = false;
 
@@ -1591,7 +1510,7 @@ TARGET_OP_CALL: {
       if (isMatch) {
         if (currentScore > bestScore) {
           bestScore = currentScore;
-          bestMethod = multi->methods[i];
+          bestMethodVal = multi->methods[i];
           isAmbiguous = false; // We have a clear winner (for now)
         } else if (currentScore == bestScore) {
           isAmbiguous =
@@ -1601,7 +1520,7 @@ TARGET_OP_CALL: {
     }
 
     // --- RESOLUTION & THE INTERSECTION MANDATE ---
-    if (bestMethod == NULL) {
+    if (IS_NIL(bestMethodVal)) {
       THROW_ERROR(ERR_REFERENCE,
                   "The arguments you passed don't match any overloaded version "
                   "of this function.",
@@ -1623,15 +1542,26 @@ TARGET_OP_CALL: {
                   "Stack overflow.");
     }
 
-    frame->ip = ip;
-    CallFrame *newFrame = &vm.frames[vm.frameCount++];
-    newFrame->function = bestMethod;
-    newFrame->ip = bestMethod->chunk.code;
-    newFrame->slots = vm.stackTop - argCount - 1;
-    frame = newFrame;
-    ip = frame->ip;
+    if (IS_NATIVE(bestMethodVal)) {
+      NativeFn native = AS_NATIVE(bestMethodVal);
+      Value result = native(argCount, vm.stackTop - argCount);
+      vm.stackTop -= argCount + 1; // Pop arguments and the multi-function
+      push(result);
+      DISPATCH();
+    } else {
+      ObjFunction *bestMethod = AS_FUNCTION(bestMethodVal);
+      frame->ip = ip;
+      CallFrame *newFrame = &vm.frames[vm.frameCount++];
+      newFrame->function = bestMethod;
+      newFrame->globals =
+          bestMethod->homeGlobals ? bestMethod->homeGlobals : &vm.globals;
+      newFrame->ip = bestMethod->chunk.code;
+      newFrame->slots = vm.stackTop - argCount - 1;
+      frame = newFrame;
+      ip = frame->ip;
 
-    DISPATCH();
+      DISPATCH();
+    }
   }
 
   THROW_ERROR(
@@ -1663,9 +1593,10 @@ TARGET_OP_TYPE_DEF: {
     tableSet(&type->properties, key, val);
   }
 
-  // 3. Save the finished Blueprint to Global Variables so the language
-  // knows it exists!
-  tableSet(&vm.globals, OBJ_VAL(name), OBJ_VAL(type));
+  // --- THE FIX ---
+  // Save the finished Blueprint to the current Module's scope!
+  tableSet(frame->globals, OBJ_VAL(name),
+           OBJ_VAL(type)); // <--- CHANGED FROM &vm.globals
 
   // 4. Clean up the stack
   pop();                              // Pop the protected ObjType
@@ -1692,17 +1623,32 @@ TARGET_OP_DEFINE_METHOD: {
     signatures[i] = typesStart[i];
   }
 
-  // Does the MultiFunction folder already exist in globals?
+  // Does the MultiFunction folder already exist in current scope?
   Value existing;
   ObjMultiFunction *multi = NULL;
-  if (tableGet(&vm.globals, OBJ_VAL(name), &existing) &&
+  if (tableGet(frame->globals, OBJ_VAL(name), &existing) &&
       IS_MULTI_FUNCTION(existing)) {
     multi = AS_MULTI_FUNCTION(existing);
   } else {
     multi = newMultiFunction(name, arity);
     push(OBJ_VAL(multi));
-    tableSet(&vm.globals, OBJ_VAL(name), OBJ_VAL(multi));
-    pop();
+    // Store under mangled name (e.g. "my_func$0") for dispatch
+    tableSet(frame->globals, OBJ_VAL(name), OBJ_VAL(multi));
+
+    // --- ROOT NAME ALIAS ---
+    // Also store under the unmangled root name (e.g. "my_func") so that
+    // module property access via `mymod's my_func` works without knowing arity.
+    const char *dollar = strchr(name->chars, '$');
+    if (dollar != NULL) {
+      int rootLen = (int)(dollar - name->chars);
+      ObjString *rootName = copyString(name->chars, rootLen);
+      push(OBJ_VAL(rootName)); // GC shield
+      tableSet(frame->globals, OBJ_VAL(rootName), OBJ_VAL(multi));
+      pop(); // pop rootName
+    }
+    // -----------------------
+
+    pop(); // pop multi
   }
 
   // --- THE NEW SHIELD ---
@@ -1716,13 +1662,13 @@ TARGET_OP_DEFINE_METHOD: {
   if (multi->methodCapacity < multi->methodCount + 1) {
     int oldCap = multi->methodCapacity;
     multi->methodCapacity = GROW_CAPACITY(oldCap);
-    multi->methods = GROW_ARRAY(ObjFunction *, multi->methods, oldCap,
+    multi->methods = GROW_ARRAY(Value, multi->methods, oldCap,
                                 multi->methodCapacity);
     multi->signatures =
         GROW_ARRAY(Value *, multi->signatures, oldCap, multi->methodCapacity);
   }
 
-  multi->methods[multi->methodCount] = method;
+  multi->methods[multi->methodCount] = OBJ_VAL(method);
   multi->signatures[multi->methodCount] = signatures;
   multi->methodCount++;
 
@@ -1761,69 +1707,64 @@ TARGET_OP_CAST: {
 }
 
 TARGET_OP_LOAD: {
-  // The compiler pushed the file path string right before calling OP_LOAD
   ObjString *path = AS_STRING(pop());
 
-  // --- 1. THE SHIELD ---
-  Value dummy;
-  if (tableGet(&vm.loadedModules, OBJ_VAL(path), &dummy)) {
-    // We already ran this file! Skip it to prevent infinite loops.
+  // 1. THE CACHE HIT
+  Value cachedModule;
+  if (tableGet(&vm.loadedModules, OBJ_VAL(path), &cachedModule)) {
+    push(cachedModule); // Push the module object for the 'let' assignment!
     DISPATCH();
   }
 
-  // Lock the door: mark this file as loaded
-  tableSet(&vm.loadedModules, OBJ_VAL(path), BOOL_VAL(true));
-
-  // --- 2. COMPILE ON THE FLY ---
-  // Read the file from the OS
+  // 2. Read from OS
   char *source = readFile(path->chars);
   if (source == NULL) {
     THROW_ERROR(ERR_RUNTIME, "Make sure the file exists.",
                 "Could not open module '%s'.", path->chars);
   }
 
-  // 1. Vault the Source Code!
   ObjString *sourceStr = copyString(source, strlen(source));
-  push(OBJ_VAL(sourceStr)); // GC Protection
-  tableSet(&vm.loadedModules, OBJ_VAL(path), OBJ_VAL(sourceStr));
+  push(OBJ_VAL(sourceStr)); // GC Shield
 
-  // 2. Compile the module with its path as the name!
-  ObjFunction *moduleFunc = compile(source, path);
-  free(source); // We can safely free the C-string because the Vault owns the
-                // ObjString copy!
+  // 3. Create the Module
+  ObjModule *module = newModule(path);
+  module->source = sourceStr; // Store source for error reporting
+  push(OBJ_VAL(module));      // GC Shield
 
-  pop(); // Pop sourceStr off the stack
+  // 4. Register immediately to prevent circular dependency infinite loops!
+  tableSet(&vm.loadedModules, OBJ_VAL(path), OBJ_VAL(module));
+
+  // 5. Compile
+  currentGlobals = &module->fields; // Route compiler output to this module!
+  vm.allowGC = false;
+  ObjFunction *moduleFunc = compile(source, module);
+  vm.allowGC = true;
+
+  free(source);
 
   if (moduleFunc == NULL) {
-    THROW_ERROR(
-        ERR_RUNTIME,
-        "There is a syntax error inside the module you are trying to load.",
-        "Failed to compile '%s'.", path->chars);
+    tableDelete(&vm.loadedModules, OBJ_VAL(path)); // Remove broken module
+    THROW_ERROR(ERR_RUNTIME, "Syntax error inside the module.",
+                "Failed to compile '%s'.", path->chars);
   }
 
-  // Protect the new function from Garbage Collection
-  push(OBJ_VAL(moduleFunc));
+  push(OBJ_VAL(moduleFunc)); // GC Shield
 
-  // --- 3. THE CONTEXT SWITCH ---
+  // 6. Context Switch
   if (vm.frameCount == FRAMES_MAX) {
     THROW_ERROR(ERR_RUNTIME, "Too many files loading each other.",
                 "Stack overflow.");
   }
 
-  // A. Save our exact spot in the CURRENT script so we can return here later!
   frame->ip = ip;
-
-  // B. Create a brand new CallFrame for the module
   CallFrame *newFrame = &vm.frames[vm.frameCount++];
   newFrame->function = moduleFunc;
+  newFrame->globals = &module->fields;
   newFrame->ip = moduleFunc->chunk.code;
-  newFrame->slots = vm.stackTop - 1; // The module gets its own local variables
+  newFrame->slots = vm.stackTop - 1;
 
-  // C. Hijack the VM's brain!
   frame = newFrame;
   ip = frame->ip;
-
-  // D. Resume execution. The VM is now reading instructions from the new file!
   DISPATCH();
 }
 
@@ -1874,6 +1815,11 @@ TARGET_OP_KEEP_DICT: {
 
 TARGET_OP_RETURN: {
   Value result = pop();
+
+  if (frame->function->isTopLevel && frame->function->module != NULL) {
+    result = OBJ_VAL(frame->function->module);
+  }
+
   vm.frameCount--;
 
   if (vm.frameCount == 0) {
@@ -1913,51 +1859,12 @@ TARGET_OP_SHOW_REPL: {
 #undef BINARY_OP
 }
 
-static void compileAndRunWrapper(const char *nameStr, const char *sourceStr) {
-  ObjString *name = copyString(nameStr, (int)strlen(nameStr));
-  push(OBJ_VAL(name));
-  ObjString *src = copyString(sourceStr, (int)strlen(sourceStr));
-  push(OBJ_VAL(src));
-  tableSet(&vm.loadedModules, OBJ_VAL(name), OBJ_VAL(src));
-
-  ObjFunction *func = compile(sourceStr, name);
-
-  if (func != NULL) {
-    push(OBJ_VAL(func));
-    CallFrame *frame = &vm.frames[vm.frameCount++];
-    frame->function = func;
-    frame->ip = func->chunk.code;
-    frame->slots = vm.stackTop - 1;
-    run();
-  }
-
-  pop();
-  pop();
-}
-
 static void bootstrapCore() {
-  MoonModule standardLibraries[] = {
-      {"<core>", coreLibrary, registerCoreLibrary},
-      {"<math>", mathBootstrap, registerMathLibrary},
-      {"<string>", stringBootstrap, registerStringLibrary},
-      {"<list>", listBootstrap, registerListLibrary},
-      {"<io>", ioBootstrap, registerIOLibrary},
-      {NULL, NULL, NULL}};
-
-  bool previousDebug = vm.debugMode;
-  bool previousAstFlag = printAstFlag;
-
-  vm.debugMode = false;
-  printAstFlag = false;
-
-  for (int i = 0; standardLibraries[i].name != NULL; i++) {
-    standardLibraries[i].registerCFunctions();
-    compileAndRunWrapper(standardLibraries[i].name,
-                         standardLibraries[i].moonWrapperSource);
-  }
-
-  vm.debugMode = previousDebug;
-  printAstFlag = previousAstFlag;
+  registerCoreLibrary();
+  registerMathLibrary();
+  registerStringLibrary();
+  registerListLibrary();
+  registerIOLibrary();
 }
 
 bool isCoreBootstrapped = false;
@@ -1979,10 +1886,19 @@ InterpretResult interpret(const char *source) {
   push(OBJ_VAL(mainName));
   ObjString *mainSrc = copyString(source, strlen(source));
   push(OBJ_VAL(mainSrc));
-  tableSet(&vm.loadedModules, OBJ_VAL(mainName), OBJ_VAL(mainSrc));
+
+  ObjModule *mainModule = newModule(mainName);
+  mainModule->source = mainSrc;
+  push(OBJ_VAL(mainModule));
+  tableSet(&vm.loadedModules, OBJ_VAL(mainName), OBJ_VAL(mainModule));
 
   // 2. Compile with the tag
-  ObjFunction *function = compile(source, mainName);
+  currentGlobals = &mainModule->fields; // Hook up the router!
+  ObjFunction *function = compile(source, mainModule);
+
+  pop(); // pop mainModule
+  pop(); // pop mainSrc
+  pop(); // pop mainName
 
   if (function == NULL)
     return INTERPRET_COMPILE_ERROR;
@@ -1996,6 +1912,7 @@ InterpretResult interpret(const char *source) {
   // 2. Set up the first Call Frame (The "Main" script)
   CallFrame *frame = &vm.frames[vm.frameCount++];
   frame->function = function;
+  frame->globals = &function->module->fields;
   frame->ip = function->chunk.code;
 
   // The script's locals start at the bottom of the stack

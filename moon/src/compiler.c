@@ -6,8 +6,9 @@
 #include "parser.h"
 
 // The Master Compilation Pipeline
-ObjFunction *compile(const char *source, ObjString *moduleName) {
-  currentModuleName = moduleName;
+ObjFunction *compile(const char *source, ObjModule *module) {
+  currentModule = module;
+  // REMOVED: currentGlobals = &module->fields;  <--- Let vm.c handle this!
 
   // Phase 1: Front-End (Source Code -> Abstract Syntax Tree)
   Node *ast = parseSource(source);

@@ -15,6 +15,7 @@ typedef struct {
   ObjFunction *function; // Which function is running?
   uint8_t *ip;           // Where are we in that function?
   Value *slots;          // Where do this function's locals start on the stack?
+  Table *globals;        // The module's global scope!
 } CallFrame;
 
 typedef enum {
@@ -49,6 +50,7 @@ typedef struct {
   ObjType *rangeType;
   ObjType *functionType;
   ObjType *nilType;
+  ObjType *moduleType;
 
   // --- GARBAGE COLLECTOR STATE ---
   size_t bytesAllocated;
@@ -62,11 +64,6 @@ typedef struct {
   int sequenceCount;
 } VM;
 
-typedef struct {
-  const char *name;
-  NativeFn function;
-} NativeDef;
-
 ObjType *getObjType(Value val);
 #define TYPE_NAME(val) (getObjType(val)->name->chars)
 
@@ -76,22 +73,30 @@ void initVM();
 void freeVM();
 InterpretResult interpret(const char *source);
 
-// --- THE NATIVE MODULE REGISTRY ---
+// --- THE STATIC NATIVE REGISTRY API ---
 
-typedef void (*NativeRegisterFn)();
+// The Static Linker
+void registerNativePhrasal(ObjModule *module, const char *root, const char *path,
+                           int arity, const char *mangledName, NativeFn function,
+                           ObjType **expectedTypes);
 
-typedef struct {
-  const char *name;
-  const char *moonWrapperSource;
-  NativeRegisterFn registerCFunctions;
-} MoonModule;
+// Macros to make writing standard libraries incredibly clean
+#define REGISTER_PHRASE(module, root, path, arity, mangledName, fn, ...)       \
+  do {                                                                         \
+    ObjType *types[] = {__VA_ARGS__};                                          \
+    registerNativePhrasal(module, root, path, arity, mangledName, fn, types);  \
+  } while (0)
+
+#define REGISTER_PHRASE_0(module, root, path, mangledName, fn)                 \
+  registerNativePhrasal(module, root, path, 0, mangledName, fn, NULL)
 
 // --- THE NATIVE API ---
 void push(Value value);
 Value pop();
 Value peek(int distance);
 bool isFalsey(Value value);
-void defineNative(const char *name, NativeFn function);
+
+// The Static Linker (We will implement this next)
 void throwNativeError(const char *hint, const char *format, ...);
 void runtimeErrorDetailed(ErrorType type, const char *hint, const char *format,
                           ...);

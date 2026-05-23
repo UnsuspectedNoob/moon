@@ -18,6 +18,7 @@ typedef enum {
   OBJ_INSTANCE,
   OBJ_MULTI_FUNCTION,
   OBJ_UNION,
+  OBJ_MODULE,
 } ObjKind;
 
 typedef struct Obj {
@@ -47,6 +48,9 @@ typedef struct Obj {
 #define IS_RANGE(value) isObjType(value, OBJ_RANGE)
 #define AS_RANGE(value) ((ObjRange *)AS_OBJ(value))
 
+#define IS_MODULE(value) isObjType(value, OBJ_MODULE)
+#define AS_MODULE(value) ((ObjModule *)AS_OBJ(value))
+
 // The String Object
 typedef struct ObjString {
   Obj obj;
@@ -59,6 +63,7 @@ typedef struct ObjString {
 } ObjString;
 
 typedef struct ObjFunction ObjFunction; // Forward declaration
+typedef struct ObjModule ObjModule;     // Forward declaration
 
 typedef Value (*NativeFn)(int argCount, Value *args); // C Function pointer
 
@@ -68,7 +73,9 @@ struct ObjFunction {
   int arity;       // Number of arguments it expects
   Chunk chunk;     // The bytecode
   ObjString *name; // Function name (for debugging)
-  ObjString *moduleName;
+  ObjModule *module;
+  Table *homeGlobals; // The global scope this function was defined in
+  bool isTopLevel;    // True only for module/script top-level functions
 };
 
 // The wrapper for a C function
@@ -88,6 +95,13 @@ typedef struct {
   Obj obj;
   Table fields; // We literally just reuse your existing Hash Table!
 } ObjDict;
+
+struct ObjModule {
+  Obj obj;
+  ObjString *name;
+  ObjString *source; // <--- ADD THIS!
+  Table fields;
+};
 
 typedef struct {
   Obj obj;      // Base class
@@ -118,7 +132,7 @@ typedef struct {
   int arity;       // How many arguments this phrase takes
   int methodCount;
   int methodCapacity;
-  ObjFunction **methods; // Array of actual compiled bytecode chunks
+  Value *methods; // Array of actual compiled bytecode chunks or native functions
   Value **signatures;
 } ObjMultiFunction;
 
@@ -163,4 +177,5 @@ ObjString *valueToString(Value value);
 
 ObjDict *newDict();
 ObjUnion *newUnion(int count);
+ObjModule *newModule(ObjString *name);
 #endif

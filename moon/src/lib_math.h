@@ -3,7 +3,6 @@
 
 void registerMathLibrary();
 
-// Expose as an array!
-extern const char mathBootstrap[];
+
 
 #endif

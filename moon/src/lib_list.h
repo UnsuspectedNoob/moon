@@ -3,7 +3,6 @@
 
 void registerListLibrary();
 
-// Expose the MOON wrapper as an array!
-extern const char listBootstrap[];
+// Expose the MOON wrapper
 
 #endif

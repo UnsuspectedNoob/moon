@@ -164,31 +164,9 @@ static Value parseBaseNative(int argCount, Value *args) {
 // --- THE HANDSHAKE ---
 
 void registerListLibrary() {
-  defineNative("__list_reverse", reverseNative);
-  defineNative("__list_join", joinNative);
-  defineNative("__list_pop", popNative);
-  defineNative("__list_index", indexOfNative);
-  defineNative("__parse_base", parseBaseNative);
+  REGISTER_PHRASE(NULL, "reverse", "$1", 1, "reverse$1", reverseNative, vm.listType);
+  REGISTER_PHRASE(NULL, "join", "$1,with,$1", 2, "join$1_with$1", joinNative, vm.listType, vm.stringType);
+  REGISTER_PHRASE(NULL, "pop", "from,$1", 1, "pop_from$1", popNative, vm.listType);
+  REGISTER_PHRASE(NULL, "numbers", "in,$1,in,base,$1", 2, "numbers_in$1_in_base$1", parseBaseNative, vm.anyType, vm.numberType);
+  REGISTER_PHRASE(NULL, "index", "of,$1,in,$1", 2, "index_of$1_in$1", indexOfNative, vm.anyType, vm.listType);
 }
-
-// --- THE MOON WRAPPERS ---
-
-const char listBootstrap[] =
-    "let reverse (l: List):\n"
-    "    give __list_reverse(l)\n"
-    "end\n"
-    "\n"
-    "let join (l: List) with (delim: String):\n"
-    "    give __list_join(l, delim)\n"
-    "end\n"
-    "\n"
-    "let pop from (l: List):\n"
-    "    give __list_pop(l)\n"
-    "end\n"
-    "\n"
-    "let numbers in (seq: Any) in base (radix: Number):\n"
-    "    give __parse_base(seq, radix)\n"
-    "end\n"
-    "let index of (item: Any) in (l: List):\n"
-    "    give __list_index(l, item)\n"
-    "end\n";

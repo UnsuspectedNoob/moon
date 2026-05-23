@@ -12,4 +12,5 @@ let the first (n) fibonacci numbers:
   give a
 end
 
-show the first 100 fibonacci numbers
+let numbers be 30
+show the first 10 fibonacci (numbers)

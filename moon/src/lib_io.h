@@ -3,6 +3,6 @@
 
 void registerIOLibrary();
 
-extern const char ioBootstrap[];
+
 
 #endif

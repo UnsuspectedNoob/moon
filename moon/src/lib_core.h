@@ -4,7 +4,6 @@
 // 1. Expose the registration function
 void registerCoreLibrary();
 
-// 2. Expose the string as an ARRAY, not a pointer!
-extern const char coreLibrary[];
+
 
 #endif
