@@ -149,6 +149,7 @@ Node *newSubscriptNode(Node *left, Node *index, int line) {
 }
 
 Node *newEndNode(int line) { return allocateNode(NODE_END, line); }
+Node *newLoadStickyNode(int line) { return allocateNode(NODE_LOAD_STICKY, line); }
 
 Node *newBlockNode(Node **statements, int count, int line) {
   Node *node = allocateNode(NODE_BLOCK, line);
@@ -560,6 +561,8 @@ void freeNode(Node *root) {
       break;
     case NODE_EXPRESSION_STMT:
     case NODE_RETURN:
+    case NODE_GROUPING:
+    case NODE_BIND_STICKY:
       writeNodeArray(&worklist, node->as.singleExpr.expression);
       break;
     case NODE_TYPE_DECL:

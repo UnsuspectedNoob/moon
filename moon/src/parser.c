@@ -11,12 +11,6 @@
 #include "sigtrie.h"
 #include "vm.h"
 
-#include "lib_core.h"
-#include "lib_io.h"
-#include "lib_list.h"
-#include "lib_math.h"
-#include "lib_string.h"
-
 // ==========================================
 // 1. GLOBAL STATE & REGISTRY
 // ==========================================
@@ -32,7 +26,7 @@ typedef struct {
 static ExpectedLabel expectedLabelStack[256];
 static int expectedLabelCount = 0;
 static int groupingDepth = 0; // Tracks if we are inside () or []
-static Node *currentStickySubject = NULL;
+
 static int loopingDepth = 0;
 static Token makeHiddenToken(const char *text, int line);
 
@@ -72,7 +66,6 @@ static char *my_strdup(const char *s) {
 
 // You will need to expose your readFile helper from main.c or rewrite a quick
 // one here
-extern char *readFile(const char *path);
 
 static bool canStartExpression(TokenType type) {
   switch (type) {
@@ -108,8 +101,6 @@ bool isMathOperator(Token opToken) {
     return false;
   }
 }
-
-
 
 // ==========================================
 // 3. ERROR HANDLING
@@ -193,9 +184,9 @@ void advance() {
       break;
 
     // Use the stowed errorMessage, otherwise fallback to the token text
-    const char *message = parser.current.errorMessage != NULL 
-                            ? parser.current.errorMessage 
-                            : parser.current.start;
+    const char *message = parser.current.errorMessage != NULL
+                              ? parser.current.errorMessage
+                              : parser.current.start;
 
     errorAt(&parser.current, ERR_SYNTAX, message, NULL);
   }
@@ -579,8 +570,7 @@ static Node *variable() {
 
 static Node *explicitSticky() {
   Node *right = parsePrecedence(PREC_UNARY);
-  currentStickySubject = right; // Lock it into the register!
-  return right; // Act transparently, passing the value right through
+  return newSingleExprNode(NODE_BIND_STICKY, right, parser.previous.line);
 }
 
 static Node *unary() {
@@ -616,15 +606,6 @@ static Node *cloneNode(Node *original) {
 }
 
 static Node *stickyPrefix() {
-  if (currentStickySubject == NULL) {
-    errorAt(&parser.previous, ERR_SYNTAX,
-            "This operator is missing its left side.",
-            "It looks like you used an operator (like '<', '>=', or 'is') "
-            "without providing a value on its left, and there is no active "
-            "subject to attach it to.");
-    return NULL;
-  }
-
   Token opToken = parser.previous;
 
   // --- THE "IS NOT" FIX ---
@@ -636,8 +617,8 @@ static Node *stickyPrefix() {
   ParseRule *rule = getRule(opToken.type);
   Node *right = parsePrecedence((Precedence)(rule->precedence + 1));
 
-  // Build the binary node using the cloned subject!
-  Node *stickyNode = newBinaryNode(cloneNode(currentStickySubject), opToken,
+  // Build the binary node using a sticky load node!
+  Node *stickyNode = newBinaryNode(newLoadStickyNode(opToken.line), opToken,
                                    right, opToken.line);
 
   if (invert) {
@@ -676,7 +657,7 @@ static Node *binary(Node *left) {
 
   // --- STICKY SUBJECT CAPTURE ---
   if (isComparison(opToken)) {
-    currentStickySubject = left;
+    left = newSingleExprNode(NODE_BIND_STICKY, left, opToken.line);
   }
 
   // --- THE "IS NOT" FIX ---
@@ -760,6 +741,9 @@ static Node *listComprehension(int line) {
         letExprs[0] = inner;
         Node *letIt = newLetNode(letNames, 1, letExprs, 1, line);
 
+        FREE_ARRAY(Token, letNames, 1);
+        FREE_ARRAY(Node *, letExprs, 1);
+
         Node *itVar = newVariableNode(itToken, line);
         Node *keepNode = newKeepNode(NULL, itVar, line);
         Node *ifStmt = newIfNode(cond, keepNode, NULL, line);
@@ -770,6 +754,7 @@ static Node *listComprehension(int line) {
 
         FREE(Node, expr);
         keepValue = newBlockNode(blockStmts, 2, line);
+        FREE_ARRAY(Node *, blockStmts, 2);
       } else {
         Node *keepNode = newKeepNode(NULL, inner, line);
         FREE(Node, expr); // Prevent the memory leak!
@@ -1377,7 +1362,7 @@ static Node *addStatement() {
       Node **letExprs = ALLOCATE(Node *, 1);
       letExprs[0] = cloneNode(target);
       Node *letIt = newLetNode(letNames, 1, letExprs, 1, line);
-      
+
       Node *ifStmt = newIfNode(cond, addNode, NULL, line);
 
       Node **blockStmts = ALLOCATE(Node *, 2);
@@ -1399,7 +1384,7 @@ static Node *addStatement() {
       Node **letExprs = ALLOCATE(Node *, 1);
       letExprs[0] = cloneNode(target);
       Node *letIt = newLetNode(letNames, 1, letExprs, 1, line);
-      
+
       Node *ifStmt = newIfNode(invertedCond, addNode, NULL, line);
 
       Node **blockStmts = ALLOCATE(Node *, 2);
@@ -1458,7 +1443,7 @@ static Node *setStatement() {
       Node **letExprs = ALLOCATE(Node *, 1);
       letExprs[0] = cloneNode(targets.items[0]);
       Node *letIt = newLetNode(letNames, 1, letExprs, 1, line);
-      
+
       Node *ifStmt = newIfNode(cond, setNode, NULL, line);
 
       Node **blockStmts = ALLOCATE(Node *, 2);
@@ -1563,7 +1548,6 @@ static Node *expressionStatement() {
       }
     }
   }
-
 
   // The standard AST Inversion (for normal assignments/math)
   if (expr != NULL && expr->type == NODE_IF &&
@@ -1785,7 +1769,7 @@ static Node *updateStatement() {
       Node **letExprs = ALLOCATE(Node *, 1);
       letExprs[0] = rawTargetBackup; // The L-Value!
       Node *letIt = newLetNode(letNames, 1, letExprs, 1, line);
-      
+
       Node *ifStmt = newIfNode(modifierCond, finalNode, NULL, line);
 
       Node **blockStmts = ALLOCATE(Node *, 2);
@@ -1808,7 +1792,7 @@ static Node *updateStatement() {
       Node **letExprs = ALLOCATE(Node *, 1);
       letExprs[0] = rawTargetBackup;
       Node *letIt = newLetNode(letNames, 1, letExprs, 1, line);
-      
+
       Node *ifStmt = newIfNode(cond, finalNode, NULL, line);
 
       Node **blockStmts = ALLOCATE(Node *, 2);
@@ -1831,7 +1815,7 @@ static Node *updateStatement() {
       Node **letExprs = ALLOCATE(Node *, 1);
       letExprs[0] = rawTargetBackup;
       Node *letIt = newLetNode(letNames, 1, letExprs, 1, line);
-      
+
       Node *ifStmt = newIfNode(invertedCond, finalNode, NULL, line);
 
       Node **blockStmts = ALLOCATE(Node *, 2);
@@ -1925,7 +1909,7 @@ static Node *keepStatement() {
 }
 
 static Node *statement() {
-  currentStickySubject = NULL;
+
   ignoreNewlines();
 
   // --- 1. Block Statements (Control Flow) ---
@@ -2177,7 +2161,8 @@ static Node *letDeclaration() {
             break;
           }
           strncat(mangled, parser.previous.start, parser.previous.length);
-          currentNode = addLabelBranch(currentNode, parser.previous.start, parser.previous.length);
+          currentNode = addLabelBranch(currentNode, parser.previous.start,
+                                       parser.previous.length);
         }
       }
 
@@ -2221,15 +2206,7 @@ static Node *letDeclaration() {
 static Node *grouping() {
   groupingDepth++; // Going deeper...
 
-  // --- THE STICKY SCOPE FIX ---
-  // Save the current subject on the C call stack before evaluating the inside
-  Node *previousSubject = currentStickySubject;
-
   Node *expr = expression();
-
-  // Restore the outside subject now that we are done!
-  currentStickySubject = previousSubject;
-  // ----------------------------
 
   groupingDepth--; // Coming back out!
 
@@ -2237,7 +2214,7 @@ static Node *grouping() {
               "I couldn't find the closing parenthesis ')'.",
               "Make sure you close any opened parentheses in your math, logic, "
               "or function calls.");
-  return expr;
+  return newSingleExprNode(NODE_GROUPING, expr, parser.previous.line);
 }
 
 static Node *declaration() {
@@ -2309,13 +2286,12 @@ static ParseRule *getRule(TokenType type) { return &rules[type]; }
 static void resetParserState() {
   expectedLabelCount = 0;
   groupingDepth = 0;
-  currentStickySubject = NULL;
+
   loopingDepth = 0;
   parseDepth = 0;
 
   // ONLY wipe long-term memory if we are running in the Language Server!
   if (isLspMode) {
-
 
     // Destroy the old Signature Trie so deleted/edited functions don't haunt
     // the parser!

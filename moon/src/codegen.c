@@ -494,6 +494,24 @@ static void walkNode(Node *node) {
     break;
   }
 
+  case NODE_LOAD_STICKY: {
+    emitByte(OP_LOAD_STICKY);
+    break;
+  }
+
+  case NODE_BIND_STICKY: {
+    walkNode(node->as.singleExpr.expression);
+    emitByte(OP_SET_STICKY);
+    break;
+  }
+
+  case NODE_GROUPING: {
+    emitByte(OP_PUSH_STICKY);
+    walkNode(node->as.singleExpr.expression);
+    emitByte(OP_POP_STICKY);
+    break;
+  }
+
   case NODE_PROPERTY: {
     // 1. Push the target object to the stack
     walkNode(node->as.property.target);

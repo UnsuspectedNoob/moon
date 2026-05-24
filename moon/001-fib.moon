@@ -1,5 +1,3 @@
-
-
 let the first (n) fibonacci numbers:
   let a be [ 0, 1 ]
 
@@ -12,5 +10,4 @@ let the first (n) fibonacci numbers:
   give a
 end
 
-let numbers be 30
-show the first 10 fibonacci (numbers)
+show the first 1000 fibonacci numbers

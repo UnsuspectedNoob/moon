@@ -77,25 +77,6 @@ static bool castToNumber(Value val, Value *result) {
   } else if (IS_BOOL(val)) {
     *result = NUMBER_VAL(AS_BOOL(val) ? 1.0 : 0.0);
     return true;
-  } else if (IS_LIST(val)) {
-    ObjList *list = AS_LIST(val);
-    double numResult = 0.0;
-
-    for (int i = 0; i < list->count; i++) {
-      if (!IS_NUMBER(list->items[i])) {
-        runtimeErrorDetailed(
-            ERR_TYPE,
-            "A list can only be cast to a Number if every single item inside "
-            "it is a number.",
-            "Found a %s inside the list. Cannot cast to Number.",
-            TYPE_NAME(list->items[i]));
-        return false;
-      }
-      // Horner's Method
-      numResult = (numResult * 10.0) + AS_NUMBER(list->items[i]);
-    }
-    *result = NUMBER_VAL(numResult);
-    return true;
   }
 
   runtimeErrorDetailed(ERR_TYPE,
@@ -122,17 +103,6 @@ static bool castToList(Value val, Value *result) {
     for (int i = 0; i < s->length; i++) {
       appendList(l, OBJ_VAL(vm.charStrings[(uint8_t)s->chars[i]]));
     }
-  } else if (IS_NUMBER(val)) {
-    ObjString *s = valueToString(val);
-    push(OBJ_VAL(s));
-    for (int i = 0; i < s->length; i++) {
-      char c = s->chars[i];
-      if (c >= '0' && c <= '9')
-        appendList(l, NUMBER_VAL(c - '0'));
-      else
-        appendList(l, OBJ_VAL(vm.charStrings[(uint8_t)c]));
-    }
-    pop();
   } else if (IS_DICT(val)) {
     ObjDict *d = AS_DICT(val);
     for (int i = 0; i < d->fields.capacity; i++) {

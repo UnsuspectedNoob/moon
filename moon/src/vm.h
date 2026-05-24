@@ -16,6 +16,7 @@ typedef struct {
   uint8_t *ip;           // Where are we in that function?
   Value *slots;          // Where do this function's locals start on the stack?
   Table *globals;        // The module's global scope!
+  Value stickySubject;   // The active sticky subject for chained comparisons!
 } CallFrame;
 
 typedef enum {
@@ -62,6 +63,9 @@ typedef struct {
 
   Value sequenceStack[256];
   int sequenceCount;
+
+  Value stickyStack[256];
+  int stickyCount;
 } VM;
 
 ObjType *getObjType(Value val);

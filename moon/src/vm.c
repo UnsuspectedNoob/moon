@@ -457,7 +457,9 @@ static InterpretResult run() {
       &&TARGET_OP_CAST,          &&TARGET_OP_LOAD,
       &&TARGET_OP_KEEP_LIST,     &&TARGET_OP_KEEP_DICT,
       &&TARGET_OP_RETURN,        &&TARGET_OP_PUSH_SEQUENCE,
-      &&TARGET_OP_POP_SEQUENCE,  &&TARGET_OP_SHOW_REPL,
+      &&TARGET_OP_POP_SEQUENCE,  &&TARGET_OP_PUSH_STICKY,
+      &&TARGET_OP_POP_STICKY,    &&TARGET_OP_SET_STICKY,
+      &&TARGET_OP_LOAD_STICKY,   &&TARGET_OP_SHOW_REPL,
   };
 
 #define READ_BYTE() (*ip++)
@@ -476,8 +478,7 @@ static InterpretResult run() {
                   opStr, TYPE_NAME(peek(1)), TYPE_NAME(peek(0)));              \
     }                                                                          \
     double b = AS_NUMBER(pop());                                               \
-    double a = AS_NUMBER(pop());                                               \
-    push(valueType(a op b));                                                   \
+    vm.stackTop[-1] = valueType(AS_NUMBER(vm.stackTop[-1]) op b);              \
   } while (false)
 
 // 2. THE NEW DISPATCH MACRO
@@ -539,8 +540,7 @@ TARGET_OP_ADD: {
   // --- RULE 1: STRICT MATH (Number + Number) ---
   if (IS_NUMBER(a) && IS_NUMBER(b)) {
     double right = AS_NUMBER(pop());
-    double left = AS_NUMBER(pop());
-    push(NUMBER_VAL(left + right));
+    vm.stackTop[-1] = NUMBER_VAL(AS_NUMBER(vm.stackTop[-1]) + right);
   }
 
   // --- RULE 2: THE COERCER (String + Any) ---
@@ -608,8 +608,7 @@ TARGET_OP_ADD_INPLACE: {
   // RULE 1: Numbers (Just do normal math)
   if (IS_NUMBER(a) && IS_NUMBER(b)) {
     double right = AS_NUMBER(pop());
-    double left = AS_NUMBER(pop());
-    push(NUMBER_VAL(left + right));
+    vm.stackTop[-1] = NUMBER_VAL(AS_NUMBER(vm.stackTop[-1]) + right);
   }
 
   // RULE 2: Lists (THE O(1) MUTATION FIX)
@@ -680,7 +679,7 @@ TARGET_OP_DIVIDE: {
   }
 
   double b = AS_NUMBER(pop());
-  double a = AS_NUMBER(pop());
+  double a = AS_NUMBER(vm.stackTop[-1]);
 
   if (b == 0.0) {
     THROW_ERROR(ERR_RUNTIME,
@@ -688,7 +687,7 @@ TARGET_OP_DIVIDE: {
                 "Division by zero.");
   }
 
-  push(NUMBER_VAL(a / b));
+  vm.stackTop[-1] = NUMBER_VAL(a / b);
   DISPATCH();
 }
 
@@ -699,7 +698,7 @@ TARGET_OP_MOD: {
   }
 
   double b = AS_NUMBER(pop());
-  double a = AS_NUMBER(pop());
+  double a = AS_NUMBER(vm.stackTop[-1]);
 
   if (b == 0.0) {
     THROW_ERROR(ERR_RUNTIME,
@@ -714,12 +713,12 @@ TARGET_OP_MOD: {
     int mod = intA % intB;
     if (mod < 0)
       mod += (intB < 0 ? -intB : intB); // Force positive wrap-around
-    push(NUMBER_VAL(mod));
+    vm.stackTop[-1] = NUMBER_VAL(mod);
   } else {
     double mod = fmod(a, b);
     if (mod < 0.0)
       mod += (b < 0.0 ? -b : b);
-    push(NUMBER_VAL(mod));
+    vm.stackTop[-1] = NUMBER_VAL(mod);
   }
   DISPATCH();
 }
@@ -730,7 +729,7 @@ TARGET_OP_NEGATE: {
                 "You can only use the negative sign (-) on numeric values.",
                 "You tried to negate a %s.", TYPE_NAME(peek(0)));
   }
-  push(NUMBER_VAL(-AS_NUMBER(pop())));
+  vm.stackTop[-1] = NUMBER_VAL(-AS_NUMBER(vm.stackTop[-1]));
   DISPATCH();
 }
 
@@ -883,13 +882,12 @@ TARGET_OP_LOOP: {
 
 TARGET_OP_EQUAL: {
   Value b = pop();
-  Value a = pop();
-  push(BOOL_VAL(valuesEqual(a, b)));
+  vm.stackTop[-1] = BOOL_VAL(valuesEqual(vm.stackTop[-1], b));
   DISPATCH();
 }
 
 TARGET_OP_NOT: {
-  push(BOOL_VAL(isFalsey(pop())));
+  vm.stackTop[-1] = BOOL_VAL(isFalsey(vm.stackTop[-1]));
   DISPATCH();
 }
 
@@ -1236,6 +1234,33 @@ TARGET_OP_POP_SEQUENCE: {
   DISPATCH();
 }
 
+TARGET_OP_PUSH_STICKY: {
+  vm.stickyStack[vm.stickyCount++] = frame->stickySubject;
+  DISPATCH();
+}
+
+TARGET_OP_POP_STICKY: {
+  frame->stickySubject = vm.stickyStack[--vm.stickyCount];
+  DISPATCH();
+}
+
+TARGET_OP_SET_STICKY: {
+  frame->stickySubject = peek(0);
+  DISPATCH();
+}
+
+TARGET_OP_LOAD_STICKY: {
+  if (IS_NIL(frame->stickySubject)) {
+    THROW_ERROR(ERR_SYNTAX,
+                "This operator is missing its left side.",
+                "It looks like you used an operator (like '<', '>=', or 'is') "
+                "without providing a value on its left, and there is no active "
+                "subject to attach it to.");
+  }
+  push(frame->stickySubject);
+  DISPATCH();
+}
+
 TARGET_OP_GET_END_INDEX: {
   if (vm.sequenceCount == 0) {
     THROW_ERROR(ERR_SYNTAX,
@@ -1404,6 +1429,90 @@ TARGET_OP_CALL: {
 
   Value callee = peek(argCount);
 
+  if (IS_MULTI_FUNCTION(callee)) {
+    ObjMultiFunction *multi = AS_MULTI_FUNCTION(callee);
+
+    if (argCount != multi->arity) {
+      THROW_ERROR(
+          ERR_RUNTIME,
+          "Check the function signature to see how many values it requires.",
+          "Expected %d arguments but got %d.", multi->arity, argCount);
+    }
+
+    Value *args = vm.stackTop - argCount;
+
+    Value bestMethodVal = NIL_VAL;
+    int bestScore = -1;
+    bool isAmbiguous = false;
+
+    for (int i = 0; i < multi->methodCount; i++) {
+      Value *signature = multi->signatures[i];
+      bool isMatch = true;
+      int currentScore = 0;
+
+      for (int j = 0; j < argCount; j++) {
+        Value expectedVal = signature[j];
+        ObjType *actualType = getObjType(args[j]);
+
+        if (IS_UNION(expectedVal)) {
+          ObjUnion *unionObj = AS_UNION(expectedVal);
+          bool matchedUnion = false;
+          for (int k = 0; k < unionObj->count; k++) {
+            if (AS_TYPE(unionObj->types[k]) == actualType) {
+              matchedUnion = true;
+              break;
+            }
+          }
+          if (matchedUnion) {
+            currentScore += (15 - unionObj->count);
+          } else {
+            isMatch = false;
+            break;
+          }
+        } else {
+          ObjType *expectedType = AS_TYPE(expectedVal);
+          if (expectedType == actualType) {
+            currentScore += 20;
+          } else if (expectedType == vm.anyType) {
+            currentScore += 1;
+          } else {
+            isMatch = false;
+            break;
+          }
+        }
+      }
+
+      if (isMatch) {
+        if (currentScore > bestScore) {
+          bestScore = currentScore;
+          bestMethodVal = multi->methods[i];
+          isAmbiguous = false;
+        } else if (currentScore == bestScore) {
+          isAmbiguous = true;
+        }
+      }
+    }
+
+    if (IS_NIL(bestMethodVal)) {
+      THROW_ERROR(ERR_REFERENCE,
+                  "The arguments you passed don't match any overloaded version "
+                  "of this function.",
+                  "No matching signature found.");
+    }
+
+    if (isAmbiguous) {
+      THROW_ERROR(ERR_RUNTIME,
+                  "Multiple methods match this call with the exact same "
+                  "specificity. Define an intersection method to clarify.",
+                  "Ambiguous Dispatch Error.");
+    }
+
+    // Overwrite the multi-function with the resolved method
+    callee = bestMethodVal;
+    vm.stackTop[-1 - argCount] = callee;
+  }
+
+  // Unified Execution Block
   if (IS_NATIVE(callee)) {
     NativeFn native = AS_NATIVE(callee);
     Value result = native(argCount, vm.stackTop - argCount);
@@ -1426,148 +1535,24 @@ TARGET_OP_CALL: {
                   "Stack overflow.");
     }
 
-    // 1. SAVE: Store current instruction pointer back to current frame
     frame->ip = ip;
-
-    // 2. SWITCH: Create new frame
     CallFrame *newFrame = &vm.frames[vm.frameCount++];
     newFrame->function = function;
     newFrame->globals =
         function->homeGlobals ? function->homeGlobals : &vm.globals;
-    // Note: We don't need to set newFrame->ip yet, we'll load it into local
-    // 'ip'
     newFrame->ip = function->chunk.code;
     newFrame->slots = vm.stackTop - argCount - 1;
+    newFrame->stickySubject = NIL_VAL;
 
-    frame = newFrame; // Point to new frame
-
-    // 3. LOAD: Update local 'ip' from the new frame
+    frame = newFrame;
     ip = frame->ip;
     DISPATCH();
-  } else if (IS_MULTI_FUNCTION(callee)) {
-    ObjMultiFunction *multi = AS_MULTI_FUNCTION(callee);
-
-    if (argCount != multi->arity) {
-      THROW_ERROR(
-          ERR_RUNTIME,
-          "Check the function signature to see how many values it requires.",
-          "Expected %d arguments but got %d.", multi->arity, argCount);
-    }
-
-    // Pointer to the first argument on the stack
-    Value *args = vm.stackTop - argCount;
-
-    // --- THE SYMMETRIC SCORING ENGINE ---
-    Value bestMethodVal = NIL_VAL;
-    int bestScore = -1;
-    bool isAmbiguous = false;
-
-    for (int i = 0; i < multi->methodCount; i++) {
-      Value *signature = multi->signatures[i];
-      bool isMatch = true;
-      int currentScore = 0;
-
-      // Check every argument against the signature
-      for (int j = 0; j < argCount; j++) {
-        Value expectedVal = signature[j];
-        ObjType *actualType = getObjType(args[j]);
-
-        // --- THE UNION CHECK ---
-        if (IS_UNION(expectedVal)) {
-          ObjUnion *unionObj = AS_UNION(expectedVal);
-          bool matchedUnion = false;
-          for (int k = 0; k < unionObj->count; k++) {
-            if (AS_TYPE(unionObj->types[k]) == actualType) {
-              matchedUnion = true;
-              break;
-            }
-          }
-          if (matchedUnion) {
-            // THE TIE-BREAKER
-            // A tight union (2 items) scores higher than a loose union (5
-            // items). Exact match gets +20. Unions get 10 minus their width!
-            currentScore += (15 - unionObj->count);
-          } else {
-            isMatch = false; // Hard fail
-            break;
-          }
-        }
-        // --- THE STANDARD CHECK ---
-        else {
-          ObjType *expectedType = AS_TYPE(expectedVal);
-          if (expectedType == actualType) {
-            currentScore += 20; // EXACT MATCH is king
-          } else if (expectedType == vm.anyType) {
-            currentScore += 1; // WILDCARD is the absolute fallback
-          } else {
-            isMatch = false;
-            break;
-          }
-        }
-      }
-
-      // If the signature is mathematically valid, score it!
-      if (isMatch) {
-        if (currentScore > bestScore) {
-          bestScore = currentScore;
-          bestMethodVal = multi->methods[i];
-          isAmbiguous = false; // We have a clear winner (for now)
-        } else if (currentScore == bestScore) {
-          isAmbiguous =
-              true; // A perfect tie! We have an intersection collision.
-        }
-      }
-    }
-
-    // --- RESOLUTION & THE INTERSECTION MANDATE ---
-    if (IS_NIL(bestMethodVal)) {
-      THROW_ERROR(ERR_REFERENCE,
-                  "The arguments you passed don't match any overloaded version "
-                  "of this function.",
-                  "No matching signature found.");
-    }
-
-    if (isAmbiguous) {
-      THROW_ERROR(ERR_RUNTIME,
-                  "Multiple methods match this call with the exact same "
-                  "specificity. Define an intersection method to clarify.",
-                  "Ambiguous Dispatch Error.");
-    }
-
-    // --- EXECUTE THE WINNING METHOD ---
-    if (vm.frameCount == FRAMES_MAX) {
-      THROW_ERROR(ERR_RUNTIME,
-                  "You have too many nested function calls. Do you have "
-                  "infinite recursion?",
-                  "Stack overflow.");
-    }
-
-    if (IS_NATIVE(bestMethodVal)) {
-      NativeFn native = AS_NATIVE(bestMethodVal);
-      Value result = native(argCount, vm.stackTop - argCount);
-      vm.stackTop -= argCount + 1; // Pop arguments and the multi-function
-      push(result);
-      DISPATCH();
-    } else {
-      ObjFunction *bestMethod = AS_FUNCTION(bestMethodVal);
-      frame->ip = ip;
-      CallFrame *newFrame = &vm.frames[vm.frameCount++];
-      newFrame->function = bestMethod;
-      newFrame->globals =
-          bestMethod->homeGlobals ? bestMethod->homeGlobals : &vm.globals;
-      newFrame->ip = bestMethod->chunk.code;
-      newFrame->slots = vm.stackTop - argCount - 1;
-      frame = newFrame;
-      ip = frame->ip;
-
-      DISPATCH();
-    }
   }
 
   THROW_ERROR(
       ERR_TYPE, "You appended parentheses to a value that isn't executable.",
       "You tried to call a %s as if it were a function.",
-      TYPE_NAME(callee)); // We use the 'callee' variable you already extracted!
+      TYPE_NAME(callee));
 }
 
 TARGET_OP_TYPE_DEF: {
@@ -1762,6 +1747,7 @@ TARGET_OP_LOAD: {
   newFrame->globals = &module->fields;
   newFrame->ip = moduleFunc->chunk.code;
   newFrame->slots = vm.stackTop - 1;
+  newFrame->stickySubject = NIL_VAL;
 
   frame = newFrame;
   ip = frame->ip;
@@ -1917,6 +1903,7 @@ InterpretResult interpret(const char *source) {
 
   // The script's locals start at the bottom of the stack
   frame->slots = vm.stack;
+  frame->stickySubject = NIL_VAL;
 
   vm.allowGC = true;
 

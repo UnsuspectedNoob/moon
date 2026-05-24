@@ -36,6 +36,9 @@ typedef enum {
   NODE_INSTANTIATE,
   NODE_END,
   NODE_LOAD,
+  NODE_LOAD_STICKY,
+  NODE_BIND_STICKY,
+  NODE_GROUPING,
   NODE_UNION_TYPE,
   NODE_COMPREHENSION,
   NODE_KEEP,
@@ -244,6 +247,7 @@ Node *newUnaryNode(Token opToken, Node *right, int line);
 Node *newBinaryNode(Node *left, Token opToken, Node *right, int line);
 Node *newSubscriptNode(Node *target, Node *index, int line);
 Node *newEndNode(int line);
+Node *newLoadStickyNode(int line);
 bool containsItNode(Node *node);
 
 Node *newBlockNode(Node **statements, int count, int line);

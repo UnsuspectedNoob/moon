@@ -197,6 +197,14 @@ int disassembleInstruction(Chunk *chunk, int offset) {
     return simpleInstruction("OP_PUSH_SEQUENCE", offset);
   case OP_POP_SEQUENCE:
     return simpleInstruction("OP_POP_SEQUENCE", offset);
+  case OP_PUSH_STICKY:
+    return simpleInstruction("OP_PUSH_STICKY", offset);
+  case OP_POP_STICKY:
+    return simpleInstruction("OP_POP_STICKY", offset);
+  case OP_SET_STICKY:
+    return simpleInstruction("OP_SET_STICKY", offset);
+  case OP_LOAD_STICKY:
+    return simpleInstruction("OP_LOAD_STICKY", offset);
   case OP_SHOW_REPL: // <--- ADD THIS
     return simpleInstruction("OP_SHOW_REPL", offset);
   default:

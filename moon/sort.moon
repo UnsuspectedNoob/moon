@@ -49,4 +49,5 @@ let quick sort of (list: List):
 end
 
 let a be [1000 to 1]
-show sort a
+let sorted be sort a
+show sorted's length

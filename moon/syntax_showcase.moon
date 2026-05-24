@@ -61,7 +61,7 @@ let p1 be Player with name: "Emrys" end
 show p1's name
 show p1's health
 
-printTitle "6. Control Flow"
+printTitle "6. Control Flow & Chained Comparisons"
 if 10 > 5:
   show "10 is indeed greater than 5"
 end
@@ -72,6 +72,15 @@ end
 
 let result be "Ternary" if true else "Fallback"
 show result
+
+let expensive function:
+  show "Evaluating expensive function!"
+  return 50
+end
+
+if expensive function > 10 and < 100:
+  show "Chained comparison worked and evaluated only once!"
+end
 
 printTitle "7. Action Statements & Modifiers"
 let counter be 0
@@ -125,5 +134,12 @@ end
 
 jump
 push 10 to list
+
+printTitle "11. End Index & Escapes"
+let slice be list[1 to end]
+show slice
+
+let escaped be "Line 1\nLine 2\tTabbed\rCarriage\\Slash"
+show escaped
 
 show "Showcase executed successfully!"
