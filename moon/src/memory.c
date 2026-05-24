@@ -167,6 +167,9 @@ static void blackenObject(Obj *object) {
   case OBJ_MODULE: {
     ObjModule *module = (ObjModule *)object;
     markObject((Obj *)module->name);
+    if (module->source != NULL) {
+      markObject((Obj *)module->source); // Keep the source alive!
+    }
     markTable(&module->fields);
     break;
   }

@@ -6,12 +6,12 @@
 #include "parser.h"
 
 // The Master Compilation Pipeline
-ObjFunction *compile(const char *source, ObjModule *module) {
+ObjFunction *compile(const char *source, ObjModule *module, int startLine) {
   currentModule = module;
   // REMOVED: currentGlobals = &module->fields;  <--- Let vm.c handle this!
 
   // Phase 1: Front-End (Source Code -> Abstract Syntax Tree)
-  Node *ast = parseSource(source);
+  Node *ast = parseSource(source, startLine);
 
   // If the parser found syntax errors, we abort before generating bad bytecode.
   if (ast == NULL || parser.hadError) {

@@ -104,7 +104,7 @@ typedef struct {
 extern Scanner scanner;
 
 // Initialize the scanner with the source code string
-void initScanner(const char *source);
+void initScanner(const char *source, int startLine);
 
 // Scan the next token from the source
 Token scanToken();

@@ -4,7 +4,7 @@
 load "utils.moon" as u
 
 show "Loaded Utils Version: " + (u's version as String)
-u's greet ("Munachi")
+u's greet "Munachi"
 
 # 2. Test Blueprint Instantiation across Modules
 let my_point be u's Point { x: 10, y: 20 }

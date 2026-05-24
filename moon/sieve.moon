@@ -27,5 +27,5 @@ let a be primes up to x
 let b be primes up to y
 show a
 show b
-show a's length - b's length
+show b's length - a's length
 

@@ -72,10 +72,11 @@ ObjType *getObjType(Value val);
 #define TYPE_NAME(val) (getObjType(val)->name->chars)
 
 extern VM vm;
+extern bool isReplMode;
 
 void initVM();
 void freeVM();
-InterpretResult interpret(const char *source);
+InterpretResult interpret(const char *source, int startLine);
 
 // --- THE STATIC NATIVE REGISTRY API ---
 

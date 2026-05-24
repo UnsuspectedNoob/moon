@@ -7,10 +7,10 @@
 
 Scanner scanner;
 
-void initScanner(const char *source) {
+void initScanner(const char *source, int startLine) {
   scanner.start = source;
   scanner.current = source;
-  scanner.line = 1;
+  scanner.line = startLine;
   scanner.column = 1;
   scanner.interpolationDepth = 0;
   scanner.preserveComments = false;

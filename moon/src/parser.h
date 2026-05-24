@@ -19,7 +19,7 @@ typedef struct {
 extern Parser parser;
 
 
-Node *parseSource(const char *source);
+Node *parseSource(const char *source, int startLine);
 
 // ==========================================
 // ERROR HANDLING & TOKEN ADVANCEMENT

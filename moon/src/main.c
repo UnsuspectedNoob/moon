@@ -14,7 +14,7 @@ bool isReplMode = false;
 
 // --- THE SMART PROMPT CALCULATOR ---
 static int calculateBlockDepth(const char *source) {
-  initScanner(source);
+  initScanner(source, 1);
   int depth = 0;
   Token token = scanToken();
 
@@ -60,6 +60,7 @@ static void repl() {
 
   char source[8192] = ""; // The Multi-Line Accumulator Buffer
   char line[1024];
+  int globalReplLine = 1;
 
   for (;;) {
     int currentDepth = calculateBlockDepth(source);
@@ -117,7 +118,14 @@ static void repl() {
       }
 
       if (!isEmpty) {
-        interpret(source); // Execute the whole chunk at once!
+        interpret(source, globalReplLine); // Execute the whole chunk at once!
+        
+        // Advance the global line tracker for the next REPL input
+        for (int i = 0; source[i] != '\0'; i++) {
+          if (source[i] == '\n') {
+            globalReplLine++;
+          }
+        }
       }
 
       // Reset the accumulator for the next command
@@ -157,7 +165,7 @@ char *readFile(const char *path) {
 
 static void runFile(const char *path) {
   char *source = readFile(path);
-  InterpretResult result = interpret(source);
+  InterpretResult result = interpret(source, 1);
   free(source);
 
   if (result == INTERPRET_COMPILE_ERROR)

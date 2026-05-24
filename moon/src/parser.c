@@ -1537,7 +1537,7 @@ static Node *expressionStatement() {
     int lastIdx = expr->as.phrasalCall.argCount - 1;
     if (lastIdx >= 0) {
       Node *lastArg = expr->as.phrasalCall.arguments[lastIdx];
-      if (lastArg->type == NODE_IF && lastArg->as.ifStmt.elseBranch == NULL) {
+      if (lastArg != NULL && lastArg->type == NODE_IF && lastArg->as.ifStmt.elseBranch == NULL) {
         Node *cond = lastArg->as.ifStmt.condition;
         expr->as.phrasalCall.arguments[lastIdx] = lastArg->as.ifStmt.thenBranch;
         Node *exprStmt = newSingleExprNode(NODE_EXPRESSION_STMT, expr, line);
@@ -2300,8 +2300,8 @@ static void resetParserState() {
   }
 }
 
-Node *parseSource(const char *source) {
-  initScanner(source);
+Node *parseSource(const char *source, int startLine) {
+  initScanner(source, startLine);
   resetParserState();
 
   parser.hadError = false;

@@ -754,7 +754,7 @@ static void sendHoverResponse(cJSON *id, int cursorLine, int cursorCol) {
     isWalkingPaused = false;
     lspBlueprintCount = 0;
 
-    Node *ast = parseSource(currentDocumentText);
+    Node *ast = parseSource(currentDocumentText, 1);
     if (ast != NULL) {
       analyzeNode(ast);
       freeNode(ast);
@@ -899,7 +899,7 @@ static void sendCompletionResponse(cJSON *id, int cursorLine, int cursorCol) {
     isWalkingPaused = false;
     lspBlueprintCount = 0;
 
-    Node *ast = parseSource(currentDocumentText);
+    Node *ast = parseSource(currentDocumentText, 1);
     if (ast != NULL) {
       analyzeNode(ast);
       freeNode(ast);
@@ -1108,7 +1108,7 @@ static void sendDefinitionResponse(cJSON *id, const char *uri, int cursorLine,
     targetCursorLine = cursorLine; // Stop walking once we hit the cursor!
     isWalkingPaused = false;
     lspBlueprintCount = 0;
-    Node *ast = parseSource(currentDocumentText);
+    Node *ast = parseSource(currentDocumentText, 1);
     if (ast != NULL) {
       analyzeNode(ast);
       freeNode(ast);
@@ -1340,7 +1340,7 @@ static char *formatSource(const char *source) {
   initFormatterBuffer(&buf);
 
   Scanner previousScanner = scanner;
-  initScanner(source);
+  initScanner(source, 1);
   scanner.preserveComments = true; // <--- THE COMMENT SHIELD
 
   int indentLevel = 0;
@@ -1774,7 +1774,7 @@ void startLanguageServer() {
             currentScopeDepth = 0;
             lspBlueprintCount = 0; // <--- ADD THIS HERE!
 
-            Node *ast = parseSource(textVal->valuestring);
+            Node *ast = parseSource(textVal->valuestring, 1);
             if (ast != NULL) {
               analyzeNode(ast);
               freeNode(ast);
@@ -1856,7 +1856,7 @@ void startLanguageServer() {
             targetCursorLine = -1; // We need the FULL document!
             isWalkingPaused = false;
             lspBlueprintCount = 0;
-            Node *ast = parseSource(currentDocumentText);
+            Node *ast = parseSource(currentDocumentText, 1);
             if (ast != NULL) {
               analyzeNode(ast);
               freeNode(ast);

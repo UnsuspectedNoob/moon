@@ -1722,7 +1722,7 @@ TARGET_OP_LOAD: {
   // 5. Compile
   currentGlobals = &module->fields; // Route compiler output to this module!
   vm.allowGC = false;
-  ObjFunction *moduleFunc = compile(source, module);
+  ObjFunction *moduleFunc = compile(source, module, 1);
   vm.allowGC = true;
 
   free(source);
@@ -1855,7 +1855,7 @@ static void bootstrapCore() {
 
 bool isCoreBootstrapped = false;
 
-InterpretResult interpret(const char *source) {
+InterpretResult interpret(const char *source, int startLine) {
   vm.allowGC = false; // GC sleeps while we parse/compile
 
   // --- THE BOOTSTRAP GUARD ---
@@ -1864,23 +1864,42 @@ InterpretResult interpret(const char *source) {
     isCoreBootstrapped = true; // Lock the door!
   }
 
-  // Give the error engine the raw string BEFORE compilation begins!
-  initErrorEngine(source);
-
   // 1. Vault the Main Script
   ObjString *mainName = copyString("<main>", 6);
   push(OBJ_VAL(mainName));
   ObjString *mainSrc = copyString(source, strlen(source));
   push(OBJ_VAL(mainSrc));
 
-  ObjModule *mainModule = newModule(mainName);
-  mainModule->source = mainSrc;
+  ObjModule *mainModule = NULL;
+  Value existingModule;
+  if (isReplMode && tableGet(&vm.loadedModules, OBJ_VAL(mainName), &existingModule)) {
+    mainModule = AS_MODULE(existingModule);
+    // Append the new source to the persistent module's source string for error reporting
+    ObjString *oldSrc = mainModule->source;
+    if (oldSrc != NULL) {
+      int newLen = oldSrc->length + mainSrc->length;
+      char *newChars = ALLOCATE(char, newLen + 1);
+      memcpy(newChars, oldSrc->chars, oldSrc->length);
+      memcpy(newChars + oldSrc->length, mainSrc->chars, mainSrc->length);
+      newChars[newLen] = '\0';
+      mainModule->source = takeString(newChars, newLen);
+    } else {
+      mainModule->source = mainSrc;
+    }
+  } else {
+    mainModule = newModule(mainName);
+    mainModule->source = mainSrc;
+    tableSet(&vm.loadedModules, OBJ_VAL(mainName), OBJ_VAL(mainModule));
+  }
   push(OBJ_VAL(mainModule));
-  tableSet(&vm.loadedModules, OBJ_VAL(mainName), OBJ_VAL(mainModule));
+
+  // Give the error engine the raw string BEFORE compilation begins!
+  // In REPL, give it the accumulated source to match the line numbers!
+  initErrorEngine(mainModule->source->chars);
 
   // 2. Compile with the tag
   currentGlobals = &mainModule->fields; // Hook up the router!
-  ObjFunction *function = compile(source, mainModule);
+  ObjFunction *function = compile(source, mainModule, startLine);
 
   pop(); // pop mainModule
   pop(); // pop mainSrc
