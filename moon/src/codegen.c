@@ -505,6 +505,71 @@ static void walkNode(Node *node) {
     break;
   }
 
+  case NODE_CHAIN: {
+    Node **exprs = node->as.chain.expressions;
+    Token *ops = node->as.chain.operators;
+    int count = node->as.chain.exprCount;
+
+    int jumps[256];
+    int jumpCount = 0;
+
+    walkNode(exprs[0]); // Leftmost operand
+    emitByte(OP_SET_STICKY); // ALWAYS capture the very first operand as the sticky subject!
+
+    for (int i = 1; i < count; i++) {
+      walkNode(exprs[i]); // Right operand
+      
+      if (i < count - 1) {
+        emitByte(OP_SET_STICKY); // Save the right operand
+      }
+
+      // Emit the relational operator
+      switch (ops[i - 1].type) {
+      case TOKEN_EQUAL_EQUAL:
+      case TOKEN_EQUAL:
+      case TOKEN_IS:
+        emitByte(OP_EQUAL);
+        break;
+      case TOKEN_BANG_EQUAL:
+        emitByte(OP_EQUAL);
+        emitByte(OP_NOT);
+        break;
+      case TOKEN_GREATER:
+        emitByte(OP_GREATER);
+        break;
+      case TOKEN_LESS:
+        emitByte(OP_LESS);
+        break;
+      case TOKEN_GREATER_EQUAL:
+        emitByte(OP_LESS);
+        emitByte(OP_NOT);
+        break;
+      case TOKEN_LESS_EQUAL:
+        emitByte(OP_GREATER);
+        emitByte(OP_NOT);
+        break;
+      default:
+        break; // Should never happen
+      }
+      
+      if (i < count - 1) {
+        int jump = emitJump(OP_JUMP_IF_FALSE); // Short-circuit if false
+        if (jumpCount < 256) jumps[jumpCount++] = jump;
+        
+        emitByte(OP_POP); // Pop the 'true' so stack is empty
+        emitByte(OP_LOAD_STICKY); // Push the saved right operand back!
+      }
+    }
+
+    // Patch all short-circuit jumps to point here!
+    for (int i = 0; i < jumpCount; i++) {
+      patchJump(jumps[i]);
+    }
+    
+    break;
+  }
+
+
   case NODE_GROUPING: {
     emitByte(OP_PUSH_STICKY);
     walkNode(node->as.singleExpr.expression);

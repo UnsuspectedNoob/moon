@@ -20,6 +20,7 @@ typedef struct TrieNode {
 
   // Accept State
   bool isTerminal;
+  bool isCore;
   char *mangledName;
 
   // Branches

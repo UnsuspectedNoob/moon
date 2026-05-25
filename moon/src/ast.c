@@ -26,15 +26,16 @@ Node *newLiteralNode(Value value, int line) {
   return node;
 }
 
-Node *newBinaryNode(Node *left, Token operator, Node *right, int line) {
-  Node *node = allocateNode(NODE_BINARY, line);
-  if (left != NULL && left->usesIt) { node->usesIt = true; }
-  if (right != NULL && right->usesIt) { node->usesIt = true; }
+Node *newBinaryNode(Node *left, Token opToken, Node *right, int line) {
+  Node *node = ALLOCATE(Node, 1);
+  node->type = NODE_BINARY;
+  node->line = line;
+  node->parent = NULL;
+  node->usesIt = (left && left->usesIt) || (right && right->usesIt);
   node->as.binary.left = left;
-  node->as.binary.opToken = operator;
+  node->as.binary.opToken = opToken;
   node->as.binary.right = right;
 
-  // Wire up the parents! This is where the magic starts.
   if (left != NULL)
     left->parent = node;
   if (right != NULL)
@@ -264,12 +265,19 @@ Node *newSkipNode(int line) {
 }
 
 Node *newPhrasalCallNode(Token mangledName, Node **args, int argCount,
+                         Token *phraseTokens, int phraseTokenCount,
                          int line) {
   Node *node = allocateNode(NODE_PHRASAL_CALL, line);
   if (args != NULL) { for (int i = 0; i < argCount; i++) { if (args[i] != NULL && args[i]->usesIt) node->usesIt = true; } }
   node->as.phrasalCall.mangledName = mangledName;
   node->as.phrasalCall.argCount = argCount;
   node->as.phrasalCall.arguments = ALLOCATE(Node *, argCount);
+  node->as.phrasalCall.phraseTokenCount = phraseTokenCount;
+  node->as.phrasalCall.phraseTokens = ALLOCATE(Token, phraseTokenCount);
+
+  for (int i = 0; i < phraseTokenCount; i++) {
+    node->as.phrasalCall.phraseTokens[i] = phraseTokens[i];
+  }
 
   for (int i = 0; i < argCount; i++) {
     node->as.phrasalCall.arguments[i] = args[i];
@@ -403,6 +411,32 @@ Node *newCastNode(Node *left, Node *right, int line) {
   return node;
 }
 
+
+
+Node *newChainNode(Node **expressions, Token *operators, int exprCount, int line) {
+  Node *node = ALLOCATE(Node, 1);
+  node->type = NODE_CHAIN;
+  node->line = line;
+  node->parent = NULL;
+  
+  bool usesIt = false;
+  for (int i = 0; i < exprCount; i++) {
+    if (expressions[i]) {
+      expressions[i]->parent = node;
+      if (expressions[i]->usesIt) {
+        usesIt = true;
+      }
+    }
+  }
+  node->usesIt = usesIt;
+
+  node->as.chain.expressions = expressions;
+  node->as.chain.operators = operators;
+  node->as.chain.exprCount = exprCount;
+
+  return node;
+}
+
 Node *newLoadNode(Token path, int line) {
   Node *node = allocateNode(NODE_LOAD, line);
   node->as.loadStmt.path = path;
@@ -490,6 +524,10 @@ void freeNode(Node *root) {
       break;
     case NODE_UNARY:
       writeNodeArray(&worklist, node->as.unary.right);
+      break;
+    case NODE_CHAIN:
+      for (int i = 0; i < node->as.chain.exprCount; i++)
+        writeNodeArray(&worklist, node->as.chain.expressions[i]);
       break;
     case NODE_IF:
       writeNodeArray(&worklist, node->as.ifStmt.condition);
@@ -597,6 +635,10 @@ void freeNode(Node *root) {
     switch (node->type) {
     case NODE_BLOCK:
       FREE_ARRAY(Node *, node->as.block.statements, node->as.block.count);
+      break;
+    case NODE_CHAIN:
+      FREE_ARRAY(Node *, node->as.chain.expressions, node->as.chain.exprCount);
+      FREE_ARRAY(Token, node->as.chain.operators, node->as.chain.exprCount - 1);
       break;
     case NODE_LET:
       FREE_ARRAY(Token, node->as.let.names, node->as.let.nameCount);

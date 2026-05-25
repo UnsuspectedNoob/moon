@@ -73,9 +73,10 @@ ObjType *getObjType(Value val);
 
 extern VM vm;
 extern bool isReplMode;
-
 void initVM();
 void freeVM();
+void bootstrapCore();
+extern bool g_isBootstrappingCore;
 InterpretResult interpret(const char *source, int startLine);
 
 // --- THE STATIC NATIVE REGISTRY API ---

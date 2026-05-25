@@ -1,6 +1,6 @@
 let printTitle (title):
   show ""
-  show "--- `title` ---"
+  show"--- `title` ---"
 end
 
 printTitle "1. Variables & Primitives"
@@ -24,8 +24,11 @@ let greeting be "Hello `name`! Welcome to Moon."
 show greeting
 
 printTitle "3. Collections & Access"
-let list be [1, 2, 3, 4]
-let user be { name: "Emrys", speed: "Fast" }
+let list be [ 1, 2, 3, 4 ]
+let user be {
+  name: "Emrys",
+  speed: "Fast"
+}
 
 show list
 show user
@@ -57,12 +60,17 @@ type Player:
   health: 100
 end
 
-let p1 be Player with name: "Emrys" end
+let p1 be Player with name: "Emrys"
+end
 show p1's name
 show p1's health
 
 printTitle "6. Control Flow & Chained Comparisons"
-if 10 > 5:
+if 10 < 5:
+  show "10 is less than 5"
+else if 10 is 5:
+  show "10 is exactly 5"
+else:
   show "10 is indeed greater than 5"
 end
 
@@ -114,11 +122,17 @@ for each item in list:
 end
 
 printTitle "9. Comprehensions & The it Construct"
-let numbers be [1, 2, 3, 4, 5]
-let doubled be [for each n in numbers keep n * 2 if n > 2]
+let numbers be [ 1, 2, 3, 4, 5 ]
+let doubled be [ for each n in numbers keep n * 2 if n > 2 ]
 
-let users be [{name: "Alice", age: 25}, {name: "Bob", age: 17}]
-let adults be [for each u in users keep u if it's age > 18]
+let users be [ {
+    name: "Alice",
+    age: 25
+  }, {
+    name: "Bob",
+    age: 17
+  } ]
+let adults be [ for each u in users keep u if it's age > 18 ]
 
 show doubled
 show adults
@@ -141,5 +155,21 @@ show slice
 
 let escaped be "Line 1\nLine 2\tTabbed\rCarriage\\Slash"
 show escaped
+
+# ---------------------------------------------------------
+# 12. Chained Comparisons
+# ---------------------------------------------------------
+printTitle "12. Chained Comparisons"
+
+let fetchCount be 0
+let fetchValue:
+  set fetchCount to fetchCount + 1
+  return 50
+end
+
+if 10 < fetchValue <= 100:
+  show "It works natively!"
+end
+show "fetchValue was called: " + fetchCount + " times (should be 1!)."
 
 show "Showcase executed successfully!"

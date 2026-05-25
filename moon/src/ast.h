@@ -42,6 +42,7 @@ typedef enum {
   NODE_UNION_TYPE,
   NODE_COMPREHENSION,
   NODE_KEEP,
+  NODE_CHAIN
 } NodeType;
 
 // Forward declaration
@@ -63,6 +64,13 @@ typedef struct {
   Token opToken;
   Node *right;
 } BinaryPayload; // Changed operator to opToken
+
+typedef struct {
+  Node **expressions;
+  Token *operators;
+  int exprCount;
+} ChainPayload;
+
 typedef struct {
   Token opToken;
   Node *right;
@@ -101,6 +109,8 @@ typedef struct {
   Token mangledName;
   Node **arguments;
   int argCount;
+  Token *phraseTokens;
+  int phraseTokenCount;
 } PhrasalCallPayload;
 typedef struct {
   Node **parts;
@@ -237,6 +247,7 @@ struct sNode {
     UnionTypePayload unionType;
     ComprehensionPayload comprehension;
     KeepPayload keepStmt;
+    ChainPayload chain;
   } as;
 };
 
@@ -245,10 +256,10 @@ Node *newLiteralNode(Value value, int line);
 Node *newVariableNode(Token name, int line);
 Node *newUnaryNode(Token opToken, Node *right, int line);
 Node *newBinaryNode(Node *left, Token opToken, Node *right, int line);
+Node *newChainNode(Node **expressions, Token *operators, int exprCount, int line);
 Node *newSubscriptNode(Node *target, Node *index, int line);
 Node *newEndNode(int line);
 Node *newLoadStickyNode(int line);
-bool containsItNode(Node *node);
 
 Node *newBlockNode(Node **statements, int count, int line);
 Node *newLetNode(Token *names, int nameCount, Node **exprs, int exprCount,
@@ -266,7 +277,7 @@ Node *newForNode(Token iterator, Token indexVar, bool hasIndex, Node *sequence,
 Node *newBreakNode(int line);
 Node *newSkipNode(int line);
 
-Node *newPhrasalCallNode(Token mangledName, Node **args, int argCount,
+Node *newPhrasalCallNode(Token mangledName, Node **args, int argCount, Token *phraseTokens, int phraseTokenCount,
                          int line);
 
 Node *newListNode(Node **items, int count, int line);

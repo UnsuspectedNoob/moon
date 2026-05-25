@@ -1,5 +1,6 @@
 #include "sigtrie.h"
 #include "object.h" // For hashString
+#include "vm.h" // For g_isBootstrappingCore
 #include <stdlib.h>
 #include <string.h>
 
@@ -33,6 +34,7 @@ static TrieNode *newNode(PhraseNodeType type) {
   node->labelHash = 0;
   node->arity = 0;
   node->isTerminal = false;
+  node->isCore = g_isBootstrappingCore;
   node->mangledName = NULL;
   node->children = NULL;
   node->childCount = 0;
@@ -40,17 +42,34 @@ static TrieNode *newNode(PhraseNodeType type) {
   return node;
 }
 
-static void freeTrieNode(TrieNode *node) {
+static void destroyTrieNode(TrieNode *node) {
   if (node == NULL)
     return;
   for (int i = 0; i < node->childCount; i++) {
-    freeTrieNode(node->children[i]);
+    destroyTrieNode(node->children[i]);
   }
   if (node->children != NULL)
     FREE_TRIE(node->children);
   if (node->mangledName != NULL)
     FREE_TRIE(node->mangledName);
   FREE_TRIE(node);
+}
+
+static void freeTrieNode(TrieNode *node) {
+  if (node == NULL)
+    return;
+  
+  int newChildCount = 0;
+  for (int i = 0; i < node->childCount; i++) {
+    TrieNode *child = node->children[i];
+    if (child->isCore) {
+      node->children[newChildCount++] = child; // Keep it
+      freeTrieNode(child); // Clean up its non-core descendants
+    } else {
+      destroyTrieNode(child); // Completely destroy this non-core branch
+    }
+  }
+  node->childCount = newChildCount;
 }
 
 // --- PUBLIC API ---
@@ -64,8 +83,12 @@ void initSignatureTable() {
 void freeSignatureTable() {
   for (int i = 0; i < TABLE_CAPACITY; i++) {
     if (phrasalTable[i].rootWord != NULL) {
+      if (phrasalTable[i].trieRoot->isCore) {
+        freeTrieNode(phrasalTable[i].trieRoot);
+        continue;
+      }
       FREE_TRIE(phrasalTable[i].rootWord);
-      freeTrieNode(phrasalTable[i].trieRoot);
+      destroyTrieNode(phrasalTable[i].trieRoot);
       phrasalTable[i].rootWord = NULL;
     }
   }

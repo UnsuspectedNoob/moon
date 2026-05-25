@@ -9,7 +9,6 @@
 #include "parser.h"
 #include "scanner.h"
 #include "sigtrie.h"
-#include "vm.h"
 
 // ==========================================
 // 1. GLOBAL STATE & REGISTRY
@@ -407,22 +406,6 @@ static Node *implicitIt() {
 static Node *variable() {
   Token rootToken = parser.previous;
 
-  // --- THE LEXICAL SHIELD ---
-  // If the variable starts with '__', it's a VM intrinsic.
-  if (rootToken.length >= 2 && rootToken.start[0] == '_' &&
-      rootToken.start[1] == '_') {
-    // If the core is already done booting, the user is typing this! Reject it.
-    if (isCoreBootstrapped) {
-      errorAt(&parser.previous, ERR_SYNTAX,
-              "You may not use identifiers starting with '__'.",
-              "This prefix is strictly reserved for internal MOON engine "
-              "primitives.. so piss off..");
-      return newVariableNode(rootToken,
-                             rootToken.line); // Return safe dummy node
-    }
-  }
-  // --------------------------
-
   char rootWord[256] = {0};
   snprintf(rootWord, sizeof(rootWord), "%.*s", rootToken.length,
            rootToken.start);
@@ -440,6 +423,10 @@ static Node *variable() {
   TrieNode *startNode = currentNode;
   TrieNode *lastGoodState = currentNode->isTerminal ? currentNode : NULL;
 
+  Token phraseTokens[16];
+  int phraseTokenCount = 0;
+  phraseTokens[phraseTokenCount++] = rootToken;
+
   while (currentNode->childCount > 0) {
     uint32_t nextHash = hashString(parser.current.start, parser.current.length);
     TrieNode *matchedLabel = NULL;
@@ -455,6 +442,9 @@ static Node *variable() {
     }
 
     if (matchedLabel != NULL) {
+      if (phraseTokenCount < 16) {
+        phraseTokens[phraseTokenCount++] = parser.current;
+      }
       advance();
       currentNode = matchedLabel;
       if (currentNode->isTerminal)
@@ -549,8 +539,9 @@ static Node *variable() {
     mangledToken.start = my_strdup(lastGoodState->mangledName);
     mangledToken.length = strlen(lastGoodState->mangledName);
 
-    Node *node = newPhrasalCallNode(mangledToken, args.items, args.count,
-                                    rootToken.line);
+    Node *node =
+        newPhrasalCallNode(mangledToken, args.items, args.count, phraseTokens,
+                           phraseTokenCount, rootToken.line);
     freeNodeArray(&args);
     return node;
   }
@@ -655,26 +646,58 @@ static Node *castExpression(Node *left) {
 static Node *binary(Node *left) {
   Token opToken = parser.previous;
 
-  // --- STICKY SUBJECT CAPTURE ---
+  // --- CHAINED COMPARISON LOGIC ---
   if (isComparison(opToken)) {
-    left = newSingleExprNode(NODE_BIND_STICKY, left, opToken.line);
+    if ((opToken.type == TOKEN_IS) && match(TOKEN_NOT)) {
+      opToken.type = TOKEN_BANG_EQUAL; // Treat 'is not' natively as !=
+    }
+
+    ParseRule *rule = getRule(opToken.type);
+    Node *right = parsePrecedence((Precedence)(rule->precedence + 1));
+
+    if (left != NULL && left->type == NODE_CHAIN) {
+      // Extend the existing chain!
+      int newExprCount = left->as.chain.exprCount + 1;
+      
+      Node **newExprs = ALLOCATE(Node*, newExprCount);
+      Token *newOps = ALLOCATE(Token, newExprCount - 1);
+      
+      for(int i = 0; i < left->as.chain.exprCount; i++) newExprs[i] = left->as.chain.expressions[i];
+      newExprs[newExprCount - 1] = right;
+      
+      for(int i = 0; i < left->as.chain.exprCount - 1; i++) newOps[i] = left->as.chain.operators[i];
+      newOps[newExprCount - 2] = opToken;
+      
+      FREE_ARRAY(Node*, left->as.chain.expressions, left->as.chain.exprCount);
+      FREE_ARRAY(Token, left->as.chain.operators, left->as.chain.exprCount - 1);
+      
+      left->as.chain.expressions = newExprs;
+      left->as.chain.operators = newOps;
+      left->as.chain.exprCount = newExprCount;
+      
+      if (right) {
+        if (right->usesIt) left->usesIt = true;
+        right->parent = left;
+      }
+      
+      return left;
+    } else {
+      // Start a new chain!
+      Node **exprs = ALLOCATE(Node*, 2);
+      exprs[0] = left;
+      exprs[1] = right;
+      
+      Token *ops = ALLOCATE(Token, 1);
+      ops[0] = opToken;
+      
+      return newChainNode(exprs, ops, 2, opToken.line);
+    }
   }
 
-  // --- THE "IS NOT" FIX ---
-  bool invert = false;
-  if ((opToken.type == TOKEN_IS) && match(TOKEN_NOT)) {
-    invert = true;
-  }
-
+  // --- STANDARD BINARY OPERATORS (+, -, *, etc) ---
   ParseRule *rule = getRule(opToken.type);
   Node *right = parsePrecedence((Precedence)(rule->precedence + 1));
   Node *binNode = newBinaryNode(left, opToken, right, opToken.line);
-
-  // If we caught a 'not', wrap the whole binary expression!
-  if (invert) {
-    Token notToken = {TOKEN_NOT, "not", 3, opToken.line, 0, NULL};
-    return newUnaryNode(notToken, binNode, opToken.line);
-  }
 
   return binNode;
 }
@@ -1537,7 +1560,8 @@ static Node *expressionStatement() {
     int lastIdx = expr->as.phrasalCall.argCount - 1;
     if (lastIdx >= 0) {
       Node *lastArg = expr->as.phrasalCall.arguments[lastIdx];
-      if (lastArg != NULL && lastArg->type == NODE_IF && lastArg->as.ifStmt.elseBranch == NULL) {
+      if (lastArg != NULL && lastArg->type == NODE_IF &&
+          lastArg->as.ifStmt.elseBranch == NULL) {
         Node *cond = lastArg->as.ifStmt.condition;
         expr->as.phrasalCall.arguments[lastIdx] = lastArg->as.ifStmt.thenBranch;
         Node *exprStmt = newSingleExprNode(NODE_EXPRESSION_STMT, expr, line);
@@ -2296,7 +2320,6 @@ static void resetParserState() {
     // Destroy the old Signature Trie so deleted/edited functions don't haunt
     // the parser!
     freeSignatureTable();
-    initSignatureTable();
   }
 }
 

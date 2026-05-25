@@ -1845,12 +1845,16 @@ TARGET_OP_SHOW_REPL: {
 #undef BINARY_OP
 }
 
-static void bootstrapCore() {
+bool g_isBootstrappingCore = false;
+
+void bootstrapCore() {
+  g_isBootstrappingCore = true;
   registerCoreLibrary();
   registerMathLibrary();
   registerStringLibrary();
   registerListLibrary();
   registerIOLibrary();
+  g_isBootstrappingCore = false;
 }
 
 bool isCoreBootstrapped = false;

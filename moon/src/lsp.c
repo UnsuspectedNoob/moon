@@ -7,6 +7,7 @@
 #include "error.h"
 #include "lsp.h"
 #include "parser.h"
+#include "vm.h"
 #include <stdarg.h>
 
 // ==========================================
@@ -111,20 +112,22 @@ typedef struct {
   int length;
   int type;      // The Legend Index
   int modifiers; // Bitmask (0 for now)
+  int priority;  // 0 = Lexical, 1 = AST (Higher wins)
 } SemanticToken;
 
 static SemanticToken semTokens[10000];
 static int semTokenCount = 0;
 
-static void addSemToken(int line, int col, int len, int type) {
-  if (semTokenCount >= 10000)
-    return;
-  // LSP coordinates are 0-indexed!
-  semTokens[semTokenCount].line = line > 0 ? line - 1 : 0;
+static void addSemToken(int line, int col, int len, int type, int priority) {
+  if (semTokenCount >= 10000 || line <= 0)
+    return; // Safety cap
+
+  semTokens[semTokenCount].line = line - 1; // 0-Indexed
   semTokens[semTokenCount].character = col > 0 ? col - 1 : 0;
   semTokens[semTokenCount].length = len;
   semTokens[semTokenCount].type = type;
   semTokens[semTokenCount].modifiers = 0;
+  semTokens[semTokenCount].priority = priority;
   semTokenCount++;
 }
 
@@ -134,7 +137,11 @@ static int compareTokens(const void *a, const void *b) {
   SemanticToken *t2 = (SemanticToken *)b;
   if (t1->line != t2->line)
     return t1->line - t2->line;
-  return t1->character - t2->character;
+  if (t1->character != t2->character)
+    return t1->character - t2->character;
+  
+  // If line and character match, sort by priority (Ascending, so highest priority is LAST)
+  return t1->priority - t2->priority;
 }
 
 // --- THE DOCSTRING EXTRACTOR ---
@@ -294,11 +301,11 @@ static void analyzeNode(Node *node) {
         node->as.function.name.length < 63 ? node->as.function.name.length : 63;
     strncpy(funcName, node->as.function.name.start, len);
     funcName[len] = '\0';
-    registerSymbol(funcName, LSP_TYPE_UNKNOWN, NULL,
+    registerSymbol(funcName, LSP_TYPE_FUNCTION, NULL,
                    node->as.function.name.line, node->as.function.name.column);
 
     addSemToken(node->as.function.name.line, node->as.function.name.column, len,
-                12);
+                12, 1);
 
     // 2. Go one level deeper for parameters and body!
     currentScopeDepth++;
@@ -447,6 +454,10 @@ static void analyzeNode(Node *node) {
 
       registerSymbol(varName, guessedType, bpName, node->as.let.names[i].line,
                      node->as.let.names[i].column);
+
+      // Color the variable declaration! (Type 8 = Variable)
+      addSemToken(node->as.let.names[i].line, node->as.let.names[i].column,
+                  node->as.let.names[i].length, 8, 1);
     }
     break;
   }
@@ -551,7 +562,7 @@ static void analyzeNode(Node *node) {
         if (strcmp(varName, natives[i]) == 0)
           tokenType = 1; // Native Types get Blueprint coloring
       }
-      addSemToken(t.line, t.column, len, tokenType);
+      addSemToken(t.line, t.column, len, tokenType, 1);
     }
 
     break;
@@ -567,14 +578,14 @@ static void analyzeNode(Node *node) {
                    node->as.typeDecl.name.line, node->as.typeDecl.name.column);
 
     addSemToken(node->as.typeDecl.name.line, node->as.typeDecl.name.column, len,
-                1);
+                1, 1);
 
     registerBlueprint(typeName, node->as.typeDecl.propertyNames,
                       node->as.typeDecl.count);
     for (int i = 0; i < node->as.typeDecl.count; i++) {
       addSemToken(node->as.typeDecl.propertyNames[i].line,
                   node->as.typeDecl.propertyNames[i].column,
-                  node->as.typeDecl.propertyNames[i].length, 9);
+                  node->as.typeDecl.propertyNames[i].length, 9, 1);
       analyzeNode(node->as.typeDecl.defaultValues[i]);
     }
     break;
@@ -612,10 +623,30 @@ static void analyzeNode(Node *node) {
 
 
 
-  case NODE_PHRASAL_CALL:
+  case NODE_PHRASAL_CALL: {
+    // 1. Color all structural words as Functions (12) and register them as aliases!
+    char mangledBuffer[128];
+    int mLen = node->as.phrasalCall.mangledName.length < 127 ? node->as.phrasalCall.mangledName.length : 127;
+    strncpy(mangledBuffer, node->as.phrasalCall.mangledName.start, mLen);
+    mangledBuffer[mLen] = '\0';
+
+    for (int i = 0; i < node->as.phrasalCall.phraseTokenCount; i++) {
+      Token pt = node->as.phrasalCall.phraseTokens[i];
+      addSemToken(pt.line, pt.column, pt.length, 12, 1);
+
+      // Register alias so Hover and Go-To Definition works on individual words!
+      char aliasName[64];
+      int pLen = pt.length < 63 ? pt.length : 63;
+      strncpy(aliasName, pt.start, pLen);
+      aliasName[pLen] = '\0';
+      registerSymbol(aliasName, LSP_TYPE_FUNCTION, mangledBuffer, pt.line, pt.column);
+    }
+
+    // 2. Walk the arguments
     for (int i = 0; i < node->as.phrasalCall.argCount; i++)
       analyzeNode(node->as.phrasalCall.arguments[i]);
     break;
+  }
 
   case NODE_EXPRESSION_STMT:
   case NODE_RETURN:
@@ -641,7 +672,7 @@ static void analyzeNode(Node *node) {
 
   case NODE_PROPERTY:
     addSemToken(node->as.property.name.line, node->as.property.name.column,
-                node->as.property.name.length, 9);
+                node->as.property.name.length, 9, 1);
     analyzeNode(node->as.property.target);
     break;
 
@@ -664,7 +695,7 @@ static void analyzeNode(Node *node) {
       // Send token type 9 (Property) to NeoVim!
       addSemToken(node->as.instantiate.propertyNames[i].line,
                   node->as.instantiate.propertyNames[i].column,
-                  node->as.instantiate.propertyNames[i].length, 9);
+                  node->as.instantiate.propertyNames[i].length, 9, 1);
 
       analyzeNode(node->as.instantiate.values[i]);
     }
@@ -886,6 +917,62 @@ static void sendHoverResponse(cJSON *id, int cursorLine, int cursorCol) {
   lspLog("[HOVER] Success!");
 }
 
+static bool formatPhrasalSnippet(const char *mangled, char *label, char *snippet, char *filterText) {
+  int lIdx = 0, sIdx = 0, fIdx = 0;
+  bool isPhrasal = false;
+  int argCount = 1;
+
+  for (int c = 0; mangled[c] != '\0'; c++) {
+    if (mangled[c] == '_') {
+      label[lIdx++] = ' ';
+      snippet[sIdx++] = ' ';
+      if (fIdx > 0 && filterText[fIdx-1] != ' ' && fIdx < 63) filterText[fIdx++] = ' ';
+      isPhrasal = true;
+    } else if (mangled[c] == '$' && mangled[c+1] >= '0' && mangled[c+1] <= '9') {
+      if (lIdx > 0 && label[lIdx-1] != ' ') {
+        label[lIdx++] = ' ';
+        snippet[sIdx++] = ' ';
+      }
+      
+      int arity = mangled[c+1] - '0';
+      c++; // Skip the number
+      isPhrasal = true;
+      
+      if (arity > 1) {
+        label[lIdx++] = '(';
+        snippet[sIdx++] = '(';
+      }
+      
+      for (int a = 0; a < arity; a++) {
+        label[lIdx++] = '.';
+        sIdx += snprintf(snippet + sIdx, 256 - sIdx, "${%d:arg}", argCount++);
+        
+        if (a < arity - 1) {
+          label[lIdx++] = ',';
+          label[lIdx++] = ' ';
+          snippet[sIdx++] = ',';
+          snippet[sIdx++] = ' ';
+        }
+      }
+      
+      if (arity > 1) {
+        label[lIdx++] = ')';
+        snippet[sIdx++] = ')';
+      }
+    } else {
+      label[lIdx++] = mangled[c];
+      snippet[sIdx++] = mangled[c];
+      if (fIdx < 63) filterText[fIdx++] = mangled[c];
+    }
+  }
+  
+  label[lIdx] = '\0';
+  snippet[sIdx] = '\0';
+  filterText[fIdx] = '\0';
+  
+  return isPhrasal;
+}
+
 // --- THE AUTOCOMPLETE GENERATOR (UPGRADED) ---
 static void sendCompletionResponse(cJSON *id, int cursorLine, int cursorCol) {
   lspLog("[COMPLETION] Building response for line %d, col %d...", cursorLine,
@@ -1011,37 +1098,72 @@ static void sendCompletionResponse(cJSON *id, int cursorLine, int cursorCol) {
       cJSON_AddItemToArray(result, item);
     }
 
+    // --- 3B. THE UNIFIED PHRASAL GENERATOR ---
+    
+    // Loop 1: VM Globals (Standard Library)
+    for (int i = 0; i < vm.globals.capacity; i++) {
+      Entry *entry = &vm.globals.entries[i];
+      if (IS_EMPTY(entry->key) || IS_TOMB(entry->key)) continue;
+      
+      if (IS_NATIVE(entry->value) || IS_FUNCTION(entry->value) || (IS_OBJ(entry->value) && OBJ_TYPE(entry->value) == OBJ_MULTI_FUNCTION)) {
+        char *mangled = AS_CSTRING(entry->key);
+        if (mangled[0] == '_' && mangled[1] == '_') continue; // Skip internal primitives
+
+        char label[128] = {0}; char snippet[256] = {0}; char filterText[128] = {0};
+        if (formatPhrasalSnippet(mangled, label, snippet, filterText)) {
+          cJSON *item = cJSON_CreateObject();
+          cJSON_AddStringToObject(item, "label", label);
+          cJSON_AddStringToObject(item, "filterText", filterText);
+          cJSON_AddNumberToObject(item, "kind", 15); // 15 = Snippet Icon
+          cJSON_AddNumberToObject(item, "insertTextFormat", 2);
+          cJSON_AddStringToObject(item, "insertText", snippet);
+          cJSON_AddStringToObject(item, "detail", "MOON Core Function");
+          cJSON_AddItemToArray(result, item);
+        }
+      }
+    }
+
+    // Loop 2: User Symbols
     for (int i = 0; i < lspSymbolCount; i++) {
+      // Skip Aliases (structural words registered just for Hover)
+      if (lspSymbols[i].type == LSP_TYPE_FUNCTION && lspSymbols[i].blueprintName[0] != '\0') {
+        continue;
+      }
+
       cJSON *item = cJSON_CreateObject();
-      cJSON_AddStringToObject(item, "label", lspSymbols[i].name);
-
-      int kind = 6;
-      if (lspSymbols[i].type == LSP_TYPE_BLUEPRINT)
-        kind = 7;
-      else if (lspSymbols[i].type == LSP_TYPE_FUNCTION)
-        kind = 3;
-
-      cJSON_AddNumberToObject(item, "kind", kind);
+      
+      if (lspSymbols[i].type == LSP_TYPE_FUNCTION) {
+        char label[128] = {0}; char snippet[256] = {0}; char filterText[128] = {0};
+        if (formatPhrasalSnippet(lspSymbols[i].name, label, snippet, filterText)) {
+          cJSON_AddStringToObject(item, "label", label);
+          cJSON_AddStringToObject(item, "filterText", filterText);
+          cJSON_AddNumberToObject(item, "kind", 15); // 15 = Snippet
+          cJSON_AddNumberToObject(item, "insertTextFormat", 2);
+          cJSON_AddStringToObject(item, "insertText", snippet);
+        } else {
+          cJSON_AddStringToObject(item, "label", lspSymbols[i].name);
+          cJSON_AddNumberToObject(item, "kind", 15); // Use Snippet even for non-phrasal to avoid `()`
+        }
+      } else {
+        // Variables and Blueprints
+        cJSON_AddStringToObject(item, "label", lspSymbols[i].name);
+        int kind = (lspSymbols[i].type == LSP_TYPE_BLUEPRINT) ? 7 : 6;
+        cJSON_AddNumberToObject(item, "kind", kind);
+      }
 
       const char *typeStr = "Unknown";
-      if (lspSymbols[i].type == LSP_TYPE_NUMBER)
-        typeStr = "Number";
-      else if (lspSymbols[i].type == LSP_TYPE_STRING)
-        typeStr = "String";
-      else if (lspSymbols[i].type == LSP_TYPE_LIST)
-        typeStr = "List";
-      else if (lspSymbols[i].type == LSP_TYPE_DICTIONARY)
-        typeStr = "Dict";
-      else if (lspSymbols[i].type == LSP_TYPE_BLUEPRINT)
-        typeStr = "Blueprint";
+      if (lspSymbols[i].type == LSP_TYPE_NUMBER) typeStr = "Number";
+      else if (lspSymbols[i].type == LSP_TYPE_STRING) typeStr = "String";
+      else if (lspSymbols[i].type == LSP_TYPE_LIST) typeStr = "List";
+      else if (lspSymbols[i].type == LSP_TYPE_DICTIONARY) typeStr = "Dict";
+      else if (lspSymbols[i].type == LSP_TYPE_BLUEPRINT) typeStr = "Blueprint";
+      else if (lspSymbols[i].type == LSP_TYPE_FUNCTION) typeStr = "Function";
 
       char desc[128];
-      if (lspSymbols[i].blueprintName[0] != '\0') {
-        snprintf(desc, sizeof(desc), "MOON %s (Instance of %s)", typeStr,
-                 lspSymbols[i].blueprintName);
+      if (lspSymbols[i].type != LSP_TYPE_FUNCTION && lspSymbols[i].blueprintName[0] != '\0') {
+        snprintf(desc, sizeof(desc), "MOON %s (Instance of %s)", typeStr, lspSymbols[i].blueprintName);
       } else {
-        snprintf(desc, sizeof(desc), "MOON %s (Depth %d)", typeStr,
-                 lspSymbols[i].depth);
+        snprintf(desc, sizeof(desc), "MOON %s (Depth %d)", typeStr, lspSymbols[i].depth);
       }
 
       cJSON_AddStringToObject(item, "detail", desc);
@@ -1069,6 +1191,18 @@ static void sendSemanticTokens(cJSON *id, const char *uri) {
 
   // 2. Sort the harvested tokens top-to-bottom, left-to-right
   qsort(semTokens, semTokenCount, sizeof(SemanticToken), compareTokens);
+
+  // 2.5 Deduplicate: If multiple tokens exist at the exact same line/col, keep the highest priority one (which is sorted LAST)
+  int uniqueCount = 0;
+  for (int i = 0; i < semTokenCount; i++) {
+    if (i < semTokenCount - 1 &&
+        semTokens[i].line == semTokens[i+1].line &&
+        semTokens[i].character == semTokens[i+1].character) {
+      continue; // Skip this one, the next one is higher priority
+    }
+    semTokens[uniqueCount++] = semTokens[i];
+  }
+  semTokenCount = uniqueCount;
 
   // 3. The Delta Encoder
   int prevLine = 0;
@@ -1415,9 +1549,21 @@ static char *formatSource(const char *source) {
       inTypeBlock = false;
 
     bool isBlockCloser =
-        (token.type == TOKEN_ELSE || token.type == TOKEN_UNTIL ||
+        (token.type == TOKEN_UNTIL ||
          token.type == TOKEN_RIGHT_BRACE ||
          (token.type == TOKEN_END && bracketDepth == 0));
+
+    // Ternary 'else' shouldn't force a newline! Only block 'else'.
+    if (token.type == TOKEN_ELSE) {
+      Scanner temp = scanner;
+      Token next = scanToken();
+      scanner = temp;
+      
+      if (next.type == TOKEN_COLON || next.type == TOKEN_IF || 
+          next.type == TOKEN_UNLESS || next.type == TOKEN_NEWLINE || next.type == TOKEN_EOF) {
+        isBlockCloser = true;
+      }
+    }
 
     // --- 1. HANDLE NEWLINES ---
     if (token.type == TOKEN_NEWLINE) {
@@ -1851,6 +1997,26 @@ void startLanguageServer() {
 
           // Re-run the AST Harvester if we have code!
           if (currentDocumentText != NULL) {
+            // --- 1. RAPID LEXICAL PASS ---
+            // Catch all raw tokens (comments, strings, numbers, keywords) before the AST!
+            initScanner(currentDocumentText, 1);
+            scanner.preserveComments = true;
+            Token t;
+            while ((t = scanToken()).type != TOKEN_EOF) {
+              if (t.type == TOKEN_COMMENT) {
+                addSemToken(t.line, t.column, t.length, 17, 0); // Comment (Priority 0)
+              } else if (t.type == TOKEN_STRING || t.type == TOKEN_STRING_OPEN || 
+                         t.type == TOKEN_STRING_MIDDLE || t.type == TOKEN_STRING_CLOSE) {
+                addSemToken(t.line, t.column, t.length, 18, 0); // String (Priority 0)
+              } else if (t.type == TOKEN_NUMBER || t.type == TOKEN_TRUE || t.type == TOKEN_FALSE) {
+                addSemToken(t.line, t.column, t.length, 19, 0); // Number/Boolean (Priority 0)
+              } else if (t.type >= TOKEN_ADD && t.type <= TOKEN_WITH) {
+                addSemToken(t.line, t.column, t.length, 15, 0); // Keyword (Priority 0)
+              }
+            }
+            scanner.preserveComments = false; // Reset for the real parser
+
+            // --- 2. AST HARVESTER PASS ---
             lspSymbolCount = 0;
             currentScopeDepth = 0;
             targetCursorLine = -1; // We need the FULL document!

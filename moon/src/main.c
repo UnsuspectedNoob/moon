@@ -206,6 +206,10 @@ int main(int argc, char *argv[]) {
   // --- EXECUTION ROUTING ---
   // 2. Add the LSP branch
   if (runLsp) {
+    if (!isCoreBootstrapped) {
+      bootstrapCore();
+      isCoreBootstrapped = true;
+    }
     startLanguageServer();
   } else if (filePath == NULL) {
     repl();
