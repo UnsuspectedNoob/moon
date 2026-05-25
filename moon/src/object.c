@@ -132,7 +132,8 @@ void flattenString(ObjString *string) {
 
 ObjString *copyString(const char *chars, int length) {
   if (length == 1) {
-    return vm.charStrings[(unsigned char)chars[0]];
+    ObjString* cached = vm.charStrings[(unsigned char)chars[0]];
+    if (cached != NULL) return cached;
   }
 
   uint32_t hash = hashString(chars, length);
