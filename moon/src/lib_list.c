@@ -88,11 +88,11 @@ static Value popNative(int argCount, Value *args) {
 static Value indexOfNative(int argCount, Value *args) {
   if (argCount != 2)
     return NIL_VAL;
-  if (!IS_LIST(args[0]))
+  if (!IS_LIST(args[1]))
     return NIL_VAL;
 
-  ObjList *list = AS_LIST(args[0]);
-  Value searchItem = args[1];
+  ObjList *list = AS_LIST(args[1]);
+  Value searchItem = args[0];
 
   for (int i = 0; i < list->count; i++) {
     if (valuesEqual(list->items[i], searchItem)) {
