@@ -1,5 +1,1 @@
-
-let history be []
-add "Login" to history
-
-show history
+show [1000000 to 1]

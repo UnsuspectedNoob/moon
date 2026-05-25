@@ -379,32 +379,78 @@ ObjUnion *newUnion(int count) {
   return unionObj;
 }
 
+typedef struct {
+  char* chars;
+  int length;
+  int capacity;
+} StringBuffer;
+
+static void initBuffer(StringBuffer* sb) {
+  sb->capacity = 128;
+  sb->length = 0;
+  sb->chars = ALLOCATE(char, sb->capacity);
+}
+
+static void appendBuffer(StringBuffer* sb, const char* str, int len) {
+  if (sb->length + len > sb->capacity) {
+    int oldCapacity = sb->capacity;
+    while (sb->length + len > sb->capacity) {
+      sb->capacity *= 2;
+    }
+    sb->chars = (char *)reallocate(sb->chars, sizeof(char) * oldCapacity,
+                                   sizeof(char) * sb->capacity);
+  }
+  memcpy(sb->chars + sb->length, str, len);
+  sb->length += len;
+}
+
+static void appendBufferChar(StringBuffer* sb, char c) {
+  appendBuffer(sb, &c, 1);
+}
+
 // Pre-declare our recursive engine
-static ObjString *stringifyValue(Value value, int indent);
+static void stringifyValueToBuffer(Value value, int indent, StringBuffer* sb);
+
+// The internal engine that builds the string without allocating GC objects
+static ObjString *stringifyValue(Value value, int indent) {
+  StringBuffer sb;
+  initBuffer(&sb);
+  stringifyValueToBuffer(value, indent, &sb);
+  
+  // Convert the C buffer into a single Moon ObjString
+  ObjString* result = copyString(sb.chars, sb.length);
+  FREE_ARRAY(char, sb.chars, sb.capacity);
+  return result;
+}
 
 // The public interface kicks off the recursion at depth 0!
 ObjString *valueToString(Value value) { return stringifyValue(value, 0); }
 
-// The internal engine that tracks indentation
-static ObjString *stringifyValue(Value value, int indent) {
+static void stringifyValueToBuffer(Value value, int indent, StringBuffer* sb) {
   if (IS_STRING(value)) {
     flattenString(AS_STRING(value)); // <--- SHIELD
-    return AS_STRING(value);
+    ObjString* str = AS_STRING(value);
+    appendBuffer(sb, str->chars, str->length);
+    return;
   }
 
   if (IS_NUMBER(value)) {
     double number = AS_NUMBER(value);
     char buffer[32];
     int length = sprintf(buffer, "%.14g", number);
-    return copyString(buffer, length);
+    appendBuffer(sb, buffer, length);
+    return;
   }
 
   if (IS_BOOL(value)) {
-    return AS_BOOL(value) ? copyString("true", 4) : copyString("false", 5);
+    if (AS_BOOL(value)) appendBuffer(sb, "true", 4);
+    else appendBuffer(sb, "false", 5);
+    return;
   }
 
   if (IS_NIL(value)) {
-    return copyString("nil", 3);
+    appendBuffer(sb, "nil", 3);
+    return;
   }
 
   // --- THE DICTIONARY PRETTY PRINTER ---
@@ -412,15 +458,13 @@ static ObjString *stringifyValue(Value value, int indent) {
     ObjDict *dict = AS_DICT(value);
 
     // Empty dict fallback
-    if (dict->fields.count == 0)
-      return copyString("{}", 2);
+    if (dict->fields.count == 0) {
+      appendBuffer(sb, "{}", 2);
+      return;
+    }
 
-    int capacity = 128;
-    int length = 0;
-    char *buffer = ALLOCATE(char, capacity);
-
-    buffer[length++] = '{';
-    buffer[length++] = '\n';
+    appendBufferChar(sb, '{');
+    appendBufferChar(sb, '\n');
 
     bool firstItem = true;
 
@@ -430,109 +474,56 @@ static ObjString *stringifyValue(Value value, int indent) {
       if (IS_EMPTY(entry->key) || IS_TOMB(entry->key))
         continue;
 
-      // 1. Recursively stringify, increasing the indent!
-      ObjString *keyStr = stringifyValue(entry->key, indent + 1);
-      push(OBJ_VAL(keyStr));
-
-      ObjString *valStr = stringifyValue(entry->value, indent + 1);
-      push(OBJ_VAL(valStr));
-
-      // 2. Pre-calculate the maximum space this item will need
-      int spaceNeeded = 2 + ((indent + 1) * 2) + keyStr->length + 2 +
-                        valStr->length + (indent * 2) + 4;
-
-      while (length + spaceNeeded > capacity) {
-        int oldCapacity = capacity;
-        capacity *= 2;
-        buffer = (char *)reallocate(buffer, sizeof(char) * oldCapacity,
-                                    sizeof(char) * capacity);
-      }
-
       if (!firstItem) {
-        buffer[length++] = ',';
-        buffer[length++] = '\n';
+        appendBuffer(sb, ",\n", 2);
       }
       firstItem = false;
 
       // 3. Add the Indentation
       for (int s = 0; s < (indent + 1) * 2; s++)
-        buffer[length++] = ' ';
+        appendBufferChar(sb, ' ');
 
       // 4. Add the Key
-      memcpy(buffer + length, keyStr->chars, keyStr->length);
-      length += keyStr->length;
+      stringifyValueToBuffer(entry->key, indent + 1, sb);
 
       // 5. Add the Colon
-      buffer[length++] = ':';
-      buffer[length++] = ' ';
+      appendBuffer(sb, ": ", 2);
 
       // 6. Add the Value
-      memcpy(buffer + length, valStr->chars, valStr->length);
-      length += valStr->length;
-
-      pop();
-      pop();
+      stringifyValueToBuffer(entry->value, indent + 1, sb);
     }
 
-    buffer[length++] = '\n';
+    appendBufferChar(sb, '\n');
 
     // Add the closing brace indentation
     for (int s = 0; s < indent * 2; s++)
-      buffer[length++] = ' ';
+      appendBufferChar(sb, ' ');
 
-    buffer[length++] = '}';
-    buffer[length] = '\0';
-
-    ObjString *result = copyString(buffer, length);
-    FREE_ARRAY(char, buffer, capacity);
-    return result;
+    appendBufferChar(sb, '}');
+    return;
   }
 
   // --- THE HORIZONTAL LIST PRINTER ---
   if (IS_LIST(value)) {
     ObjList *list = AS_LIST(value);
-    if (list->count == 0)
-      return copyString("[]", 2);
-
-    int capacity = 128;
-    int length = 0;
-    char *buffer = ALLOCATE(char, capacity);
-
-    buffer[length++] = '[';
-
-    for (int i = 0; i < list->count; i++) {
-      // Recursively stringify (we pass the same indent so if a Dict is
-      // inside this list, it formats cleanly relative to the list)
-      ObjString *itemStr = stringifyValue(list->items[i], indent);
-      push(OBJ_VAL(itemStr));
-
-      // We only need enough space for the item, comma, space, and brackets
-      int spaceNeeded = itemStr->length + 4;
-      while (length + spaceNeeded > capacity) {
-        int oldCapacity = capacity;
-        capacity *= 2;
-        buffer = (char *)reallocate(buffer, sizeof(char) * oldCapacity,
-                                    sizeof(char) * capacity);
-      }
-
-      memcpy(buffer + length, itemStr->chars, itemStr->length);
-      length += itemStr->length;
-
-      if (i < list->count - 1) {
-        buffer[length++] = ',';
-        buffer[length++] = ' ';
-      }
-
-      pop();
+    if (list->count == 0) {
+      appendBuffer(sb, "[]", 2);
+      return;
     }
 
-    buffer[length++] = ']';
-    buffer[length] = '\0';
+    appendBufferChar(sb, '[');
 
-    ObjString *result = copyString(buffer, length);
-    FREE_ARRAY(char, buffer, capacity);
-    return result;
+    for (int i = 0; i < list->count; i++) {
+      stringifyValueToBuffer(list->items[i], indent, sb);
+
+      if (i < list->count - 1) {
+        appendBuffer(sb, ", ", 2);
+      }
+    }
+
+    appendBufferChar(sb, ']');
+    return;
   }
 
-  return copyString("<object>", 8);
+  appendBuffer(sb, "<object>", 8);
 }

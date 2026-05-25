@@ -1,4 +1,3 @@
-import "core" as core
 
 # ---------------------------------------------------------
 # QUICKSORT
@@ -7,31 +6,29 @@ import "core" as core
 # ---------------------------------------------------------
 let quicksort(list):
     # Base case
-    if list.length <= 1:
+    if list's length <= 1:
         return list
     end
 
-    # The pivot is the first element
-    let pivot be list[0]
-    
-    # Slice the rest of the list seamlessly using 'end' index
-    let rest be list[1 to end]
+    # Better pivot selection to avoid O(N^2) on reverse-sorted lists
+    let pivot be list[end/2]
     
     # Utilize list comprehensions with inline conditionals
-    # to dynamically filter the arrays!
-    let left be [keep if it <= pivot for it in rest]
-    let right be [keep if it > pivot for it in rest]
+    # to dynamically filter the arrays into three partitions!
+    let left be [for each x in list keep x if x < pivot]
+    let middle be [for each x in list keep x if x is pivot]
+    let right be [for each x in list keep x if x > pivot]
     
     # Recursively sort and easily concatenate lists
-    return quicksort(left) + [pivot] + quicksort(right)
+    return quicksort(left) + middle + quicksort(right)
 end
 
-core.print("--- Quicksort Algorithm ---")
+show "--- Quicksort Algorithm ---"
 
-let numbers be [34, 7, 23, 32, 5, 62, 32, 1, 9, 12, 8]
-core.print("Original List:")
-core.print(numbers)
+let numbers be [1000 to 1]
+show "Original List:"
+show numbers
 
 let sorted be quicksort(numbers)
-core.print("\nSorted List:")
-core.print(sorted)
+show "\nSorted List:"
+show sorted

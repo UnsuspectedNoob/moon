@@ -1,4 +1,3 @@
-import "core" as core
 
 # ---------------------------------------------------------
 # RECURSIVE FIBONACCI
@@ -25,19 +24,19 @@ let fib_iterative(n):
     let a be 0
     let b be 1
     
-    for i in 2 to n:
+    for i from 2 to n by 1:
         let temp be a + b
-        update a as temp
-        update b as temp
+        set a to b
+        set b to temp
     end
     
     return b
 end
 
-core.print("--- Fibonacci Algorithms ---")
+show "--- Fibonacci Algorithms ---"
 
-core.print("Iterative (n=50):")
-core.print(fib_iterative(50))
+show "Iterative (n=50):"
+show fib_iterative(50)
 
-core.print("\nRecursive (n=20):")
-core.print(fib_recursive(20))
+show "\nRecursive (n=20):"
+show fib_recursive(20)

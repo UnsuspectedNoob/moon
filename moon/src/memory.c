@@ -93,6 +93,7 @@ static void markRoots() {
   // 2. The CallFrames (The active functions/closures)
   for (int i = 0; i < vm.frameCount; i++) {
     markObject((Obj *)vm.frames[i].function);
+    markValue(vm.frames[i].stickySubject);
   }
 
   // 3. The Globals
@@ -101,6 +102,7 @@ static void markRoots() {
 
   // 4. The Native Blueprints
   markObject((Obj *)vm.anyType);
+  markObject((Obj *)vm.typeType);
   markObject((Obj *)vm.numberType);
   markObject((Obj *)vm.stringType);
   markObject((Obj *)vm.listType);
@@ -109,6 +111,7 @@ static void markRoots() {
   markObject((Obj *)vm.rangeType);
   markObject((Obj *)vm.functionType);
   markObject((Obj *)vm.nilType);
+  markObject((Obj *)vm.moduleType);
 
   // 5. The Cached 1-Character Strings
   for (int i = 0; i < 256; i++) {
@@ -129,6 +132,11 @@ static void markRoots() {
   // --- 7. THE SEQUENCE SHIELD (Phase 1 Fix) ---
   for (int i = 0; i < vm.sequenceCount; i++) {
     markValue(vm.sequenceStack[i]);
+  }
+
+  // --- 8. THE STICKY SUBJECT SHIELD ---
+  for (int i = 0; i < vm.stickyCount; i++) {
+    markValue(vm.stickyStack[i]);
   }
 }
 
