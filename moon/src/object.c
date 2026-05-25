@@ -131,6 +131,10 @@ void flattenString(ObjString *string) {
 }
 
 ObjString *copyString(const char *chars, int length) {
+  if (length == 1) {
+    return vm.charStrings[(unsigned char)chars[0]];
+  }
+
   uint32_t hash = hashString(chars, length);
 
   // Check if we already have it
@@ -379,19 +383,13 @@ ObjUnion *newUnion(int count) {
   return unionObj;
 }
 
-typedef struct {
-  char* chars;
-  int length;
-  int capacity;
-} StringBuffer;
-
-static void initBuffer(StringBuffer* sb) {
+void initBuffer(StringBuffer* sb) {
   sb->capacity = 128;
   sb->length = 0;
   sb->chars = ALLOCATE(char, sb->capacity);
 }
 
-static void appendBuffer(StringBuffer* sb, const char* str, int len) {
+void appendBuffer(StringBuffer* sb, const char* str, int len) {
   if (sb->length + len > sb->capacity) {
     int oldCapacity = sb->capacity;
     while (sb->length + len > sb->capacity) {
@@ -404,12 +402,9 @@ static void appendBuffer(StringBuffer* sb, const char* str, int len) {
   sb->length += len;
 }
 
-static void appendBufferChar(StringBuffer* sb, char c) {
+void appendBufferChar(StringBuffer* sb, char c) {
   appendBuffer(sb, &c, 1);
 }
-
-// Pre-declare our recursive engine
-static void stringifyValueToBuffer(Value value, int indent, StringBuffer* sb);
 
 // The internal engine that builds the string without allocating GC objects
 static ObjString *stringifyValue(Value value, int indent) {
@@ -426,7 +421,7 @@ static ObjString *stringifyValue(Value value, int indent) {
 // The public interface kicks off the recursion at depth 0!
 ObjString *valueToString(Value value) { return stringifyValue(value, 0); }
 
-static void stringifyValueToBuffer(Value value, int indent, StringBuffer* sb) {
+void stringifyValueToBuffer(Value value, int indent, StringBuffer* sb) {
   if (IS_STRING(value)) {
     flattenString(AS_STRING(value)); // <--- SHIELD
     ObjString* str = AS_STRING(value);

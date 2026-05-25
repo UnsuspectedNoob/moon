@@ -20,12 +20,17 @@ static Value reverseNative(int argCount, Value *args) {
 
   ObjList *original = AS_LIST(args[0]);
   ObjList *reversed = newList();
-
   push(OBJ_VAL(reversed)); // GC Protection!
 
-  // Walk backward and append to the new list
-  for (int i = original->count - 1; i >= 0; i--) {
-    appendList(reversed, original->items[i]);
+  // Pre-allocate exactly the right amount of memory to avoid O(log N) capacity resizing
+  if (original->count > 0) {
+    reversed->items = ALLOCATE(Value, original->count);
+    reversed->capacity = original->count;
+    reversed->count = original->count;
+
+    for (int i = 0; i < original->count; i++) {
+      reversed->items[i] = original->items[original->count - 1 - i];
+    }
   }
 
   pop(); // Remove from VM stack
@@ -45,41 +50,20 @@ static Value joinNative(int argCount, Value *args) {
     return OBJ_VAL(copyString("", 0));
   }
 
-  // 1. Array to hold the stringified versions of each item
-  ObjString **strings = ALLOCATE(ObjString *, list->count);
-  int totalLength = 0;
+  StringBuffer sb;
+  initBuffer(&sb);
 
-  // 2. First Pass: Convert everything to a string and protect it from the GC!
+  // Instead of building a full GC String object for each item,
+  // we serialize them straight into our flat C buffer!
   for (int i = 0; i < list->count; i++) {
-    strings[i] = valueToString(list->items[i]);
-    push(OBJ_VAL(strings[i])); // Shield from GC
-    totalLength += strings[i]->length;
-  }
-
-  // Add room for the delimiters
-  totalLength += delim->length * (list->count - 1);
-
-  // 3. Second Pass: Allocate the exact memory needed and smash them together
-  char *chars = ALLOCATE(char, totalLength + 1);
-  char *dest = chars;
-
-  for (int i = 0; i < list->count; i++) {
-    memcpy(dest, strings[i]->chars, strings[i]->length);
-    dest += strings[i]->length;
-
+    stringifyValueToBuffer(list->items[i], 0, &sb);
+    
     if (i < list->count - 1) {
-      memcpy(dest, delim->chars, delim->length);
-      dest += delim->length;
+      appendBuffer(&sb, delim->chars, delim->length);
     }
   }
-  chars[totalLength] = '\0';
 
-  // 4. Create the final MOON string
-  ObjString *result = takeString(chars, totalLength);
-
-  // 5. Cleanup: Pop the temporary strings off the VM stack and free the C array
-  vm.stackTop -= list->count;
-  FREE_ARRAY(ObjString *, strings, list->count);
+  ObjString *result = takeString(sb.chars, sb.length);
   return OBJ_VAL(result);
 }
 

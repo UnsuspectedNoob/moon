@@ -62,6 +62,17 @@ typedef struct ObjString {
   struct ObjString *right;
 } ObjString;
 
+typedef struct {
+  char* chars;
+  int length;
+  int capacity;
+} StringBuffer;
+
+void initBuffer(StringBuffer* sb);
+void appendBuffer(StringBuffer* sb, const char* str, int len);
+void appendBufferChar(StringBuffer* sb, char c);
+void stringifyValueToBuffer(Value value, int indent, StringBuffer* sb);
+
 typedef struct ObjFunction ObjFunction; // Forward declaration
 typedef struct ObjModule ObjModule;     // Forward declaration
 
