@@ -1710,6 +1710,11 @@ static Node *updateStatement() {
 
   // 3. THE DESUGARING (Building the Universal RHS)
   Node *finalNode = NULL;
+  
+  // --- PREVENT USE-AFTER-FREE ---
+  // We must clone the target before desugaring, because complex 
+  // targets (like NODE_PROPERTY) will be explicitly freed below!
+  Node *rawTargetBackup = cloneNode(rawTarget);
 
   if (rawTarget->type == NODE_VARIABLE) {
     Node *accumulator = cloneNode(rawTarget);
@@ -1784,7 +1789,6 @@ static Node *updateStatement() {
   }
 
   // --- 4. RE-WRAP THE AST & APPLY GHOST VARIABLES ---
-  Node *rawTargetBackup = cloneNode(rawTarget);
   if (modifierCond != NULL) {
     if ((modifierCond != NULL && modifierCond->usesIt)) {
       Token itToken = makeHiddenToken(" it", line);

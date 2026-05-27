@@ -1614,6 +1614,22 @@ TARGET_OP_DEFINE_METHOD: {
   if (tableGet(frame->globals, OBJ_VAL(name), &existing) &&
       IS_MULTI_FUNCTION(existing)) {
     multi = AS_MULTI_FUNCTION(existing);
+  } else if (tableGet(&vm.globals, OBJ_VAL(name), &existing) &&
+             IS_MULTI_FUNCTION(existing)) {
+    multi = AS_MULTI_FUNCTION(existing);
+    
+    // We found it in the standard library! Let's bring a reference 
+    // into the local scope so it's prioritized and visible locally.
+    tableSet(frame->globals, OBJ_VAL(name), OBJ_VAL(multi));
+    
+    const char *dollar = strchr(name->chars, '$');
+    if (dollar != NULL) {
+      int rootLen = (int)(dollar - name->chars);
+      ObjString *rootName = copyString(name->chars, rootLen);
+      push(OBJ_VAL(rootName)); // GC shield
+      tableSet(frame->globals, OBJ_VAL(rootName), OBJ_VAL(multi));
+      pop(); // pop rootName
+    }
   } else {
     multi = newMultiFunction(name, arity);
     push(OBJ_VAL(multi));

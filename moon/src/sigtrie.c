@@ -1,6 +1,6 @@
 #include "sigtrie.h"
 #include "object.h" // For hashString
-#include "vm.h" // For g_isBootstrappingCore
+#include "vm.h"     // For g_isBootstrappingCore
 #include <stdlib.h>
 #include <string.h>
 
@@ -58,7 +58,7 @@ static void destroyTrieNode(TrieNode *node) {
 static void freeTrieNode(TrieNode *node) {
   if (node == NULL)
     return;
-  
+
   int newChildCount = 0;
   for (int i = 0; i < node->childCount; i++) {
     TrieNode *child = node->children[i];
@@ -183,7 +183,8 @@ void finalizePhrase(TrieNode *endNode, const char *mangledName) {
   endNode->mangledName = my_strdup(mangledName);
 }
 
-void registerSignature(const char *root, const char *path, const char *mangledName) {
+void registerSignature(const char *root, const char *path,
+                       const char *mangledName) {
   TrieNode *current = startPhrase(root, strlen(root));
 
   if (path == NULL || strlen(path) == 0) {
