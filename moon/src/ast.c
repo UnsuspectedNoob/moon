@@ -112,6 +112,19 @@ Node *newListNode(Node **items, int count, int line) {
   return node;
 }
 
+Node *newTupleNode(Node **items, int count, int line) {
+  Node *node = allocateNode(NODE_TUPLE, line);
+  if (items != NULL) { for (int i = 0; i < count; i++) { if (items[i] != NULL && items[i]->usesIt) node->usesIt = true; } }
+  node->as.tuple.count = count;
+  node->as.tuple.items = ALLOCATE(Node *, count);
+  for (int i = 0; i < count; i++) {
+    node->as.tuple.items[i] = items[i];
+    if (items[i])
+      items[i]->parent = node;
+  }
+  return node;
+}
+
 Node *newDictNode(Node **keys, Node **values, int count, int line) {
   // 1. Use the unified AST allocator
   Node *node = allocateNode(NODE_DICT, line);
@@ -560,6 +573,10 @@ void freeNode(Node *root) {
       for (int i = 0; i < node->as.list.count; i++)
         writeNodeArray(&worklist, node->as.list.items[i]);
       break;
+    case NODE_TUPLE:
+      for (int i = 0; i < node->as.tuple.count; i++)
+        writeNodeArray(&worklist, node->as.tuple.items[i]);
+      break;
     case NODE_DICT:
       for (int i = 0; i < node->as.dictExpr.count; i++) {
         writeNodeArray(&worklist, node->as.dictExpr.keys[i]);
@@ -650,6 +667,9 @@ void freeNode(Node *root) {
       break;
     case NODE_LIST:
       FREE_ARRAY(Node *, node->as.list.items, node->as.list.count);
+      break;
+    case NODE_TUPLE:
+      FREE_ARRAY(Node *, node->as.tuple.items, node->as.tuple.count);
       break;
     case NODE_DICT:
       FREE_ARRAY(Node *, node->as.dictExpr.keys, node->as.dictExpr.count);

@@ -457,7 +457,7 @@ static Node *variable() {
       for (int i = 0; i < currentNode->childCount; i++) {
         if (currentNode->children[i]->type == NODE_ARGUMENT) {
           TrieNode *ac = currentNode->children[i];
-          for (int j = 0; j < ac->childCount; j++) {
+      for (int j = 0; j < ac->childCount; j++) {
             if (ac->children[j]->type == NODE_LABEL) {
               expectedLabelStack[expectedLabelCount].hash =
                   ac->children[j]->labelHash;
@@ -469,23 +469,21 @@ static Node *variable() {
         }
       }
 
-      // Initialize temp array INSIDE the loop
       NodeArray tempArgs;
       initNodeArray(&tempArgs);
 
-      if (check(TOKEN_LEFT_PAREN)) {
-        advance();
-        groupingDepth++;
-
-        if (!check(TOKEN_RIGHT_PAREN)) {
-          do {
-            writeNodeArray(&tempArgs, expression());
-          } while (match(TOKEN_COMMA));
+      Node *arg = expression();
+      if (arg->type == NODE_TUPLE) {
+        for (int j = 0; j < arg->as.tuple.count; j++) {
+          writeNodeArray(&tempArgs, arg->as.tuple.items[j]);
         }
-        consume(TOKEN_RIGHT_PAREN, "Expect ')' after arguments.");
-        groupingDepth--;
+        free(arg->as.tuple.items);
+        free(arg);
+      } else if (arg->type == NODE_GROUPING) {
+        writeNodeArray(&tempArgs, arg->as.singleExpr.expression);
+        free(arg);
       } else {
-        writeNodeArray(&tempArgs, expression());
+        writeNodeArray(&tempArgs, arg);
       }
 
       expectedLabelCount -= labelsPushed;
@@ -2234,7 +2232,14 @@ static Node *letDeclaration() {
 static Node *grouping() {
   groupingDepth++; // Going deeper...
 
-  Node *expr = expression();
+  NodeArray elements;
+  initNodeArray(&elements);
+
+  if (!check(TOKEN_RIGHT_PAREN)) {
+    do {
+      writeNodeArray(&elements, expression());
+    } while (match(TOKEN_COMMA));
+  }
 
   groupingDepth--; // Coming back out!
 
@@ -2242,7 +2247,16 @@ static Node *grouping() {
               "I couldn't find the closing parenthesis ')'.",
               "Make sure you close any opened parentheses in your math, logic, "
               "or function calls.");
-  return newSingleExprNode(NODE_GROUPING, expr, parser.previous.line);
+
+  if (elements.count == 1) {
+    Node *expr = elements.items[0];
+    freeNodeArray(&elements);
+    return newSingleExprNode(NODE_GROUPING, expr, parser.previous.line);
+  } else {
+    Node *tuple = newTupleNode(elements.items, elements.count, parser.previous.line);
+    freeNodeArray(&elements);
+    return tuple;
+  }
 }
 
 static Node *declaration() {

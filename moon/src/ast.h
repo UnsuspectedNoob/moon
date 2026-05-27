@@ -29,6 +29,7 @@ typedef enum {
   NODE_BLOCK,
   NODE_RANGE,
   NODE_LIST,
+  NODE_TUPLE,
   NODE_DICT,
   NODE_LET,
   NODE_FUNCTION,
@@ -239,6 +240,8 @@ struct sNode {
     RangePayload range;
     CastPayload cast;
     ListPayload list;
+    ListPayload tuple;
+    DictPayload dict;
     DictPayload dictExpr;
     SubscriptPayload subscript;
     TypeDeclPayload typeDecl;
@@ -280,7 +283,8 @@ Node *newSkipNode(int line);
 Node *newPhrasalCallNode(Token mangledName, Node **args, int argCount, Token *phraseTokens, int phraseTokenCount,
                          int line);
 
-Node *newListNode(Node **items, int count, int line);
+Node *newListNode(Node **elements, int count, int line);
+Node *newTupleNode(Node **elements, int count, int line);
 Node *newDictNode(Node **keys, Node **values, int count, int line);
 
 Node *newRangeNode(Node *start, Node *end, Node *step, int line);

@@ -311,6 +311,13 @@ void printAST(Node *node, int indent) {
     }
     break;
 
+  case NODE_TUPLE:
+    printf("[TUPLE: %d items]\n", node->as.tuple.count);
+    for (int i = 0; i < node->as.tuple.count; i++) {
+      printAST(node->as.tuple.items[i], indent + 1);
+    }
+    break;
+
   case NODE_DICT:
     printf("[DICTIONARY: %d pairs]\n", node->as.dictExpr.count);
     for (int i = 0; i < node->as.dictExpr.count; i++) {
@@ -320,6 +327,11 @@ void printAST(Node *node, int indent) {
       printAST(node->as.dictExpr.keys[i], indent + 2);
       printAST(node->as.dictExpr.values[i], indent + 2);
     }
+    break;
+
+  case NODE_GROUPING:
+    printf("[GROUPING]\n");
+    printAST(node->as.singleExpr.expression, indent + 1);
     break;
 
   case NODE_SUBSCRIPT:

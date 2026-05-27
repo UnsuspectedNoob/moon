@@ -15,7 +15,7 @@ void *reallocate(void *pointer, size_t oldSize, size_t newSize) {
   // 2. The Auto-Trigger!
   if (newSize > oldSize) {
     // Only trigger if the AST is done parsing AND we crossed the memory limit
-    if (vm.allowGC) {
+    if (vm.allowGC && vm.bytesAllocated > vm.nextGC) {
       collectGarbage();
     }
   }

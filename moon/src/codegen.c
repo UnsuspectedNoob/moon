@@ -80,6 +80,11 @@ static void walkNode(Node *node) {
     break;
   }
 
+  case NODE_TUPLE: {
+    error("Tuples are only allowed as function arguments. Use a List [10, 20] instead.");
+    break;
+  }
+
   case NODE_UNARY: {
     walkNode(node->as.unary.right); // Walk the child first
 
