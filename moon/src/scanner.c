@@ -47,6 +47,7 @@ static bool match(char expected) {
     return false;
 
   scanner.current++;
+  scanner.column++;
   return true;
 }
 
@@ -390,7 +391,7 @@ static Token string(bool isResuming) {
 
     if (c == '\n') {
       scanner.line++;
-      scanner.column = 1;
+      scanner.column = 0; // advance() will immediately increment it to 1
     }
     advance();
   }

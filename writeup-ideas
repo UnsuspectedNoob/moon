@@ -70,3 +70,4 @@ add same type check in lists.
 ++ some downsides that may exist ++
 novices might ask why we can't use some variable names
 
+do something about 1-word 0-arity shadowing

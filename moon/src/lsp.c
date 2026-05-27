@@ -304,8 +304,42 @@ static void analyzeNode(Node *node) {
     registerSymbol(funcName, LSP_TYPE_FUNCTION, NULL,
                    node->as.function.name.line, node->as.function.name.column);
 
-    addSemToken(node->as.function.name.line, node->as.function.name.column, len,
-                12, 1);
+    // THE FIX: Lex the function signature from the source code instead of using the mangled length!
+    if (currentDocumentText != NULL && node->as.function.name.line > 0) {
+      int targetLine = node->as.function.name.line;
+      int currentCol = node->as.function.name.column;
+      
+      const char *ptr = currentDocumentText;
+      int currLine = 1;
+      while (*ptr != '\0' && currLine < targetLine) {
+        if (*ptr == '\n') currLine++;
+        ptr++;
+      }
+      
+      int c = 1;
+      while (*ptr != '\0' && c < currentCol) {
+        ptr++;
+        c++;
+      }
+      
+      while (*ptr != '\0' && *ptr != '(' && *ptr != ':' && *ptr != '\n') {
+        if ((*ptr >= 'a' && *ptr <= 'z') || (*ptr >= 'A' && *ptr <= 'Z') || *ptr == '_') {
+          int wLen = 0;
+          while ((ptr[wLen] >= 'a' && ptr[wLen] <= 'z') || 
+                 (ptr[wLen] >= 'A' && ptr[wLen] <= 'Z') || 
+                 (ptr[wLen] >= '0' && ptr[wLen] <= '9') || 
+                 ptr[wLen] == '_') {
+            wLen++;
+          }
+          addSemToken(targetLine, c, wLen, 12, 1);
+          ptr += wLen;
+          c += wLen;
+        } else {
+          ptr++;
+          c++;
+        }
+      }
+    }
 
     // 2. Go one level deeper for parameters and body!
     currentScopeDepth++;
@@ -456,8 +490,11 @@ static void analyzeNode(Node *node) {
                      node->as.let.names[i].column);
 
       // Color the variable declaration! (Type 8 = Variable)
-      addSemToken(node->as.let.names[i].line, node->as.let.names[i].column,
-                  node->as.let.names[i].length, 8, 1);
+      // Ignore ghost tokens with column == 0
+      if (node->as.let.names[i].column > 0) {
+        addSemToken(node->as.let.names[i].line, node->as.let.names[i].column,
+                    node->as.let.names[i].length, 8, 1);
+      }
     }
     break;
   }
@@ -562,7 +599,10 @@ static void analyzeNode(Node *node) {
         if (strcmp(varName, natives[i]) == 0)
           tokenType = 1; // Native Types get Blueprint coloring
       }
-      addSemToken(t.line, t.column, len, tokenType, 1);
+      // Ghost tokens have column == 0, Moon is 1-indexed. We shouldn't highlight them!
+      if (t.column > 0) {
+        addSemToken(t.line, t.column, len, tokenType, 1);
+      }
     }
 
     break;
