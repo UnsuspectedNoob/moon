@@ -3,6 +3,4 @@
 
 void registerListLibrary();
 
-// Expose the MOON wrapper
-
 #endif

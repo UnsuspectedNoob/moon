@@ -420,7 +420,13 @@ static ObjString *stringifyValue(Value value, int indent) {
 }
 
 // The public interface kicks off the recursion at depth 0!
-ObjString *valueToString(Value value) { return stringifyValue(value, 0); }
+ObjString *valueToString(Value value) {
+  if (IS_STRING(value)) {
+    flattenString(AS_STRING(value));
+    return AS_STRING(value);
+  }
+  return stringifyValue(value, 0); 
+}
 
 void stringifyValueToBuffer(Value value, int indent, StringBuffer* sb) {
   if (IS_STRING(value)) {

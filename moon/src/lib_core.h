@@ -4,6 +4,4 @@
 // 1. Expose the registration function
 void registerCoreLibrary();
 
-
-
 #endif

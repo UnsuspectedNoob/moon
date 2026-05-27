@@ -810,16 +810,14 @@ TARGET_OP_GET_GLOBAL: {
 TARGET_OP_SET_GLOBAL: {
   ObjString *name = READ_STRING();
 
+  Value dummy;
   // Try to set in current module first
-  if (tableSet(frame->globals, OBJ_VAL(name), peek(0))) {
-    // It didn't exist in the module. Delete the new entry.
-    tableDelete(frame->globals, OBJ_VAL(name));
-
+  if (tableGet(frame->globals, OBJ_VAL(name), &dummy)) {
+    tableSet(frame->globals, OBJ_VAL(name), peek(0));
+  } else if (tableGet(&vm.globals, OBJ_VAL(name), &dummy)) {
     // Check if it exists in Universe scope instead
-    Value dummy;
-    if (tableGet(&vm.globals, OBJ_VAL(name), &dummy)) {
-      tableSet(&vm.globals, OBJ_VAL(name), peek(0));
-    } else {
+    tableSet(&vm.globals, OBJ_VAL(name), peek(0));
+  } else {
       // --- THE ORACLE INTERCEPT ---
       const char *suggestion =
           findVariableSuggestion(frame->globals, name->chars);
@@ -844,7 +842,6 @@ TARGET_OP_SET_GLOBAL: {
             "Undefined variable '%s'.", name->chars);
       }
     }
-  }
 
   DISPATCH();
 }
@@ -943,6 +940,10 @@ TARGET_OP_BUILD_LIST: {
 
   // 1. Create the new list object
   ObjList *list = newList();
+  if (itemCount > 0) {
+    list->capacity = itemCount;
+    list->items = ALLOCATE(Value, itemCount);
+  }
 
   // 2. GC Protection:
   // We push the list to the stack immediately. If we don't, and
