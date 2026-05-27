@@ -683,8 +683,9 @@ TARGET_OP_DIVIDE: {
 
   if (b == 0.0) {
     THROW_ERROR(ERR_RUNTIME,
-                "You cannot divide by zero. Check your math logic.",
-                "Division by zero.");
+                "Make sure the right side of the operation isn't evaluating to "
+                "0 before doing this math.",
+                "You cannot divide by zero. Check your math logic.");
   }
 
   vm.stackTop[-1] = NUMBER_VAL(a / b);
@@ -702,8 +703,9 @@ TARGET_OP_MOD: {
 
   if (b == 0.0) {
     THROW_ERROR(ERR_RUNTIME,
-                "You cannot modulo by zero. Check your math logic.",
-                "Modulo by zero.");
+                "Make sure the right side of the operation isn't evaluating to "
+                "0 before doing this math.",
+                "You cannot modulo by zero. Check your math logic.");
   }
 
   int intA = (int)a;
@@ -1754,8 +1756,10 @@ TARGET_OP_LOAD: {
 
   // 6. Context Switch
   if (vm.frameCount == FRAMES_MAX) {
-    THROW_ERROR(ERR_RUNTIME, "Too many files loading each other.",
-                "Stack overflow.");
+    THROW_ERROR(ERR_RUNTIME,
+                "You might have a circular dependency where two files are "
+                "trying to load each other in an infinite loop!",
+                "Too many files loading each other.");
   }
 
   frame->ip = ip;

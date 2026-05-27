@@ -457,7 +457,7 @@ static Node *variable() {
       for (int i = 0; i < currentNode->childCount; i++) {
         if (currentNode->children[i]->type == NODE_ARGUMENT) {
           TrieNode *ac = currentNode->children[i];
-      for (int j = 0; j < ac->childCount; j++) {
+          for (int j = 0; j < ac->childCount; j++) {
             if (ac->children[j]->type == NODE_LABEL) {
               expectedLabelStack[expectedLabelCount].hash =
                   ac->children[j]->labelHash;
@@ -586,10 +586,9 @@ static Node *cloneNode(Node *original) {
                             cloneNode(original->as.subscript.index),
                             original->line);
   default:
-    errorAt(&parser.previous, ERR_SYNTAX,
-            "I can't use a complex expression as a sticky subject.",
-            "A sticky subject must be a simple variable, property, or "
-            "subscript (e.g., 'player' or 'player's health').");
+    errorAt(&parser.previous, ERR_SYNTAX, "Invalid assignment target.",
+            "You can only assign values to variables, properties, or list "
+            "items.");
     return NULL;
   }
 }
@@ -656,38 +655,41 @@ static Node *binary(Node *left) {
     if (left != NULL && left->type == NODE_CHAIN) {
       // Extend the existing chain!
       int newExprCount = left->as.chain.exprCount + 1;
-      
-      Node **newExprs = ALLOCATE(Node*, newExprCount);
+
+      Node **newExprs = ALLOCATE(Node *, newExprCount);
       Token *newOps = ALLOCATE(Token, newExprCount - 1);
-      
-      for(int i = 0; i < left->as.chain.exprCount; i++) newExprs[i] = left->as.chain.expressions[i];
+
+      for (int i = 0; i < left->as.chain.exprCount; i++)
+        newExprs[i] = left->as.chain.expressions[i];
       newExprs[newExprCount - 1] = right;
-      
-      for(int i = 0; i < left->as.chain.exprCount - 1; i++) newOps[i] = left->as.chain.operators[i];
+
+      for (int i = 0; i < left->as.chain.exprCount - 1; i++)
+        newOps[i] = left->as.chain.operators[i];
       newOps[newExprCount - 2] = opToken;
-      
-      FREE_ARRAY(Node*, left->as.chain.expressions, left->as.chain.exprCount);
+
+      FREE_ARRAY(Node *, left->as.chain.expressions, left->as.chain.exprCount);
       FREE_ARRAY(Token, left->as.chain.operators, left->as.chain.exprCount - 1);
-      
+
       left->as.chain.expressions = newExprs;
       left->as.chain.operators = newOps;
       left->as.chain.exprCount = newExprCount;
-      
+
       if (right) {
-        if (right->usesIt) left->usesIt = true;
+        if (right->usesIt)
+          left->usesIt = true;
         right->parent = left;
       }
-      
+
       return left;
     } else {
       // Start a new chain!
-      Node **exprs = ALLOCATE(Node*, 2);
+      Node **exprs = ALLOCATE(Node *, 2);
       exprs[0] = left;
       exprs[1] = right;
-      
+
       Token *ops = ALLOCATE(Token, 1);
       ops[0] = opToken;
-      
+
       return newChainNode(exprs, ops, 2, opToken.line);
     }
   }
@@ -1708,9 +1710,9 @@ static Node *updateStatement() {
 
   // 3. THE DESUGARING (Building the Universal RHS)
   Node *finalNode = NULL;
-  
+
   // --- PREVENT USE-AFTER-FREE ---
-  // We must clone the target before desugaring, because complex 
+  // We must clone the target before desugaring, because complex
   // targets (like NODE_PROPERTY) will be explicitly freed below!
   Node *rawTargetBackup = cloneNode(rawTarget);
 
@@ -2222,8 +2224,8 @@ static Node *letDeclaration() {
   }
 
   errorAt(&parser.previous, ERR_SYNTAX, "This declaration is confusing me.",
-          "Use 'let x be 10' for variables, or provide a valid function "
-          "signature (e.g., 'let jump():').");
+          "Check for missing keywords (like 'let', 'type'), unclosed "
+          "quotes, or stray symbols on this line.");
 
   freeTokenArray(&names);
   return NULL;
@@ -2253,7 +2255,8 @@ static Node *grouping() {
     freeNodeArray(&elements);
     return newSingleExprNode(NODE_GROUPING, expr, parser.previous.line);
   } else {
-    Node *tuple = newTupleNode(elements.items, elements.count, parser.previous.line);
+    Node *tuple =
+        newTupleNode(elements.items, elements.count, parser.previous.line);
     freeNodeArray(&elements);
     return tuple;
   }
