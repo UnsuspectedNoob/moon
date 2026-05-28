@@ -123,9 +123,9 @@ end
 
 # Core & I/O
 show "Print to console"
-let input be ask "What is your name? "
+# let input be ask "What is your name? "
 let time be clock
-load "iter.moon"
+# load "iter.moon"
 
 # Math Library
 let trig be sin 1.0 + cos 1.0
@@ -150,3 +150,4 @@ let idx be index of 2 in [1, 2, 3]
 let base_ten be numbers in "1010" in base 2
 let str_num be "42" as Number
 let type_reflection be p1 as Type # Returns the Blueprint 'Player'
+# expect: High Score!

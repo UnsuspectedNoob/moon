@@ -3,3 +3,5 @@ let joined be join big_list with ","
 let reversed be reverse big_list
 let chars be split "HelloWorldThisIsABenchmarkStringWithManyCharacters" by ""
 show "Success!"
+
+# expect: Success!

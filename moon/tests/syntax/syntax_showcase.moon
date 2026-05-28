@@ -173,3 +173,77 @@ end
 show "fetchValue was called: " + fetchCount + " times (should be 1!)."
 
 show "Showcase executed successfully!"
+
+# expect: --- 1. Variables & Primitives ---
+# expect: 42
+# expect: 3.14
+# expect: true
+# expect: Hello, Moon!
+# expect: 1
+# expect: 
+# expect: --- 2. String Interpolation ---
+# expect: Hello Emrys! Welcome to Moon.
+# expect: 
+# expect: --- 3. Collections & Access ---
+# expect: [1, 2, 3, 4]
+# expect: {
+# expect:   speed: Fast,
+# expect:   name: Emrys
+# expect: }
+# expect: Emrys
+# expect: Fast
+# expect: 
+# expect: --- 4. Math, Logic, and Ranges ---
+# expect: 15
+# expect: true
+# expect: true
+# expect: <object>
+# expect: 
+# expect: --- 5. Custom Types & Instantiation ---
+# expect: Emrys
+# expect: 100
+# expect: 
+# expect: --- 6. Control Flow & Chained Comparisons ---
+# expect: 10 is indeed greater than 5
+# expect: Unless executes when false!
+# expect: Ternary
+# expect: Evaluating expensive function!
+# expect: Chained comparison worked and evaluated only once!
+# expect: 
+# expect: --- 7. Action Statements & Modifiers ---
+# expect: 20
+# expect: 
+# expect: --- 8. Loops ---
+# expect: While loop iteration
+# expect: While loop iteration
+# expect: While loop iteration
+# expect: Until loop iteration
+# expect: Until loop iteration
+# expect: Until loop iteration
+# expect: For loop iteration
+# expect: For loop iteration
+# expect: For loop iteration
+# expect: For each item
+# expect: For each item
+# expect: 
+# expect: --- 9. Comprehensions & The it Construct ---
+# expect: [6, 8, 10]
+# expect: [{
+# expect:   age: 25,
+# expect:   name: Alice
+# expect: }]
+# expect: 
+# expect: --- 10. Phrasal Functions ---
+# expect: Jumping!
+# expect: Pushing to list...
+# expect: 
+# expect: --- 11. End Index & Escapes ---
+# expect: [1, 2, 3, 4]
+# expect: Line 1
+# expect: Line 2	Tabbed
+# expect: Carriage\Slash
+# expect: 
+# expect: --- 12. Chained Comparisons ---
+# expect: It works natively!
+# expect: fetchValue was called: 1 times (should be 1!).
+# expect: Showcase executed successfully!

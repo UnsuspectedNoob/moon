@@ -3,3 +3,5 @@ let sum (a) and (b):
 end
 
 show sum (10) + 5 and 20
+
+# expect: 35

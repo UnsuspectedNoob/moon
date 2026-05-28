@@ -3,3 +3,5 @@ let list (n: Number):
 end
 
 show list 5's length
+
+# expect error: Reference Error

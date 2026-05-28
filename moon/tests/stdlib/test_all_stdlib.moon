@@ -1,7 +1,6 @@
 show "--- Testing Core Library ---"
 let time be clock
-show "Current clock:"
-show time
+
 
 show "--- Testing Math Library ---"
 show "sin(0):"
@@ -14,8 +13,7 @@ show "2^3:"
 show power of 2 to 3
 show "floor(3.9):"
 show floor of 3.9
-show "random(1,10):"
-show random from 1 to 10
+
 
 show "--- Testing String Library ---"
 show "uppercase:"
@@ -53,3 +51,46 @@ if file "test_io.txt" exists:
 end
 
 show "--- All Tests Completed Successfully ---"
+
+# expect: --- Testing Core Library ---
+
+# expect: --- Testing Math Library ---
+# expect: sin(0):
+# expect: 0
+# expect: cos(0):
+# expect: 1
+# expect: sqrt(16):
+# expect: 4
+# expect: 2^3:
+# expect: 8
+# expect: floor(3.9):
+# expect: 3
+
+# expect: --- Testing String Library ---
+# expect: uppercase:
+# expect: HELLO
+# expect: lowercase:
+# expect: world
+# expect: trim:
+# expect: spaces
+# expect: split:
+# expect: [a, b, c]
+# expect: --- Testing List Library ---
+# expect: original:
+# expect: [1, 2, 3]
+# expect: reversed:
+# expect: [3, 2, 1]
+# expect: join:
+# expect: 1 - 2 - 3
+# expect: pop:
+# expect: 3
+# expect: after pop:
+# expect: [1, 2]
+# expect: index of 1:
+# expect: 1
+# expect: binary 101:
+# expect: 5
+# expect: --- Testing IO Library ---
+# expect: File contents:
+# expect: Hello World
+# expect: --- All Tests Completed Successfully ---

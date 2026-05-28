@@ -120,36 +120,36 @@ static void printSnippet(int targetLine, int targetCol, int length) {
   int lineLen = (int)(lineEnd - lineStart);
 
   // 3. Print the code snippet! (Dim line number, Cyan code)
-  printf("\n" COLOR_DIM "  %d | " COLOR_CYAN "%.*s\n" COLOR_RESET, targetLine,
+  fprintf(stderr, "\n" COLOR_DIM "  %d | " COLOR_CYAN "%.*s\n" COLOR_RESET, targetLine,
          lineLen, lineStart);
 
   // 4. Print the squiggles! (Dim pipe, Red squiggles)
   if (targetCol > 0) {
     // Compile Error: We have exact token coordinates
-    printf(COLOR_DIM "    | " COLOR_RED);
+    fprintf(stderr, COLOR_DIM "    | " COLOR_RED);
     for (int i = 1; i < targetCol; i++) {
-      printf(" ");
+      fprintf(stderr, " ");
     }
     int drawLength = length > 0 ? length : 1;
     for (int i = 0; i < drawLength; i++) {
-      printf("^");
+      fprintf(stderr, "^");
     }
-    printf(COLOR_RESET "\n");
+    fprintf(stderr, COLOR_RESET "\n");
   } else {
     // Runtime Error: We highlight the whole line, skipping leading spaces!
-    printf(COLOR_DIM "    | " COLOR_RED);
+    fprintf(stderr, COLOR_DIM "    | " COLOR_RED);
     int startOffset = 0;
     while (startOffset < lineLen &&
            (lineStart[startOffset] == ' ' || lineStart[startOffset] == '\t')) {
-      printf(" ");
+      fprintf(stderr, " ");
       startOffset++;
     }
     for (int i = startOffset; i < lineLen; i++) {
-      printf("^");
+      fprintf(stderr, "^");
     }
-    printf(COLOR_RESET "\n");
+    fprintf(stderr, COLOR_RESET "\n");
   }
-  printf("\n");
+  fprintf(stderr, "\n");
 }
 
 void reportCompileError(Token *token, ErrorType type, const char *message,
