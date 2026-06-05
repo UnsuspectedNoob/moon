@@ -245,6 +245,26 @@ typedef struct {
 static Node *expression();
 static ParseRule *getRule(TokenType type);
 
+static void validatePureExpression(Node *node, const char *context) {
+  if (node == NULL)
+    return;
+  if (node->type == NODE_IF && node->as.ifStmt.elseBranch == NULL) {
+    char message[256];
+    snprintf(message, sizeof(message),
+             "Statement modifiers are not allowed %s.", context);
+    errorAt(&parser.previous, ERR_SYNTAX, message,
+            "If you meant to use a ternary, add an 'else' branch.");
+  } else if (node->type == NODE_PHRASAL_CALL) {
+    if (node->as.phrasalCall.argCount > 0) {
+      validatePureExpression(
+          node->as.phrasalCall.arguments[node->as.phrasalCall.argCount - 1],
+          context);
+    }
+  } else if (node->type == NODE_GROUPING) {
+    validatePureExpression(node->as.singleExpr.expression, context);
+  }
+}
+
 static Node *parsePrecedence(Precedence precedence) {
   // 1. Tracks recursive depth (Right-heavy trees)
   parseDepth++;
@@ -356,7 +376,9 @@ static Node *interpolation() {
   // 2. The Loop
   while (true) {
     // Parse the expression inside the backticks ( x + y )
-    writeNodeArray(&parts, expression());
+    Node *expr = expression();
+    validatePureExpression(expr, "inside a string interpolation");
+    writeNodeArray(&parts, expr);
 
     // It MUST be followed by a MIDDLE or a CLOSE token
     if (match(TOKEN_STRING_MIDDLE)) {
@@ -536,6 +558,12 @@ static Node *variable() {
     Token mangledToken = rootToken;
     mangledToken.start = my_strdup(lastGoodState->mangledName);
     mangledToken.length = strlen(lastGoodState->mangledName);
+
+    // Validate non-final arguments
+    for (int i = 0; i < args.count - 1; i++) {
+      validatePureExpression(args.items[i],
+                             "as a non-final argument in a phrase");
+    }
 
     Node *node =
         newPhrasalCallNode(mangledToken, args.items, args.count, phraseTokens,
@@ -922,7 +950,9 @@ static Node *list() {
       ignoreNewlines();
       if (check(TOKEN_RIGHT_BRACKET))
         break;
-      writeNodeArray(items, expression());
+      Node *item = expression();
+      validatePureExpression(item, "inside a list");
+      writeNodeArray(items, item);
     } while (match(TOKEN_COMMA));
   }
   groupingDepth--; // Coming back out!
@@ -1038,11 +1068,13 @@ static Node *parseInstantiate(Node *left, bool isWith) {
       writeTokenArray(&propNames, parser.previous);
       // ---------------
 
-      consumeHint(
-          TOKEN_COLON, ERR_SYNTAX, "I was expecting a colon ':' here.",
-          "Provide a colon after the property name to assign its value.");
+      consumeHint(TOKEN_COLON, ERR_SYNTAX,
+                  "I was expecting a colon ':' after the key.",
+                  "Dictionary keys and values must be separated by colons.");
 
-      writeNodeArray(&values, expression());
+      Node *valNode = expression();
+      validatePureExpression(valNode, "as a dictionary value");
+      writeNodeArray(&values, valNode);
     } while (match(TOKEN_COMMA));
   }
 
@@ -2038,25 +2070,10 @@ static Node *letDeclaration() {
     initNodeArray(&exprs);
 
     do {
-      writeNodeArray(&exprs, expression());
+      Node *valNode = expression();
+      validatePureExpression(valNode, "as a variable assignment");
+      writeNodeArray(&exprs, valNode);
     } while (match(TOKEN_COMMA));
-
-    Node *lastVal = exprs.items[exprs.count - 1];
-    if (lastVal != NULL && lastVal->type == NODE_IF &&
-        lastVal->as.ifStmt.elseBranch == NULL) {
-      errorAt(
-          &parser.previous, ERR_SYNTAX,
-          "Statement modifiers aren't allowed on 'let' declarations.",
-          "Try using a standard if-block, or a ternary (if...else) instead.");
-
-      // --- THE PATCH ---
-      for (int i = 0; i < exprs.count; i++)
-        freeNode(exprs.items[i]);
-
-      freeNodeArray(&exprs);
-      freeTokenArray(&names);
-      return NULL;
-    }
 
     if (exprs.count != 1 && exprs.count != names.count) {
       errorAt(
@@ -2239,7 +2256,9 @@ static Node *grouping() {
 
   if (!check(TOKEN_RIGHT_PAREN)) {
     do {
-      writeNodeArray(&elements, expression());
+      Node *exprNode = expression();
+      validatePureExpression(exprNode, "inside parentheses");
+      writeNodeArray(&elements, exprNode);
     } while (match(TOKEN_COMMA));
   }
 

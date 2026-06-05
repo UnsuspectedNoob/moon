@@ -1532,6 +1532,7 @@ static char *formatSource(const char *source) {
   int blockColonBraceDepth = 0;
   int blockColonParenDepth = 0;
   bool inTypeBlock = false;
+  bool pendingInlineIndent = false;
 
   bool bracketIsSubscript[256] = {false};
 
@@ -1557,6 +1558,9 @@ static char *formatSource(const char *source) {
                     prevToken.type == TOKEN_RIGHT_BRACKET ||
                     prevToken.type == TOKEN_RIGHT_PAREN ||
                     prevToken.type == TOKEN_POSSESSIVE);
+      if (isSub && token.start > prevToken.start + prevToken.length) {
+        isSub = false; // It had a space, so it's a phrasal call, not a subscript!
+      }
       if (bracketDepth >= 0 && bracketDepth < 256) {
         bracketIsSubscript[bracketDepth] = isSub;
       }
@@ -1576,10 +1580,13 @@ static char *formatSource(const char *source) {
         token.type == TOKEN_IF || token.type == TOKEN_UNLESS ||
         token.type == TOKEN_WHILE || token.type == TOKEN_UNTIL ||
         token.type == TOKEN_FOR || token.type == TOKEN_ELSE) {
+      if (token.type == TOKEN_IF) {
+        lspLog("Token IF hit! indentLevel: %d\n", indentLevel);
+      }
       expectsBlockColon = true;
       blockColonBraceDepth = braceDepth;
       blockColonParenDepth = parenDepth;
-    } else if (token.type == TOKEN_BE || token.type == TOKEN_WITH) {
+    } else if (token.type == TOKEN_BE || token.type == TOKEN_WITH || token.type == TOKEN_KEEP) {
       expectsBlockColon = false;
     }
 
@@ -1591,7 +1598,7 @@ static char *formatSource(const char *source) {
     bool isBlockCloser =
         (token.type == TOKEN_UNTIL ||
          token.type == TOKEN_RIGHT_BRACE ||
-         (token.type == TOKEN_END && bracketDepth == 0));
+         (token.type == TOKEN_END && (bracketDepth == 0 || needsIndent)));
 
     // Ternary 'else' shouldn't force a newline! Only block 'else'.
     if (token.type == TOKEN_ELSE) {
@@ -1607,6 +1614,11 @@ static char *formatSource(const char *source) {
 
     // --- 1. HANDLE NEWLINES ---
     if (token.type == TOKEN_NEWLINE) {
+      if (expectsBlockColon) {
+        pendingInlineIndent = true;
+      } else if (pendingInlineIndent) {
+        pendingInlineIndent = false;
+      }
       expectsBlockColon = false;
 
       if (justForcedNewline) {
@@ -1641,7 +1653,8 @@ static char *formatSource(const char *source) {
 
     // --- 4. APPLY 2-SPACE INDENTATION ---
     if (isStartOfLine) {
-      for (int i = 0; i < indentLevel * 2; i++) {
+      int effectiveIndent = indentLevel + (pendingInlineIndent ? 1 : 0);
+      for (int i = 0; i < effectiveIndent * 2; i++) {
         writeFormat(&buf, " ", 1);
       }
       needsIndent = false;
@@ -1670,7 +1683,7 @@ static char *formatSource(const char *source) {
 
       if (token.type == TOKEN_LEFT_BRACE)
         spaceNeeded = true;
-      if (token.type == TOKEN_LEFT_BRACKET && prevToken.type >= TOKEN_ADD)
+      if (token.type == TOKEN_LEFT_BRACKET && !currentBracketIsSubscript)
         spaceNeeded = true;
       if (token.type == TOKEN_RIGHT_BRACKET && !currentBracketIsSubscript)
         spaceNeeded = true;
@@ -1706,6 +1719,7 @@ static char *formatSource(const char *source) {
 
     // --- 6. PRINT THE TOKEN ---
     if (token.type == TOKEN_COLON) {
+      lspLog("Token COLON hit! expectsBlockColon: %d, braceDepth: %d, blockColonBraceDepth: %d\n", expectsBlockColon, braceDepth, blockColonBraceDepth);
       if (expectsBlockColon && braceDepth == blockColonBraceDepth &&
           parenDepth == blockColonParenDepth) {
 
@@ -1769,6 +1783,7 @@ static void sendFormattingResponse(cJSON *id, const char *uri) {
 
   // 1. Generate the perfect string
   char *formattedCode = formatSource(currentDocumentText);
+  lspLog("FORMATTED CODE:\n%s\n---END---\n", formattedCode);
 
   // 2. Build the JSON Payload
   cJSON *response = cJSON_CreateObject();
