@@ -10,6 +10,9 @@
 
 // --- GLOBAL FLAGS ---
 bool printAstFlag = false;
+bool printScanFlag = false;
+bool printBytecodeFlag = false;
+bool noRunFlag = false;
 bool isReplMode = false;
 
 // --- THE SMART PROMPT CALCULATOR ---
@@ -165,6 +168,7 @@ char *readFile(const char *path) {
 
 static void runFile(const char *path) {
   char *source = readFile(path);
+
   InterpretResult result = interpret(source, 1);
   free(source);
 
@@ -187,12 +191,18 @@ int main(int argc, char *argv[]) {
       vm.debugMode = true;
     } else if (strcmp(argv[i], "--ast") == 0) {
       printAstFlag = true;
+    } else if (strcmp(argv[i], "--scan") == 0) {
+      printScanFlag = true;
+    } else if (strcmp(argv[i], "--bytecode") == 0) {
+      printBytecodeFlag = true;
+    } else if (strcmp(argv[i], "--no-run") == 0) {
+      noRunFlag = true;
     } else if (strcmp(argv[i], "--lsp") == 0) {
       runLsp = true;
       isLspMode = true; // Tell the Error Engine to stay quiet!
     } else if (argv[i][0] == '-') {
       fprintf(stderr, "Unknown flag: %s\n", argv[i]);
-      fprintf(stderr, "Usage: moon [--debug] [--ast] [--lsp] [path]\n");
+      fprintf(stderr, "Usage: moon [--debug] [--ast] [--scan] [--bytecode] [--no-run] [--lsp] [path]\n");
       exit(64);
     } else {
       if (filePath != NULL) {

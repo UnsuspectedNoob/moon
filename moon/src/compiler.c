@@ -26,9 +26,6 @@ ObjFunction *compile(const char *source, ObjModule *module, int startLine) {
     printf("=== ABSTRACT SYNTAX TREE ===\n");
     printAST(ast, 0);
     printf("============================\n");
-
-    freeNode(ast);
-    return NULL; // Halt compilation so the VM doesn't try to run empty code
   }
   // ----------------------------
 

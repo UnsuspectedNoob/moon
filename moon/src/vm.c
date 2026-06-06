@@ -2040,6 +2040,9 @@ InterpretResult interpret(const char *source, int startLine) {
   if (function == NULL)
     return INTERPRET_COMPILE_ERROR;
 
+  if (noRunFlag)
+    return INTERPRET_OK;
+
   vm.stackTop = vm.stack;
   vm.frameCount = 0;
 

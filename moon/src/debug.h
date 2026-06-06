@@ -10,6 +10,9 @@ int disassembleInstruction(Chunk *chunk, int offset);
 void debugStack(VM *vm);
 
 extern bool printAstFlag;
+extern bool printScanFlag;
+extern bool printBytecodeFlag;
+extern bool noRunFlag;
 // Add this near your disassembleChunk prototype
 void printAST(Node *node, int indent);
 

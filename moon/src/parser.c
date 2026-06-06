@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "ast.h"
+#include "debug.h"
 #include "error.h"
 #include "memory.h"
 #include "object.h"
@@ -179,6 +180,16 @@ void advance() {
   parser.previous = parser.current;
   for (;;) {
     parser.current = scanToken();
+    if (printScanFlag) {
+      if (parser.current.line != parser.previous.line && parser.previous.line != 0) {
+        printf("%4d ", parser.current.line);
+      } else if (parser.previous.line == 0) {
+        printf("%4d ", parser.current.line);
+      } else {
+        printf("   | ");
+      }
+      printf("%-22s '%.*s'\n", getTokenTypeName(parser.current.type), parser.current.length, parser.current.start);
+    }
     if (parser.current.type != TOKEN_ERROR)
       break;
 

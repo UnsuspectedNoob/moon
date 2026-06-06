@@ -108,5 +108,6 @@ void initScanner(const char *source, int startLine);
 
 // Scan the next token from the source
 Token scanToken();
+const char* getTokenTypeName(TokenType type);
 
 #endif

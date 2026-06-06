@@ -52,10 +52,10 @@ ObjFunction *endCompiler() {
   ObjFunction *function = current->function;
 
 #ifdef DEBUG_FUNCTION_NAME
-  if (vm.debugMode && !parser.hadError) {
+  if ((vm.debugMode || printBytecodeFlag) && !parser.hadError) {
     disassembleChunk(currentChunk(), function->name != NULL
                                          ? function->name->chars
-                                         : "<script>");
+                                         : "<main>");
   }
 #endif
 

@@ -1,6 +1,5 @@
-
 let string (n: String) in uppercase:
   return uppercase n
 end
 
-string "" in uppercase 
+string "" in uppercase
