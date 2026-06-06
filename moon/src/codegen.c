@@ -81,7 +81,11 @@ static void walkNode(Node *node) {
   }
 
   case NODE_TUPLE: {
-    error("Tuples are only allowed as function arguments. Use a List [10, 20] instead.");
+    errorAt(&parser.previous, ERR_SYNTAX,
+            "You tried to use a Tuple outside of a function call.",
+            "Tuples '(a, b)' are strictly for grouping expressions or passing "
+            "arguments. If you want a standalone data collection, use a List "
+            "'[a, b]' instead.");
     break;
   }
 
@@ -517,12 +521,13 @@ static void walkNode(Node *node) {
     int jumps[256];
     int jumpCount = 0;
 
-    walkNode(exprs[0]); // Leftmost operand
-    emitByte(OP_SET_STICKY); // ALWAYS capture the very first operand as the sticky subject!
+    walkNode(exprs[0]);      // Leftmost operand
+    emitByte(OP_SET_STICKY); // ALWAYS capture the very first operand as the
+                             // sticky subject!
 
     for (int i = 1; i < count; i++) {
       walkNode(exprs[i]); // Right operand
-      
+
       if (i < count - 1) {
         emitByte(OP_SET_STICKY); // Save the right operand
       }
@@ -555,12 +560,13 @@ static void walkNode(Node *node) {
       default:
         break; // Should never happen
       }
-      
+
       if (i < count - 1) {
         int jump = emitJump(OP_JUMP_IF_FALSE); // Short-circuit if false
-        if (jumpCount < 256) jumps[jumpCount++] = jump;
-        
-        emitByte(OP_POP); // Pop the 'true' so stack is empty
+        if (jumpCount < 256)
+          jumps[jumpCount++] = jump;
+
+        emitByte(OP_POP);         // Pop the 'true' so stack is empty
         emitByte(OP_LOAD_STICKY); // Push the saved right operand back!
       }
     }
@@ -569,10 +575,9 @@ static void walkNode(Node *node) {
     for (int i = 0; i < jumpCount; i++) {
       patchJump(jumps[i]);
     }
-    
+
     break;
   }
-
 
   case NODE_GROUPING: {
     emitByte(OP_PUSH_STICKY);
@@ -662,7 +667,6 @@ static void walkNode(Node *node) {
     emitByte(count & 0xff);        // Low byte
     break;
   }
-
 
   case NODE_PHRASAL_CALL: {
     int arg = resolveLocal(current, &node->as.phrasalCall.mangledName);
@@ -931,7 +935,12 @@ static void walkNode(Node *node) {
 
     if (accSlot == -1) {
       // We use the Compiler's error function, not the VM's!
-      error("I found a 'keep' statement outside of a comprehension.");
+      errorAt(&parser.previous, ERR_SYNTAX,
+              "You tried to use the 'keep' keyword outside of a comprehension "
+              "block.",
+              "The 'keep' keyword is exclusively used to build items inside "
+              "List or Dictionary comprehensions (e.g., '[for x in items keep "
+              "x * 2]').");
       break; // Abort code generation for this bad node
     }
 

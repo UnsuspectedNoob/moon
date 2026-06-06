@@ -108,7 +108,6 @@ bool isMathOperator(Token opToken) {
 
 void errorAt(Token *token, ErrorType type, const char *message,
              const char *hint) {
-  fprintf(stderr, "DEBUG: errorAt called with message: %s\n", message);
   if (parser.panicMode)
     return;
   parser.panicMode = true;
@@ -280,7 +279,7 @@ static Node *parsePrecedence(Precedence precedence) {
   // 1. Tracks recursive depth (Right-heavy trees)
   parseDepth++;
   if (parseDepth > MAX_AST_DEPTH) {
-    error("Expression is too complex or deeply nested. Break it up.");
+    errorAt(&parser.previous, ERR_SYNTAX, "This expression is too deeply nested and I'm losing track of it!", "Try breaking this complex calculation into smaller steps using intermediate variables.");
     parseDepth--;
     return NULL;
   }
@@ -594,8 +593,8 @@ static Node *variable() {
   if (currentNode != startNode) {
     errorAt(
         &parser.previous, ERR_REFERENCE,
-        "I don't recognize this phrasal function.",
-        "Did you misspell a word, or forget to define this function earlier?");
+        "You called a phrasal function that I don't recognize.",
+        "Did you misspell a word, or forget to define this function earlier in the file?");
   }
   for (int i = 0; i < args.count; i++)
     freeNode(args.items[i]);
@@ -807,8 +806,8 @@ static Node *listComprehension(int line) {
 
   ignoreNewlines();
   consumeHint(TOKEN_RIGHT_BRACKET, ERR_SYNTAX,
-              "I couldn't find the closing bracket ']'.",
-              "Close your list comprehension.");
+              "You opened a block or list here, but forgot to close it.",
+              "Make sure to balance your brackets! Add a closing bracket ']' at the end.");
 
   return newComprehensionNode(iterator, indexVar, hasIndex, sequence,
                               body, false, line);
@@ -855,8 +854,8 @@ static Node *dictComprehension(int line) {
 
   ignoreNewlines();
   consumeHint(TOKEN_RIGHT_BRACE, ERR_SYNTAX,
-              "I couldn't find the closing brace '}'.",
-              "Close your dictionary comprehension.");
+              "You opened a block or dictionary here, but forgot to close it.",
+              "Make sure to balance your braces! Add a closing brace '}' at the end.");
 
   return newComprehensionNode(iterator, indexVar, hasIndex, sequence,
                               body, true, line);
@@ -1243,8 +1242,8 @@ static Node *forStatement() {
 static Node *parseLValue() {
   // Base Case: The root must be an identifier
   consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
-              "I was expecting a variable name to assign to.",
-              "Assignments need a target, like 'set score to 10'.");
+              "You started an assignment but didn't tell me what variable to update.",
+              "Provide a target variable. For example: 'set score to 10'.");
 
   Node *lvalue = newVariableNode(parser.previous, parser.previous.line);
 
@@ -1271,7 +1270,7 @@ static Node *addStatement() {
 
   // --- THE BLINDFOLD FIX ---
   if (expectedLabelCount >= 256) {
-    error("Expression is too deeply nested.");
+    errorAt(&parser.previous, ERR_SYNTAX, "This expression is too deeply nested and I'm losing track of it!", "Try breaking this complex calculation into smaller steps using intermediate variables.");
     return NULL;
   }
 
@@ -1446,7 +1445,7 @@ static Node *setStatement() {
   }
 
   if (values.count > 1 && values.count != targets.count) {
-    error("Mismatch in assignment counts.");
+    errorAt(&parser.previous, ERR_SYNTAX, "The number of variables doesn't match the number of values in this assignment.", "Make sure you provide exactly one value for each variable on the left, or just a single value on the right for all of them.");
 
     // --- THE PATCH: Destroy the children before the container! ---
     for (int i = 0; i < targets.count; i++)
@@ -1559,9 +1558,8 @@ static Node *breakStatement() {
 
 static Node *skipStatement() {
   if (loopingDepth == 0) {
-    errorAt(&parser.previous, ERR_SYNTAX, "I found a 'skip' outside of a loop.",
-            "The 'skip' keyword can only be used inside loops to jump to the "
-            "next iteration.");
+    errorAt(&parser.previous, ERR_SYNTAX, "You tried to use 'skip' outside of a loop block.",
+            "The 'skip' keyword (which jumps to the next iteration) can only be used inside 'for' or 'while' loops.");
   }
   return newSkipNode(parser.previous.line);
 }
@@ -1569,12 +1567,12 @@ static Node *skipStatement() {
 static Node *typeDeclaration() {
   int line = parser.previous.line;
   consumeHint(
-      TOKEN_IDENTIFIER, ERR_SYNTAX, "I was expecting a name for this type.",
-      "When defining a type, you must give it a name (e.g., 'type Player:').");
+      TOKEN_IDENTIFIER, ERR_SYNTAX, "You started defining a type but didn't give it a name.",
+      "Every type needs a unique name, and I recommend capitalizing it. (e.g., 'type Player:')");
   Token name = parser.previous;
   consumeHint(TOKEN_COLON, ERR_SYNTAX,
-              "I was expecting a colon ':' after the type name.",
-              "Type definitions begin with a colon before listing properties.");
+              "This type definition is missing the colon separator.",
+              "Type definitions must begin with a colon before listing properties.");
 
   Token typeStart = parser.previous;
 
@@ -1967,8 +1965,8 @@ static Node *parseTypeAnnotation() {
 
     while (match(TOKEN_OR)) {
       consumeHint(TOKEN_IDENTIFIER, ERR_TYPE,
-                  "I was expecting another type name after 'or'.",
-                  "Unions must link valid types (e.g., 'String or Number').");
+                  "You created a Union type with 'or' but didn't provide the right-hand type.",
+                  "Unions must link valid types. (e.g., 'String or Number')");
       writeNodeArray(&types,
                      newVariableNode(parser.previous, parser.previous.line));
     }
@@ -2053,8 +2051,8 @@ static Node *letDeclaration() {
       (parser.current.type >= TOKEN_ADD && parser.current.type <= TOKEN_WITH)) {
     if (names.count > 1) {
       errorAt(&parser.previous, ERR_SYNTAX,
-              "I can't declare multiple functions at once.",
-              "Function declarations must happen one at a time.");
+              "You tried to define multiple functions in a single statement.",
+              "Function declarations must happen one at a time. Split these up!");
       freeTokenArray(&names);
       return NULL;
     }
@@ -2093,8 +2091,8 @@ static Node *letDeclaration() {
           if (!check(TOKEN_RIGHT_PAREN)) {
             do {
               consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
-                          "I was expecting a parameter name here.",
-                          "Provide a name for the function parameter.");
+                          "You opened a parameter definition but forgot to name the parameter.",
+                          "Give the parameter a name inside the parentheses. (e.g., '(age: Number)')");
               writeTokenArray(&parameters, parser.previous);
 
               // Extract the type annotation
@@ -2114,8 +2112,8 @@ static Node *letDeclaration() {
           }
 
           consumeHint(TOKEN_RIGHT_PAREN, ERR_SYNTAX,
-                      "I couldn't find the closing parenthesis ')'.",
-                      "Make sure to close your parameter list.");
+                      "You opened a parameter list, but forgot to close it.",
+                      "Make sure to balance your parentheses! Add a closing ')' at the end.");
 
           char buf[16];
           sprintf(buf, "$%d", segmentArity);
@@ -2129,8 +2127,8 @@ static Node *letDeclaration() {
           int currentLen = strlen(mangled);
           if (currentLen + parser.previous.length + 5 >= 1024) {
             errorAt(&parser.previous, ERR_SYNTAX,
-                    "Function signature is too long.",
-                    "Keep it under 1024 chars.");
+                    "This function's signature is too massive for me to parse.",
+                    "Try to simplify the function name or break it into smaller functions.");
             break;
           }
           strncat(mangled, parser.previous.start, parser.previous.length);
@@ -2168,9 +2166,8 @@ static Node *letDeclaration() {
     return node;
   }
 
-  errorAt(&parser.previous, ERR_SYNTAX, "This declaration is confusing me.",
-          "Check for missing keywords (like 'let', 'type'), unclosed "
-          "quotes, or stray symbols on this line.");
+  errorAt(&parser.previous, ERR_SYNTAX, "I'm totally lost trying to read this declaration.",
+          "Take a close look at the syntax here. Something is missing or out of order.");
 
   freeTokenArray(&names);
   return NULL;
@@ -2193,7 +2190,7 @@ static Node *grouping() {
   groupingDepth--; // Coming back out!
 
   consumeHint(TOKEN_RIGHT_PAREN, ERR_SYNTAX,
-              "I couldn't find the closing parenthesis ')'.",
+              "You opened a parameter list, but forgot to close it.",
               "Make sure you close any opened parentheses in your math, logic, "
               "or function calls.");
 

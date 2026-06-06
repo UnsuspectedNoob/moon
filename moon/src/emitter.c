@@ -53,9 +53,8 @@ ObjFunction *endCompiler() {
 
 #ifdef DEBUG_FUNCTION_NAME
   if ((vm.debugMode || printBytecodeFlag) && !parser.hadError) {
-    disassembleChunk(currentChunk(), function->name != NULL
-                                         ? function->name->chars
-                                         : "<main>");
+    disassembleChunk(currentChunk(),
+                     function->name != NULL ? function->name->chars : "<main>");
   }
 #endif
 
@@ -112,7 +111,11 @@ bool identifiersEqual(Token *a, Token *b) {
 
 void addLocal(Token name) {
   if (current->localCount == UINT8_COUNT) {
-    error("Too many local variables in function.");
+    errorAt(&parser.previous, ERR_REFERENCE,
+            "You've defined too many local variables in a single function.",
+            "Moon limits each scope to 256 local variables. Try breaking this "
+            "function into smaller ones, or packing related variables into a "
+            "Dictionary or Type.");
     return;
   }
 
@@ -128,7 +131,12 @@ int resolveLocal(Compiler *compiler, Token *name) {
     Local *local = &compiler->locals[i];
     if (identifiersEqual(name, &local->name)) {
       if (local->depth == -1) {
-        error("Can't read local variable in its own initializer.");
+        errorAt(
+            &parser.previous, ERR_REFERENCE,
+            "You tried to use a variable's value before it was fully defined.",
+            "A variable's initializer cannot reference the variable itself. If "
+            "you're trying to set a recursive value, declare it first and then "
+            "update it.");
       }
       return local->slot; // <--- RETURN THE PHYSICAL SLOT, NOT THE INDEX!
     }
@@ -147,7 +155,11 @@ void declareVariable() {
       break;
     }
     if (identifiersEqual(name, &local->name)) {
-      error("Already a variable with this name in this scope.");
+      errorAt(
+          &parser.previous, ERR_REFERENCE,
+          "You tried to declare a variable name that is already in use.",
+          "Each scope requires unique variable names. Choose a different name, "
+          "or use 'set' or 'add' to update the existing one instead.");
     }
   }
 
@@ -190,7 +202,12 @@ void emitReturn() { emitBytes(OP_NIL, OP_RETURN); }
 uint16_t makeConstant(Value value) {
   int constant = addConstant(currentChunk(), value);
   if (constant > 65535) { // <--- Upgrade from 255
-    error("Too many constants in one chunk.");
+    errorAt(
+        &parser.previous, ERR_SYNTAX,
+        "You've exceeded the number of literal values allowed in a single "
+        "function.",
+        "Moon allows a maximum of 65,535 constants (strings, numbers, etc.) "
+        "per block. Try breaking your code into multiple files or functions.");
     return 0;
   }
   return (uint16_t)constant;
@@ -215,7 +232,12 @@ void emitConstant(Value value) {
     emitByte((constant >> 8) & 0xff);
     emitByte(constant & 0xff);
   } else {
-    error("Too many constants in one chunk.");
+    errorAt(
+        &parser.previous, ERR_SYNTAX,
+        "You've exceeded the number of literal values allowed in a single "
+        "function.",
+        "Moon allows a maximum of 65,535 constants (strings, numbers, etc.) "
+        "per block. Try breaking your code into multiple files or functions.");
   }
 }
 
@@ -274,7 +296,11 @@ void patchJump(int offset) {
   int jump = currentChunk()->count - offset - 2;
 
   if (jump > UINT16_MAX) {
-    error("Too much code to jump over.");
+    errorAt(
+        &parser.previous, ERR_SYNTAX,
+        "The body of this 'if' statement or block is too massive to jump past.",
+        "Moon limits jumps to 65,535 bytes of compiled code. You need to break "
+        "this massive block of code into smaller functions.");
   }
 
   currentChunk()->code[offset] = (jump >> 8) & 0xff;
@@ -286,7 +312,10 @@ void emitLoop(int loopStart) {
 
   int offset = currentChunk()->count - loopStart + 2;
   if (offset > UINT16_MAX)
-    error("Loop body too large.");
+    errorAt(&parser.previous, ERR_SYNTAX,
+            "This loop's body is too massive to jump back up to the top.",
+            "Moon limits loop jumps to 65,535 bytes of compiled code. Break "
+            "the contents of this loop into smaller functions.");
 
   emitByte((offset >> 8) & 0xff);
   emitByte(offset & 0xff);
