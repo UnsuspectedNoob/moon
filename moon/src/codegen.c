@@ -305,8 +305,7 @@ static void walkNode(Node *node) {
     Token iterTok = syntheticToken(" iter");
     int iterSlot = resolveLocal(current, &iterTok);
 
-    emitByte(OP_FOR_ITER);
-    emitByte((uint8_t)iterSlot);
+    emitForIter(iterSlot);
     emitByte(0xff); // Placeholder for High Jump Byte
     emitByte(0xff); // Placeholder for Low Jump Byte
     int exitJump = currentChunk()->count - 2;
@@ -391,7 +390,7 @@ static void walkNode(Node *node) {
 
     if (arg != -1) {
       // Yes: It lives on the VM stack at a specific offset
-      emitBytes(OP_GET_LOCAL, (uint8_t)arg);
+      emitGetLocal(arg);
     } else {
       uint16_t globalName = identifierConstant(&node->as.variable.name);
 
@@ -490,7 +489,7 @@ static void walkNode(Node *node) {
     emitByte(OP_GET_SUBSCRIPT);
 
     // 2. We are done with the brackets, forget the collection!
-    emitByte(OP_POP_SEQUENCE);
+    // OP_POP_SEQUENCE removed! Sequence tracker popped implicitly.
     break;
   }
 
@@ -629,7 +628,7 @@ static void walkNode(Node *node) {
       if (target->type == NODE_VARIABLE) {
         int localArg = resolveLocal(current, &target->as.variable.name);
         if (localArg != -1) {
-          emitBytes(OP_SET_LOCAL, (uint8_t)localArg);
+          emitSetLocal(localArg);
         } else {
           uint16_t globalName = identifierConstant(&target->as.variable.name);
           emitByte(OP_SET_GLOBAL);
@@ -640,7 +639,7 @@ static void walkNode(Node *node) {
       } else if (target->type == NODE_SUBSCRIPT) {
         emitByte(OP_SET_SUBSCRIPT);
         emitByte(OP_POP);
-        emitByte(OP_POP_SEQUENCE); // <--- CLEAN IT UP!
+        // OP_POP_SEQUENCE removed! Sequence tracker popped implicitly.
       } else if (target->type == NODE_PROPERTY) {
         uint16_t nameConst = identifierConstant(&target->as.property.name);
         emitByte(OP_SET_PROPERTY);
@@ -668,7 +667,7 @@ static void walkNode(Node *node) {
   case NODE_PHRASAL_CALL: {
     int arg = resolveLocal(current, &node->as.phrasalCall.mangledName);
     if (arg != -1) {
-      emitBytes(OP_GET_LOCAL, (uint8_t)arg);
+      emitGetLocal(arg);
     } else {
       uint16_t nameConstant =
           identifierConstant(&node->as.phrasalCall.mangledName);
@@ -871,8 +870,7 @@ static void walkNode(Node *node) {
     Token iterTok = syntheticToken(" iter");
     int iterSlot = resolveLocal(current, &iterTok);
 
-    emitByte(OP_FOR_ITER);
-    emitByte((uint8_t)iterSlot);
+    emitForIter(iterSlot);
     emitByte(0xff); // Placeholder for High Jump Byte
     emitByte(0xff); // Placeholder for Low Jump Byte
     int exitJump = currentChunk()->count - 2;
@@ -889,8 +887,7 @@ static void walkNode(Node *node) {
       Token iterTok = syntheticToken(" iter");
       int iterSlot = resolveLocal(current, &iterTok);
 
-      emitBytes(OP_GET_ITER_VALUE,
-                (uint8_t)iterSlot); // <--- CHANGED FROM OP_GET_LOCAL!
+      emitGetIterValue(iterSlot);
 
       addLocal(node->as.comprehension.indexVar);
       markInitialized();
@@ -921,8 +918,8 @@ static void walkNode(Node *node) {
     int accSlot = resolveLocal(current, &accTok2);
 
     // Copy the List/Dict from the 'acc' slot down into the 'seq' slot
-    emitBytes(OP_GET_LOCAL, (uint8_t)accSlot);
-    emitBytes(OP_SET_LOCAL, (uint8_t)seqSlot);
+    emitGetLocal(accSlot);
+    emitSetLocal(seqSlot);
     emitByte(OP_POP); // Pop the value OP_SET_LOCAL left on the stack
 
     // Now physically pop the old 'acc' and 'iter' from the stack

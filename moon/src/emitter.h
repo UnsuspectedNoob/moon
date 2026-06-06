@@ -65,6 +65,10 @@ void emitBytes(uint8_t byte1, uint8_t byte2);
 void emitReturn();
 uint16_t makeConstant(Value value);
 void emitConstant(Value value);
+void emitGetLocal(int slot);
+void emitSetLocal(int slot);
+void emitForIter(int iterSlot);
+void emitGetIterValue(int iterSlot);
 
 // Control Flow Emission
 int emitJump(uint8_t instruction);

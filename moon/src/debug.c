@@ -89,6 +89,15 @@ static int forIterInstruction(const char *name, Chunk *chunk, int offset) {
   return offset + 4;
 }
 
+static int forIterLongInstruction(const char *name, Chunk *chunk, int offset) {
+  uint16_t slot = (uint16_t)(chunk->code[offset + 1] << 8);
+  slot |= chunk->code[offset + 2];
+  uint16_t jump = (uint16_t)(chunk->code[offset + 3] << 8);
+  jump |= chunk->code[offset + 4];
+  printf("%-16s Slot %d -> %d\n", name, slot, offset + 5 + jump);
+  return offset + 5;
+}
+
 int disassembleInstruction(Chunk *chunk, int offset) {
   printf("%04d ", offset);
   if (offset > 0 && chunk->lines[offset] == chunk->lines[offset - 1]) {
@@ -103,6 +112,8 @@ int disassembleInstruction(Chunk *chunk, int offset) {
     return constantInstruction("OP_CONSTANT", chunk, offset);
   case OP_CONSTANT_LONG:
     return constantLongInstruction("OP_CONSTANT_LONG", chunk, offset);
+  case OP_PUSH_BYTE:
+    return byteInstruction("OP_PUSH_BYTE", chunk, offset);
   case OP_NIL:
     return simpleInstruction("OP_NIL", offset);
   case OP_TRUE:
@@ -111,10 +122,16 @@ int disassembleInstruction(Chunk *chunk, int offset) {
     return simpleInstruction("OP_FALSE", offset);
   case OP_POP:
     return simpleInstruction("OP_POP", offset);
+  case OP_POP_N:
+    return byteInstruction("OP_POP_N", chunk, offset);
   case OP_GET_LOCAL:
     return byteInstruction("OP_GET_LOCAL", chunk, offset);
   case OP_SET_LOCAL:
     return byteInstruction("OP_SET_LOCAL", chunk, offset);
+  case OP_GET_LOCAL_LONG:
+    return shortInstruction("OP_GET_LOCAL_LONG", chunk, offset);
+  case OP_SET_LOCAL_LONG:
+    return shortInstruction("OP_SET_LOCAL_LONG", chunk, offset);
   case OP_GET_GLOBAL:
     return constantLongInstruction("OP_GET_GLOBAL", chunk, offset);
   case OP_DEFINE_GLOBAL:
@@ -173,10 +190,14 @@ int disassembleInstruction(Chunk *chunk, int offset) {
     return simpleInstruction("OP_RANGE", offset);
   case OP_FOR_ITER:
     return forIterInstruction("OP_FOR_ITER", chunk, offset);
+  case OP_FOR_ITER_LONG:
+    return forIterLongInstruction("OP_FOR_ITER_LONG", chunk, offset);
   case OP_GET_ITER:
     return simpleInstruction("OP_GET_ITER", offset);
-  case OP_GET_ITER_VALUE: // <--- ADD THIS
+  case OP_GET_ITER_VALUE:
     return byteInstruction("OP_GET_ITER_VALUE", chunk, offset);
+  case OP_GET_ITER_VALUE_LONG:
+    return shortInstruction("OP_GET_ITER_VALUE_LONG", chunk, offset);
   case OP_CAST:
     return simpleInstruction("OP_CAST", offset);
   case OP_TYPE_DEF:
@@ -195,8 +216,6 @@ int disassembleInstruction(Chunk *chunk, int offset) {
     return simpleInstruction("OP_RETURN", offset);
   case OP_PUSH_SEQUENCE:
     return simpleInstruction("OP_PUSH_SEQUENCE", offset);
-  case OP_POP_SEQUENCE:
-    return simpleInstruction("OP_POP_SEQUENCE", offset);
   case OP_PUSH_STICKY:
     return simpleInstruction("OP_PUSH_STICKY", offset);
   case OP_POP_STICKY:

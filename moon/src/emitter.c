@@ -72,11 +72,22 @@ void beginScope() { current->scopeDepth++; }
 void endScope() {
   current->scopeDepth--;
 
+  int countToPop = 0;
   // Pop locals that fell out of scope
   while (current->localCount > 0 &&
          current->locals[current->localCount - 1].depth > current->scopeDepth) {
-    emitByte(OP_POP);
+    countToPop++;
     current->localCount--;
+  }
+
+  while (countToPop > 255) {
+    emitBytes(OP_POP_N, 255);
+    countToPop -= 255;
+  }
+  if (countToPop == 1) {
+    emitByte(OP_POP);
+  } else if (countToPop > 1) {
+    emitBytes(OP_POP_N, (uint8_t)countToPop);
   }
 }
 
@@ -186,6 +197,15 @@ uint16_t makeConstant(Value value) {
 }
 
 void emitConstant(Value value) {
+  if (IS_NUMBER(value)) {
+    double num = AS_NUMBER(value);
+    int intVal = (int)num;
+    if (num == intVal && intVal >= 0 && intVal <= 255) {
+      emitBytes(OP_PUSH_BYTE, (uint8_t)intVal);
+      return;
+    }
+  }
+
   int constant = addConstant(currentChunk(), value);
 
   if (constant <= 255) {
@@ -196,6 +216,46 @@ void emitConstant(Value value) {
     emitByte(constant & 0xff);
   } else {
     error("Too many constants in one chunk.");
+  }
+}
+
+void emitGetLocal(int slot) {
+  if (slot <= 255) {
+    emitBytes(OP_GET_LOCAL, (uint8_t)slot);
+  } else {
+    emitByte(OP_GET_LOCAL_LONG);
+    emitByte((slot >> 8) & 0xff);
+    emitByte(slot & 0xff);
+  }
+}
+
+void emitSetLocal(int slot) {
+  if (slot <= 255) {
+    emitBytes(OP_SET_LOCAL, (uint8_t)slot);
+  } else {
+    emitByte(OP_SET_LOCAL_LONG);
+    emitByte((slot >> 8) & 0xff);
+    emitByte(slot & 0xff);
+  }
+}
+
+void emitForIter(int iterSlot) {
+  if (iterSlot <= 255) {
+    emitBytes(OP_FOR_ITER, (uint8_t)iterSlot);
+  } else {
+    emitByte(OP_FOR_ITER_LONG);
+    emitByte((iterSlot >> 8) & 0xff);
+    emitByte(iterSlot & 0xff);
+  }
+}
+
+void emitGetIterValue(int iterSlot) {
+  if (iterSlot <= 255) {
+    emitBytes(OP_GET_ITER_VALUE, (uint8_t)iterSlot);
+  } else {
+    emitByte(OP_GET_ITER_VALUE_LONG);
+    emitByte((iterSlot >> 8) & 0xff);
+    emitByte(iterSlot & 0xff);
   }
 }
 

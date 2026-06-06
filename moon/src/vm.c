@@ -434,9 +434,11 @@ static InterpretResult run() {
   // WARNING: This must exactly match the order of the OpCode enum in chunk.h!
   static void *dispatchTable[] = {
       &&TARGET_OP_CONSTANT,      &&TARGET_OP_CONSTANT_LONG,
-      &&TARGET_OP_NIL,           &&TARGET_OP_TRUE,
-      &&TARGET_OP_FALSE,         &&TARGET_OP_POP,
+      &&TARGET_OP_PUSH_BYTE,     &&TARGET_OP_NIL,
+      &&TARGET_OP_TRUE,          &&TARGET_OP_FALSE,
+      &&TARGET_OP_POP,           &&TARGET_OP_POP_N,
       &&TARGET_OP_GET_LOCAL,     &&TARGET_OP_SET_LOCAL,
+      &&TARGET_OP_GET_LOCAL_LONG,&&TARGET_OP_SET_LOCAL_LONG,
       &&TARGET_OP_GET_GLOBAL,    &&TARGET_OP_DEFINE_GLOBAL,
       &&TARGET_OP_SET_GLOBAL,    &&TARGET_OP_ADD,
       &&TARGET_OP_ADD_INPLACE,   &&TARGET_OP_SUBTRACT,
@@ -451,15 +453,16 @@ static InterpretResult run() {
       &&TARGET_OP_SET_PROPERTY,  &&TARGET_OP_GET_SUBSCRIPT,
       &&TARGET_OP_SET_SUBSCRIPT, &&TARGET_OP_GET_END_INDEX,
       &&TARGET_OP_RANGE,         &&TARGET_OP_FOR_ITER,
-      &&TARGET_OP_GET_ITER,      &&TARGET_OP_GET_ITER_VALUE,
+      &&TARGET_OP_FOR_ITER_LONG, &&TARGET_OP_GET_ITER,
+      &&TARGET_OP_GET_ITER_VALUE,&&TARGET_OP_GET_ITER_VALUE_LONG,
       &&TARGET_OP_CALL,          &&TARGET_OP_TYPE_DEF,
       &&TARGET_OP_INSTANTIATE,   &&TARGET_OP_DEFINE_METHOD,
       &&TARGET_OP_CAST,          &&TARGET_OP_LOAD,
       &&TARGET_OP_KEEP_LIST,     &&TARGET_OP_KEEP_DICT,
       &&TARGET_OP_RETURN,        &&TARGET_OP_PUSH_SEQUENCE,
-      &&TARGET_OP_POP_SEQUENCE,  &&TARGET_OP_PUSH_STICKY,
-      &&TARGET_OP_POP_STICKY,    &&TARGET_OP_SET_STICKY,
-      &&TARGET_OP_LOAD_STICKY,   &&TARGET_OP_SHOW_REPL,
+      &&TARGET_OP_PUSH_STICKY,   &&TARGET_OP_POP_STICKY,
+      &&TARGET_OP_SET_STICKY,    &&TARGET_OP_LOAD_STICKY,
+      &&TARGET_OP_SHOW_REPL,
   };
 
 #define READ_BYTE() (*ip++)
@@ -530,6 +533,11 @@ TARGET_OP_CONSTANT_LONG: {
   uint16_t index = READ_SHORT();
   Value constant = frame->function->chunk.constants.values[index];
   push(constant);
+  DISPATCH();
+}
+
+TARGET_OP_PUSH_BYTE: {
+  push(NUMBER_VAL((double)READ_BYTE()));
   DISPATCH();
 }
 
@@ -755,6 +763,11 @@ TARGET_OP_POP: {
   DISPATCH();
 }
 
+TARGET_OP_POP_N: {
+  vm.stackTop -= READ_BYTE();
+  DISPATCH();
+}
+
 TARGET_OP_DEFINE_GLOBAL: {
   ObjString *name = READ_STRING();
 
@@ -856,6 +869,18 @@ TARGET_OP_GET_LOCAL: {
 
 TARGET_OP_SET_LOCAL: {
   uint8_t slot = READ_BYTE();
+  frame->slots[slot] = peek(0);
+  DISPATCH();
+}
+
+TARGET_OP_GET_LOCAL_LONG: {
+  uint16_t slot = READ_SHORT();
+  push(frame->slots[slot]);
+  DISPATCH();
+}
+
+TARGET_OP_SET_LOCAL_LONG: {
+  uint16_t slot = READ_SHORT();
   frame->slots[slot] = peek(0);
   DISPATCH();
 }
@@ -1209,6 +1234,7 @@ TARGET_OP_GET_SUBSCRIPT: {
   }
 
   push(result);
+  vm.sequenceCount--; // Clean up sequence tracking implicitly
   DISPATCH();
 }
 
@@ -1224,16 +1250,12 @@ TARGET_OP_SET_SUBSCRIPT: {
   }
 
   push(result); // Push value back for chained assignments
+  vm.sequenceCount--; // Clean up sequence tracking implicitly
   DISPATCH();
 }
 
 TARGET_OP_PUSH_SEQUENCE: {
   vm.sequenceStack[vm.sequenceCount++] = peek(0); // Save a copy to the tracker
-  DISPATCH();
-}
-
-TARGET_OP_POP_SEQUENCE: {
-  vm.sequenceCount--; // Discard the tracker
   DISPATCH();
 }
 
@@ -1408,8 +1430,93 @@ TARGET_OP_FOR_ITER: {
   DISPATCH();
 }
 
+TARGET_OP_FOR_ITER_LONG: {
+  uint16_t slot = READ_SHORT();
+  uint16_t offset = READ_SHORT();
+
+  Value seqVal = frame->slots[slot - 1];
+  Value iteratorVal = frame->slots[slot];
+
+  bool hasNext = false;
+  Value loopValue = NIL_VAL;
+
+  if (IS_RANGE(seqVal)) {
+    ObjList *range = AS_LIST(seqVal);
+    double index = AS_NUMBER(iteratorVal);
+    double nextIndex = index + 1;
+
+    if (nextIndex < range->count) {
+      frame->slots[slot] = NUMBER_VAL(nextIndex);
+      loopValue = range->items[(int)nextIndex];
+      hasNext = true;
+    }
+  } else if (IS_LIST(seqVal)) {
+    ObjList *list = AS_LIST(seqVal);
+    double index = AS_NUMBER(iteratorVal);
+    double nextIndex = index + 1;
+
+    if (nextIndex < list->count) {
+      frame->slots[slot] = NUMBER_VAL(nextIndex);
+      loopValue = list->items[(int)nextIndex];
+      hasNext = true;
+    }
+  } else if (IS_STRING(seqVal)) {
+    ObjString *string = AS_STRING(seqVal);
+    double index = AS_NUMBER(iteratorVal);
+    double nextIndex = index + 1;
+
+    if (nextIndex < string->length) {
+      frame->slots[slot] = NUMBER_VAL(nextIndex);
+      uint8_t charByte = (uint8_t)string->chars[(int)nextIndex];
+      loopValue = OBJ_VAL(vm.charStrings[charByte]);
+      hasNext = true;
+    }
+  } else if (IS_DICT(seqVal)) {
+    ObjDict *dict = AS_DICT(seqVal);
+    int index = (int)AS_NUMBER(iteratorVal);
+    index++; 
+
+    while (index < dict->fields.capacity) {
+      Entry *entry = &dict->fields.entries[index];
+      if (!IS_EMPTY(entry->key) && !IS_TOMB(entry->key)) {
+        frame->slots[slot] = NUMBER_VAL(index); 
+        loopValue = entry->key;                 
+        hasNext = true;
+        break;
+      }
+      index++;
+    }
+  }
+
+  if (hasNext) {
+    push(loopValue);
+  } else {
+    ip += offset;
+  }
+
+  DISPATCH();
+}
+
 TARGET_OP_GET_ITER_VALUE: {
   uint8_t slot = READ_BYTE();
+  Value seqVal = frame->slots[slot - 1]; // The Collection
+  Value iterVal = frame->slots[slot];    // The Raw Index
+
+  if (IS_DICT(seqVal)) {
+    // Dictionary Magic: Return the actual VALUE from the Hash Table!
+    ObjDict *dict = AS_DICT(seqVal);
+    int index = (int)AS_NUMBER(iterVal);
+    push(dict->fields.entries[index].value);
+  } else {
+    // List/String/Range Magic: Add 1 to align with MOON's 1-based indexing!
+    double moonIndex = AS_NUMBER(iterVal) + 1.0;
+    push(NUMBER_VAL(moonIndex));
+  }
+  DISPATCH();
+}
+
+TARGET_OP_GET_ITER_VALUE_LONG: {
+  uint16_t slot = READ_SHORT();
   Value seqVal = frame->slots[slot - 1]; // The Collection
   Value iterVal = frame->slots[slot];    // The Raw Index
 
