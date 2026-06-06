@@ -1859,8 +1859,6 @@ TARGET_OP_LOAD: {
                 "Failed to compile '%s'.", path->chars);
   }
 
-  push(OBJ_VAL(moduleFunc)); // GC Shield
-
   // 6. Context Switch
   if (vm.frameCount == FRAMES_MAX) {
     THROW_ERROR(ERR_RUNTIME,
@@ -1868,6 +1866,14 @@ TARGET_OP_LOAD: {
                 "trying to load each other in an infinite loop!",
                 "Too many files loading each other.");
   }
+
+  // POP the GC shields so they don't leak on the physical stack!
+  pop(); // Pops module
+  pop(); // Pops sourceStr
+
+  // Push moduleFunc BACK onto the stack so it sits perfectly at frame->slots!
+  // This mimics a 0-argument function call.
+  push(OBJ_VAL(moduleFunc));
 
   frame->ip = ip;
   CallFrame *newFrame = &vm.frames[vm.frameCount++];

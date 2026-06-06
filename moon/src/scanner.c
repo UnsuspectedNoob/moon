@@ -230,9 +230,9 @@ static TokenType identifierType() {
     return checkKeyword(1, 3, "uit", TOKEN_QUIT);
   }
 
-  case 'r': {
-    return checkKeyword(1, 5, "eturn", TOKEN_GIVE);
-  }
+  // case 'r': {
+  //   return checkKeyword(1, 5, "eturn", TOKEN_GIVE);
+  // }
 
   case 's': {
     if (scanner.current - scanner.start > 1) {

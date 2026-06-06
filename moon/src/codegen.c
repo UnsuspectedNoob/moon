@@ -919,13 +919,13 @@ static void walkNode(Node *node) {
     emitSetLocal(seqSlot);
     emitByte(OP_POP); // Pop the value OP_SET_LOCAL left on the stack
 
-    // Now physically pop the old 'acc' and 'iter' from the stack
-    emitByte(OP_POP);
-    emitByte(OP_POP);
-
-    // Tell the compiler these variables no longer exist!
-    current->localCount -= 3;
+    // 9. Clean up ghost variables manually!
+    // We want to pop `acc` and `iter`, but leave `seq` on the stack because
+    // it now holds our constructed list, and an expression must leave 1 value!
     current->scopeDepth--;
+    current->localCount -= 3;
+    emitBytes(OP_POP_N, 2);
+
     break;
   }
 

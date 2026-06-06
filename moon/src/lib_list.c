@@ -1,5 +1,4 @@
 #include <stdlib.h>
-#include <string.h>
 
 #include "lib_list.h"
 #include "memory.h"
@@ -22,7 +21,8 @@ static Value reverseNative(int argCount, Value *args) {
   ObjList *reversed = newList();
   push(OBJ_VAL(reversed)); // GC Protection!
 
-  // Pre-allocate exactly the right amount of memory to avoid O(log N) capacity resizing
+  // Pre-allocate exactly the right amount of memory to avoid O(log N) capacity
+  // resizing
   if (original->count > 0) {
     reversed->items = ALLOCATE(Value, original->count);
     reversed->capacity = original->count;
@@ -57,7 +57,7 @@ static Value joinNative(int argCount, Value *args) {
   // we serialize them straight into our flat C buffer!
   for (int i = 0; i < list->count; i++) {
     stringifyValueToBuffer(list->items[i], 0, &sb);
-    
+
     if (i < list->count - 1) {
       appendBuffer(&sb, delim->chars, delim->length);
     }
@@ -148,9 +148,15 @@ static Value parseBaseNative(int argCount, Value *args) {
 // --- THE HANDSHAKE ---
 
 void registerListLibrary() {
-  REGISTER_PHRASE(NULL, "reverse", "$1", 1, "reverse$1", reverseNative, vm.listType);
-  REGISTER_PHRASE(NULL, "join", "$1,with,$1", 2, "join$1_with$1", joinNative, vm.listType, vm.stringType);
-  REGISTER_PHRASE(NULL, "pop", "from,$1", 1, "pop_from$1", popNative, vm.listType);
-  REGISTER_PHRASE(NULL, "numbers", "in,$1,in,base,$1", 2, "numbers_in$1_in_base$1", parseBaseNative, vm.anyType, vm.numberType);
-  REGISTER_PHRASE(NULL, "index", "of,$1,in,$1", 2, "index_of$1_in$1", indexOfNative, vm.anyType, vm.listType);
+  REGISTER_PHRASE(NULL, "reverse", "$1", 1, "reverse$1", reverseNative,
+                  vm.listType);
+  REGISTER_PHRASE(NULL, "join", "$1,with,$1", 2, "join$1_with$1", joinNative,
+                  vm.listType, vm.stringType);
+  REGISTER_PHRASE(NULL, "pop", "from,$1", 1, "pop_from$1", popNative,
+                  vm.listType);
+  REGISTER_PHRASE(NULL, "numbers", "in,$1,in,base,$1", 2,
+                  "numbers_in$1_in_base$1", parseBaseNative, vm.anyType,
+                  vm.numberType);
+  REGISTER_PHRASE(NULL, "index", "of,$1,in,$1", 2, "index_of$1_in$1",
+                  indexOfNative, vm.anyType, vm.listType);
 }
