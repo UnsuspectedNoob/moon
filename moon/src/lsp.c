@@ -131,6 +131,44 @@ static void addSemToken(int line, int col, int len, int type, int priority) {
   semTokenCount++;
 }
 
+static void addMultilineSemToken(Token t, int type, int priority) {
+  // 1. Calculate true start line by subtracting newlines
+  int newlineCount = 0;
+  for (int i = 0; i < t.length; i++) {
+    if (t.start[i] == '\n') newlineCount++;
+  }
+  int currentLine = t.line - newlineCount;
+
+  // 2. Calculate true start column by walking backwards to previous \n
+  int currentCol = 1;
+  extern char *currentDocumentText;
+  if (currentDocumentText != NULL) {
+    const char *p = t.start - 1;
+    while (p >= currentDocumentText && *p != '\n') {
+      currentCol++;
+      p--;
+    }
+  }
+
+  // 3. Emit tokens line by line
+  int currentLen = 0;
+  for (int i = 0; i < t.length; i++) {
+    if (t.start[i] == '\n') {
+      if (currentLen > 0) {
+        addSemToken(currentLine, currentCol, currentLen, type, priority);
+      }
+      currentLine++;
+      currentCol = 1; // 1-indexed column for the new line
+      currentLen = 0;
+    } else {
+      currentLen++;
+    }
+  }
+  if (currentLen > 0) {
+    addSemToken(currentLine, currentCol, currentLen, type, priority);
+  }
+}
+
 // QSort Comparator to organize tokens top-to-bottom, left-to-right
 static int compareTokens(const void *a, const void *b) {
   SemanticToken *t1 = (SemanticToken *)a;
@@ -417,18 +455,12 @@ static void analyzeNode(Node *node) {
       strncpy(idxName, node->as.comprehension.indexVar.start, idxLen);
       idxName[idxLen] = '\0';
       registerSymbol(idxName, LSP_TYPE_NUMBER, NULL,
-                     node->as.comprehension.indexVar.line,
-                     node->as.comprehension.indexVar.column);
+                   node->as.comprehension.indexVar.line,
+                   node->as.comprehension.indexVar.column);
     }
 
     analyzeNode(node->as.comprehension.sequence);
-
-    if (node->as.comprehension.isBlockMode) {
-      analyzeNode(node->as.comprehension.body);
-    } else {
-      analyzeNode(node->as.comprehension.keepKey);
-      analyzeNode(node->as.comprehension.keepValue);
-    }
+    analyzeNode(node->as.comprehension.body);
 
     if (!isWalkingPaused)
       popScope();
@@ -1509,7 +1541,7 @@ static bool isSpacedOperator(TokenType type) {
 }
 
 // 2. The Smart Context-Aware Formatter
-static char *formatSource(const char *source) {
+char *formatSource(const char *source) {
   FormatterBuffer buf;
   initFormatterBuffer(&buf);
 
@@ -1532,7 +1564,8 @@ static char *formatSource(const char *source) {
   int blockColonBraceDepth = 0;
   int blockColonParenDepth = 0;
   bool inTypeBlock = false;
-  bool pendingInlineIndent = false;
+  int inlineIndentLevel = 0;
+  bool inForDecl = false;
 
   bool bracketIsSubscript[256] = {false};
 
@@ -1615,9 +1648,9 @@ static char *formatSource(const char *source) {
     // --- 1. HANDLE NEWLINES ---
     if (token.type == TOKEN_NEWLINE) {
       if (expectsBlockColon) {
-        pendingInlineIndent = true;
-      } else if (pendingInlineIndent) {
-        pendingInlineIndent = false;
+        inlineIndentLevel++;
+      } else {
+        inlineIndentLevel = 0;
       }
       expectsBlockColon = false;
 
@@ -1649,16 +1682,20 @@ static char *formatSource(const char *source) {
     if (isBlockCloser || token.type == TOKEN_RIGHT_BRACKET) {
       if (indentLevel > 0)
         indentLevel--;
+      inlineIndentLevel = 0;
     }
 
     // --- 4. APPLY 2-SPACE INDENTATION ---
     if (isStartOfLine) {
-      int effectiveIndent = indentLevel + (pendingInlineIndent ? 1 : 0);
+      int effectiveIndent = indentLevel + inlineIndentLevel;
       for (int i = 0; i < effectiveIndent * 2; i++) {
         writeFormat(&buf, " ", 1);
       }
       needsIndent = false;
     }
+
+    if (token.type == TOKEN_FOR) inForDecl = true;
+    if (token.type == TOKEN_IN) inForDecl = false;
 
     // --- 5. SMART SPACING MATRIX ---
     if (!isStartOfLine && prevToken.type != TOKEN_EOF &&
@@ -1669,12 +1706,14 @@ static char *formatSource(const char *source) {
           (prevToken.type >= TOKEN_ADD || prevToken.type == TOKEN_IDENTIFIER ||
            prevToken.type == TOKEN_NUMBER || prevToken.type == TOKEN_FALSE ||
            prevToken.type == TOKEN_TRUE || prevToken.type == TOKEN_NIL ||
-           prevToken.type == TOKEN_STRING);
+           prevToken.type == TOKEN_STRING || prevToken.type == TOKEN_STRING_OPEN ||
+           prevToken.type == TOKEN_STRING_CLOSE);
       bool currIsWord =
           (token.type >= TOKEN_ADD || token.type == TOKEN_IDENTIFIER ||
            token.type == TOKEN_NUMBER || token.type == TOKEN_FALSE ||
            token.type == TOKEN_TRUE || token.type == TOKEN_NIL ||
-           token.type == TOKEN_STRING);
+           token.type == TOKEN_STRING || token.type == TOKEN_STRING_OPEN ||
+           token.type == TOKEN_STRING_CLOSE);
       if (prevIsWord && currIsWord)
         spaceNeeded = true;
 
@@ -1706,10 +1745,14 @@ static char *formatSource(const char *source) {
       if (token.type == TOKEN_COMMENT)
         spaceNeeded = true;
 
+      if (token.type == TOKEN_LEFT_PAREN)
+        spaceNeeded = true;
+
       if (token.type == TOKEN_COMMA || token.type == TOKEN_COLON ||
           (token.type == TOKEN_RIGHT_PAREN && !currIsWord) ||
-          (token.type == TOKEN_LEFT_PAREN && !expectsBlockColon) ||
-          (token.type == TOKEN_RIGHT_BRACKET && currentBracketIsSubscript)) {
+          (token.type == TOKEN_RIGHT_BRACKET && currentBracketIsSubscript) ||
+          token.type == TOKEN_STRING_MIDDLE || token.type == TOKEN_STRING_CLOSE ||
+          prevToken.type == TOKEN_STRING_OPEN || prevToken.type == TOKEN_STRING_MIDDLE) {
         spaceNeeded = false;
       }
 
@@ -1762,7 +1805,7 @@ static char *formatSource(const char *source) {
     if (token.type == TOKEN_LEFT_BRACKET) {
       indentLevel++;
     }
-    if (token.type == TOKEN_COMMA && (braceDepth > 0 || inTypeBlock)) {
+    if (token.type == TOKEN_COMMA && (braceDepth > 0 || inTypeBlock) && !inForDecl) {
       writeFormat(&buf, "\n", 1);
       needsIndent = true;
       consecutiveNewlines = 1;
@@ -2059,10 +2102,10 @@ void startLanguageServer() {
             Token t;
             while ((t = scanToken()).type != TOKEN_EOF) {
               if (t.type == TOKEN_COMMENT) {
-                addSemToken(t.line, t.column, t.length, 17, 0); // Comment (Priority 0)
+                addMultilineSemToken(t, 17, 0); // Comment (Priority 0)
               } else if (t.type == TOKEN_STRING || t.type == TOKEN_STRING_OPEN || 
                          t.type == TOKEN_STRING_MIDDLE || t.type == TOKEN_STRING_CLOSE) {
-                addSemToken(t.line, t.column, t.length, 18, 0); // String (Priority 0)
+                addMultilineSemToken(t, 18, 0); // String (Priority 0)
               } else if (t.type == TOKEN_NUMBER || t.type == TOKEN_TRUE || t.type == TOKEN_FALSE) {
                 addSemToken(t.line, t.column, t.length, 19, 0); // Number/Boolean (Priority 0)
               } else if (t.type >= TOKEN_ADD && t.type <= TOKEN_WITH) {

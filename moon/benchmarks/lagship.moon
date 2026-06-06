@@ -7,7 +7,7 @@ type Node:
   ip: "127.0.0.1",
   encryption: 128,
   is_compromised: false,
-  data: []
+  data: [ ]
 end
 
 type Firewall:
@@ -25,15 +25,17 @@ let gateway be Firewall {
 let target_alpha be Node {
   ip: "10.0.0.5",
   encryption: 256,
-  data: ["passwords.txt|, |financials.csv|, |auth_keys.rsa"]
+  data: [ "passwords.txt",
+    "financials.csv",
+    "auth_keys.rsa"
+  ]
 }
 
 # Use the 'with' keyword to seamlessly clone a backup node
 let target_beta be Node with
-  ip: "10.0.0.6",
-  data: ["syslog.log"]
+ip: "10.0.0.6",
+data: [ "syslog.log" ]
 end
-
 
 # --- 3. MULTIPLE DISPATCH & UNION TYPES ---
 
@@ -48,7 +50,7 @@ let breach system (target: Firewall):
     update current_strength - drop
 
     skip if current_strength > 500
-    show "   > Firewall integrity dropping: `current_strength`"
+      show "   > Firewall integrity dropping: `current_strength`"
   end
 
   set target's is_breached to true
@@ -62,19 +64,21 @@ let breach system (target: Node):
   show "Decrypting node `target's ip` (`target's encryption`-bit)..."
 
   # Inline list comprehension to generate ghost keys
-  let keys be [for each i in 1 to 5 keep random from 10 to 99]
+  let keys be [ for each i in 1 to 5 keep random from 10 to 99 ]
 
   set target's is_compromised to true
 
   # Block-Mode Dictionary Comprehension mapping files to ghost sizes!
-  let stolen_intel be {for each file, index in target's data:
+  let stolen_intel be {
+    for each file,
+      index in target's data:
     let size be index * 1024 + 512
-    keep file : size unless size > 2000
-  end}
+    keep file: size unless size > 2000
+  end
+}
 
-  give stolen_intel
+give stolen_intel
 end
-
 
 # --- 4. EXECUTION ---
 let firewall_log be breach system gateway

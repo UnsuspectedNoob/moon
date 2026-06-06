@@ -198,13 +198,7 @@ typedef struct {
   Token indexVar;
   bool hasIndex;
   Node *sequence;
-
-  // Dual-Mode Fields
-  bool isBlockMode;
-  Node *keepValue; // Used in Expression Mode
-  Node *keepKey;   // Used in Expression Mode (Dict only)
-  Node *body;      // Used in Block Mode
-
+  Node *body;
   bool isDict; // Are we building a List or a Dict?
 } ComprehensionPayload;
 
@@ -303,8 +297,7 @@ Node *newFunctionNode(Token name, Token *parameters, Node **paramTypes,
                       int paramCount, Node *body,
                       int line); // <--- Updated signature
 Node *newComprehensionNode(Token iterator, Token indexVar, bool hasIndex,
-                           Node *sequence, bool isBlockMode, Node *keepValue,
-                           Node *keepKey, Node *body, bool isDict, int line);
+                           Node *sequence, Node *body, bool isDict, int line);
 Node *newKeepNode(Node *key, Node *value, int line);
 
 void freeNode(Node *node);

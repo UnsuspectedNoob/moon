@@ -1,7 +1,6 @@
-let reverse (n: Number):
-  update n as String
-  set n to n[end to 1]
-  give n as Number
+
+let string (n: String) in uppercase:
+  return uppercase n
 end
 
-show(reverse 302) + 30
+string "" in uppercase 

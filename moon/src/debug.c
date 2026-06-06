@@ -232,6 +232,12 @@ int disassembleInstruction(Chunk *chunk, int offset) {
   }
 }
 
+static void printIndentLabel(int indent, const char* label) {
+  for (int i = 0; i <= indent; i++) {
+    printf((i == indent) ? " ├─ %s" : " │  ", label);
+  }
+}
+
 void printAST(Node *node, int indent) {
   if (node == NULL)
     return;
@@ -276,10 +282,10 @@ void printAST(Node *node, int indent) {
   case NODE_IF:
     printf("[IF STATEMENT]\n");
     printAST(node->as.ifStmt.condition, indent + 1);
-    printf("%*s ├─ [THEN]\n", indent * 4, "");
+    printIndentLabel(indent, "[THEN]\n");
     printAST(node->as.ifStmt.thenBranch, indent + 2);
     if (node->as.ifStmt.elseBranch) {
-      printf("%*s ├─ [ELSE]\n", indent * 4, "");
+      printIndentLabel(indent, "[ELSE]\n");
       printAST(node->as.ifStmt.elseBranch, indent + 2);
     }
     break;
@@ -377,13 +383,15 @@ void printAST(Node *node, int indent) {
     printf("[FUNCTION: %.*s]\n", node->as.function.name.length,
            node->as.function.name.start);
     for (int i = 0; i < node->as.function.paramCount; i++) {
-      printf("%*s ├─ Param: %.*s (Type:)\n", indent * 4, "",
-             node->as.function.parameters[i].length,
-             node->as.function.parameters[i].start);
+      for (int j = 0; j <= indent; j++) {
+        printf((j == indent) ? " ├─ Param: %.*s (Type:)\n" : " │  ",
+               node->as.function.parameters[i].length,
+               node->as.function.parameters[i].start);
+      }
       printAST(node->as.function.paramTypes[i],
                indent + 2); // Recurse into the type node!
     }
-    printf("%*s ├─ [BODY]\n", indent * 4, "");
+    printIndentLabel(indent, "[BODY]\n");
     printAST(node->as.function.body, indent + 2);
     break;
 
@@ -476,17 +484,8 @@ void printAST(Node *node, int indent) {
     printf("]\n");
     printAST(node->as.comprehension.sequence, indent + 1);
 
-    if (node->as.comprehension.isBlockMode) {
-      printf("%*s ├─ [BLOCK]\n", indent * 4, "");
-      printAST(node->as.comprehension.body, indent + 2);
-    } else {
-      if (node->as.comprehension.isDict) {
-        printf("%*s ├─ [KEEP KEY]\n", indent * 4, "");
-        printAST(node->as.comprehension.keepKey, indent + 2);
-      }
-      printf("%*s ├─ [KEEP VALUE]\n", indent * 4, "");
-      printAST(node->as.comprehension.keepValue, indent + 2);
-    }
+    printf("%*s ├─ [BODY]\n", indent * 4, "");
+    printAST(node->as.comprehension.body, indent + 2);
     break;
 
   case NODE_KEEP:
@@ -497,6 +496,19 @@ void printAST(Node *node, int indent) {
     }
     printf("%*s ├─ [VALUE]\n", indent * 4, "");
     printAST(node->as.keepStmt.value, indent + 2);
+    break;
+
+  case NODE_CHAIN:
+    printf("[CHAINED COMPARISON]\n");
+    printAST(node->as.chain.expressions[0], indent + 1);
+    for (int i = 0; i < node->as.chain.exprCount - 1; i++) {
+      for (int j = 0; j <= indent; j++) {
+        printf((j == indent) ? " ├─ " : " │  ");
+      }
+      printf("[OP: %.*s]\n", node->as.chain.operators[i].length,
+             node->as.chain.operators[i].start);
+      printAST(node->as.chain.expressions[i + 1], indent + 1);
+    }
     break;
 
   default:

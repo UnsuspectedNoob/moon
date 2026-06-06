@@ -495,6 +495,14 @@ static Node *variable() {
       initNodeArray(&tempArgs);
 
       Node *arg = expression();
+      if (arg == NULL) {
+        // Syntax error already emitted by parsePrecedence. Clean up and bail!
+        for (int i = 0; i < tempArgs.count; i++)
+          freeNode(tempArgs.items[i]);
+        freeNodeArray(&tempArgs);
+        break;
+      }
+      
       if (arg->type == NODE_TUPLE) {
         for (int j = 0; j < arg->as.tuple.count; j++) {
           writeNodeArray(&tempArgs, arg->as.tuple.items[j]);
@@ -681,8 +689,10 @@ static Node *binary(Node *left) {
     Node *right = parsePrecedence((Precedence)(rule->precedence + 1));
 
     if (left != NULL && left->type == NODE_CHAIN) {
-      // Extend the existing chain!
-      int newExprCount = left->as.chain.exprCount + 1;
+      ParseRule *chainRule = getRule(left->as.chain.operators[0].type);
+      if (chainRule->precedence == rule->precedence) {
+        // Extend the existing chain!
+        int newExprCount = left->as.chain.exprCount + 1;
 
       Node **newExprs = ALLOCATE(Node *, newExprCount);
       Token *newOps = ALLOCATE(Token, newExprCount - 1);
@@ -709,8 +719,10 @@ static Node *binary(Node *left) {
       }
 
       return left;
-    } else {
-      // Start a new chain!
+      }
+    }
+    
+    // Start a new chain!
       Node **exprs = ALLOCATE(Node *, 2);
       exprs[0] = left;
       exprs[1] = right;
@@ -719,7 +731,6 @@ static Node *binary(Node *left) {
       ops[0] = opToken;
 
       return newChainNode(exprs, ops, 2, opToken.line);
-    }
   }
 
   // --- STANDARD BINARY OPERATORS (+, -, *, etc) ---
@@ -742,6 +753,7 @@ static Node *or_(Node *left) {
   return newLogicalNode(left, opToken, right, opToken.line);
 }
 
+static Node *statement();
 static Node *block(TokenType *terminators, int count);
 static Node *listComprehension(int line) {
   advance(); // Consume the 'for'
@@ -756,6 +768,7 @@ static Node *listComprehension(int line) {
   Token indexVar;
   bool hasIndex = false;
   if (match(TOKEN_COMMA)) {
+    ignoreNewlines();
     consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
                 "I was expecting an index variable name.",
                 "Provide a name for the index variable after the comma.");
@@ -770,62 +783,15 @@ static Node *listComprehension(int line) {
 
   Node *sequence = expression();
 
-  bool isBlockMode = false;
-  Node *keepValue = NULL;
   Node *body = NULL;
-
-  // The Dual-Mode Switch!
-  if (match(TOKEN_KEEP)) {
-    Node *expr = expression();
-
-    // --- AST INVERSION FIX ---
-    if (expr != NULL && expr->type == NODE_IF &&
-        expr->as.ifStmt.elseBranch == NULL) {
-      Node *cond = expr->as.ifStmt.condition;
-      Node *inner = expr->as.ifStmt.thenBranch;
-
-      if ((cond != NULL && cond->usesIt)) {
-        Token itToken = makeHiddenToken(" it", line);
-        Token *letNames = ALLOCATE(Token, 1);
-        letNames[0] = itToken;
-        Node **letExprs = ALLOCATE(Node *, 1);
-        letExprs[0] = inner;
-        Node *letIt = newLetNode(letNames, 1, letExprs, 1, line);
-
-        FREE_ARRAY(Token, letNames, 1);
-        FREE_ARRAY(Node *, letExprs, 1);
-
-        Node *itVar = newVariableNode(itToken, line);
-        Node *keepNode = newKeepNode(NULL, itVar, line);
-        Node *ifStmt = newIfNode(cond, keepNode, NULL, line);
-
-        Node **blockStmts = ALLOCATE(Node *, 2);
-        blockStmts[0] = letIt;
-        blockStmts[1] = ifStmt;
-
-        FREE(Node, expr);
-        keepValue = newBlockNode(blockStmts, 2, line);
-        FREE_ARRAY(Node *, blockStmts, 2);
-      } else {
-        Node *keepNode = newKeepNode(NULL, inner, line);
-        FREE(Node, expr); // Prevent the memory leak!
-        keepValue = newIfNode(cond, keepNode, NULL, line);
-      }
-    } else {
-      keepValue = newKeepNode(NULL, expr, line);
-    }
-  } else if (match(TOKEN_COLON)) {
-    isBlockMode = true;
+  
+  if (match(TOKEN_COLON)) {
     Token blockOpener = parser.previous;   // <--- Capture the colon
     TokenType terminators[] = {TOKEN_END}; // <--- Stop at 'end'!
     body = block(terminators, 1);
-    consumeBlockEnd(blockOpener,
-                    "list comprehension"); // <--- Safely eat the 'end'
+    consumeBlockEnd(blockOpener, "list comprehension"); // <--- Safely eat the 'end'
   } else {
-    errorAt(
-        &parser.current, ERR_SYNTAX,
-        "I was expecting 'keep' or a colon ':' here.",
-        "Comprehensions must specify what to keep, or open a block with ':'.");
+    body = statement();
   }
 
   ignoreNewlines();
@@ -834,7 +800,7 @@ static Node *listComprehension(int line) {
               "Close your list comprehension.");
 
   return newComprehensionNode(iterator, indexVar, hasIndex, sequence,
-                              isBlockMode, keepValue, NULL, body, false, line);
+                              body, false, line);
 }
 
 static Node *dictComprehension(int line) {
@@ -850,6 +816,7 @@ static Node *dictComprehension(int line) {
   Token indexVar;
   bool hasIndex = false;
   if (match(TOKEN_COMMA)) {
+    ignoreNewlines();
     consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
                 "I was expecting an index variable name.",
                 "Provide a name for the index variable after the comma.");
@@ -864,64 +831,15 @@ static Node *dictComprehension(int line) {
 
   Node *sequence = expression();
 
-  bool isBlockMode = false;
-  Node *keepKey = NULL;
-  Node *keepValue = NULL;
   Node *body = NULL;
 
-  if (match(TOKEN_KEEP)) {
-    Node *parsedKey = expression();
-    consumeHint(TOKEN_COLON, ERR_SYNTAX, "I was expecting a colon ':' here.",
-                "Dictionary comprehensions require a key and a value separated "
-                "by a colon (e.g., keep name : id).");
-    Node *expr = expression();
-
-    // --- AST INVERSION FIX ---
-    if (expr != NULL && expr->type == NODE_IF &&
-        expr->as.ifStmt.elseBranch == NULL) {
-      Node *cond = expr->as.ifStmt.condition;
-      Node *inner = expr->as.ifStmt.thenBranch;
-
-      if ((cond != NULL && cond->usesIt)) {
-        Token itToken = makeHiddenToken(" it", line);
-        Token *letNames = ALLOCATE(Token, 1);
-        letNames[0] = itToken;
-        Node **letExprs = ALLOCATE(Node *, 1);
-        letExprs[0] = inner;
-        Node *letIt = newLetNode(letNames, 1, letExprs, 1, line);
-
-        Node *itVar = newVariableNode(itToken, line);
-        Node *keepNode = newKeepNode(parsedKey, itVar, line);
-        Node *ifStmt = newIfNode(cond, keepNode, NULL, line);
-
-        Node **blockStmts = ALLOCATE(Node *, 2);
-        blockStmts[0] = letIt;
-        blockStmts[1] = ifStmt;
-
-        FREE(Node, expr);
-        keepValue = newBlockNode(blockStmts, 2, line);
-      } else {
-        Node *keepNode = newKeepNode(parsedKey, inner, line);
-        FREE(Node, expr); // Prevent the memory leak!
-        keepValue = newIfNode(cond, keepNode, NULL, line);
-      }
-    } else {
-      keepValue = newKeepNode(parsedKey, expr, line);
-    }
-    // We leave keepKey as NULL since keepValue now holds the complete Keep
-    // node!
-  } else if (match(TOKEN_COLON)) {
-    isBlockMode = true;
+  if (match(TOKEN_COLON)) {
     Token blockOpener = parser.previous;   // <--- Capture the colon
     TokenType terminators[] = {TOKEN_END}; // <--- Stop at 'end'!
     body = block(terminators, 1);
-    consumeBlockEnd(blockOpener,
-                    "dictionary comprehension"); // <--- Safely eat the 'end'
+    consumeBlockEnd(blockOpener, "dictionary comprehension"); // <--- Safely eat the 'end'
   } else {
-    errorAt(
-        &parser.current, ERR_SYNTAX,
-        "I was expecting 'keep' or a colon ':' here.",
-        "Comprehensions must specify what to keep, or open a block with ':'.");
+    body = statement();
   }
 
   ignoreNewlines();
@@ -930,8 +848,7 @@ static Node *dictComprehension(int line) {
               "Close your dictionary comprehension.");
 
   return newComprehensionNode(iterator, indexVar, hasIndex, sequence,
-                              isBlockMode, keepValue, keepKey, body, true,
-                              line);
+                              body, true, line);
 }
 
 static Node *list() {
@@ -2375,7 +2292,10 @@ Node *parseSource(const char *source, int startLine) {
   initNodeArray(&statements);
 
   while (!match(TOKEN_EOF)) {
-    writeNodeArray(&statements, declaration());
+    Node *decl = declaration();
+    if (decl != NULL) {
+      writeNodeArray(&statements, decl);
+    }
   }
 
   // --- THE LSP AST RESCUE FIX ---

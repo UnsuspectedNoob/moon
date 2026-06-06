@@ -893,15 +893,8 @@ static void walkNode(Node *node) {
       markInitialized();
     }
 
-    // 6. The Dual-Mode Execution
-    if (node->as.comprehension.isBlockMode) {
-      walkNode(node->as.comprehension.body);
-    } else {
-      // Expression Mode: 'keepValue' is now fully pre-packaged as a
-      // NODE_KEEP (or a NODE_IF wrapping a NODE_KEEP).
-      // We just walk it, and it will emit the correct opcodes automatically!
-      walkNode(node->as.comprehension.keepValue);
-    }
+    // 6. Execute the body
+    walkNode(node->as.comprehension.body);
 
     // 7. Inner Cleanup
     endScope(); // Pops the user's iterator variables
