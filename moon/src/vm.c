@@ -577,22 +577,37 @@ TARGET_OP_ADD: {
     // Protect it from the Garbage Collector while we build it!
     push(OBJ_VAL(newListObj));
 
-    // 2. Clone the original list into the new one (O(N) copy)
-    for (int i = 0; i < leftList->count; i++) {
-      appendList(newListObj, leftList->items[i]);
-    }
-
-    // 3. The Fork: Are we merging a list, or appending a single item?
+    // 2. Pre-calculate precise capacity
+    int newCapacity = leftList->count;
     if (IS_LIST(b)) {
-      ObjList *rightList = AS_LIST(b);
-      for (int i = 0; i < rightList->count; i++) {
-        appendList(newListObj, rightList->items[i]);
-      }
+      newCapacity += AS_LIST(b)->count;
     } else {
-      appendList(newListObj, b); // Just append the raw item
+      newCapacity += 1;
     }
 
-    // 4. Clean up the stack
+    if (newCapacity > 0) {
+      newListObj->capacity = newCapacity;
+      newListObj->items = ALLOCATE(Value, newCapacity);
+
+      // 3. Clone the original list into the new one (O(1) block copy)
+      if (leftList->count > 0) {
+        memcpy(newListObj->items, leftList->items, sizeof(Value) * leftList->count);
+      }
+      newListObj->count = leftList->count;
+
+      // 4. The Fork: Are we merging a list, or appending a single item?
+      if (IS_LIST(b)) {
+        ObjList *rightList = AS_LIST(b);
+        if (rightList->count > 0) {
+          memcpy(&newListObj->items[newListObj->count], rightList->items, sizeof(Value) * rightList->count);
+          newListObj->count += rightList->count;
+        }
+      } else {
+        newListObj->items[newListObj->count++] = b;
+      }
+    }
+
+    // 5. Clean up the stack
     Value result = pop(); // Temporarily hold the finished newList
     pop();                // Pop original b
     pop();                // Pop original a
@@ -625,8 +640,16 @@ TARGET_OP_ADD_INPLACE: {
 
     if (IS_LIST(b)) {
       ObjList *rightList = AS_LIST(b);
-      for (int i = 0; i < rightList->count; i++) {
-        appendList(list, rightList->items[i]);
+      int addedCount = rightList->count;
+      
+      if (addedCount > 0) {
+        if (list->capacity < list->count + addedCount) {
+          int newCapacity = list->count + addedCount;
+          list->items = GROW_ARRAY(Value, list->items, list->capacity, newCapacity);
+          list->capacity = newCapacity;
+        }
+        memcpy(&list->items[list->count], rightList->items, sizeof(Value) * addedCount);
+        list->count += addedCount;
       }
     } else {
       appendList(list, b);
@@ -995,15 +1018,29 @@ TARGET_OP_BUILD_LIST: {
       // --- THE FLOATING-POINT DRIFT FIX ---
       // Calculate exact number of steps safely using round() to absorb float
       // fuzziness
-      if (start <= end && step > 0) {
+        if (start <= end && step > 0) {
         int count = (int)round((end - start) / step) + 1;
+        
+        if (list->capacity < list->count + count) {
+          int newCapacity = list->count + count;
+          list->items = GROW_ARRAY(Value, list->items, list->capacity, newCapacity);
+          list->capacity = newCapacity;
+        }
+        
         for (int k = 0; k < count; k++) {
-          appendList(list, NUMBER_VAL(start + (k * step)));
+          list->items[list->count++] = NUMBER_VAL(start + (k * step));
         }
       } else if (start >= end && step > 0) {
         int count = (int)round((start - end) / step) + 1;
+        
+        if (list->capacity < list->count + count) {
+          int newCapacity = list->count + count;
+          list->items = GROW_ARRAY(Value, list->items, list->capacity, newCapacity);
+          list->capacity = newCapacity;
+        }
+        
         for (int k = 0; k < count; k++) {
-          appendList(list, NUMBER_VAL(start - (k * step)));
+          list->items[list->count++] = NUMBER_VAL(start - (k * step));
         }
       }
     } else {

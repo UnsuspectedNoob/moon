@@ -1629,8 +1629,7 @@ char *formatSource(const char *source) {
       inTypeBlock = false;
 
     bool isBlockCloser =
-        (token.type == TOKEN_UNTIL ||
-         token.type == TOKEN_RIGHT_BRACE ||
+        (token.type == TOKEN_RIGHT_BRACE ||
          (token.type == TOKEN_END && (bracketDepth == 0 || needsIndent)));
 
     // Ternary 'else' shouldn't force a newline! Only block 'else'.

@@ -54,8 +54,8 @@ static int calculateBlockDepth(const char *source) {
 static void repl() {
   printf(COLOR_CYAN
          "================================================\n" COLOR_RESET);
-  printf(COLOR_CYAN " 🌙 M.O.O.N. Interactive Terminal v1.0\n" COLOR_RESET);
-  printf(COLOR_DIM "    Type 'quit' or 'exit' to shut down.\n" COLOR_RESET);
+  printf(COLOR_CYAN " 🌙 M.O.O.N. Interactive REPL v1.0\n" COLOR_RESET);
+  printf(COLOR_DIM "    Type 'quit' or 'exit' to close it.\n" COLOR_RESET);
   printf(COLOR_CYAN
          "================================================\n\n" COLOR_RESET);
 
@@ -122,7 +122,7 @@ static void repl() {
 
       if (!isEmpty) {
         interpret(source, globalReplLine); // Execute the whole chunk at once!
-        
+
         // Advance the global line tracker for the next REPL input
         for (int i = 0; source[i] != '\0'; i++) {
           if (source[i] == '\n') {
@@ -202,7 +202,8 @@ int main(int argc, char *argv[]) {
       isLspMode = true; // Tell the Error Engine to stay quiet!
     } else if (argv[i][0] == '-') {
       fprintf(stderr, "Unknown flag: %s\n", argv[i]);
-      fprintf(stderr, "Usage: moon [--debug] [--ast] [--scan] [--bytecode] [--no-run] [--lsp] [path]\n");
+      fprintf(stderr, "Usage: moon [--debug] [--ast] [--scan] [--bytecode] "
+                      "[--no-run] [--lsp] [path]\n");
       exit(64);
     } else {
       if (filePath != NULL) {

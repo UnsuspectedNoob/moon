@@ -54,16 +54,32 @@ bool executeGetSubscript(Value seqVal, Value indexVal, Value *result) {
           start = 0;
         if (end >= list->count)
           end = list->count - 1;
-        for (int i = start; i <= end; i += step) {
-          appendList(resultList, list->items[i]);
+
+        int count = ((end - start) / step) + 1;
+        if (count > 0) {
+          resultList->capacity = count;
+          resultList->items = ALLOCATE(Value, count);
+          int dest = 0;
+          for (int i = start; i <= end; i += step) {
+            resultList->items[dest++] = list->items[i];
+          }
+          resultList->count = dest;
         }
       } else {
         if (start >= list->count)
           start = list->count - 1;
         if (end < 0)
           end = 0;
-        for (int i = start; i >= end; i -= step) {
-          appendList(resultList, list->items[i]);
+
+        int count = ((start - end) / step) + 1;
+        if (count > 0) {
+          resultList->capacity = count;
+          resultList->items = ALLOCATE(Value, count);
+          int dest = 0;
+          for (int i = start; i >= end; i -= step) {
+            resultList->items[dest++] = list->items[i];
+          }
+          resultList->count = dest;
         }
       }
 
