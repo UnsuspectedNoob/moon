@@ -12,6 +12,7 @@
 bool printAstFlag = false;
 bool printScanFlag = false;
 bool printBytecodeFlag = false;
+bool printSigTrieFlag = false;
 bool noRunFlag = false;
 bool isReplMode = false;
 
@@ -195,6 +196,8 @@ int main(int argc, char *argv[]) {
       printScanFlag = true;
     } else if (strcmp(argv[i], "--bytecode") == 0) {
       printBytecodeFlag = true;
+    } else if (strcmp(argv[i], "--sigtrie") == 0) {
+      printSigTrieFlag = true;
     } else if (strcmp(argv[i], "--no-run") == 0) {
       noRunFlag = true;
     } else if (strcmp(argv[i], "--lsp") == 0) {
@@ -203,7 +206,7 @@ int main(int argc, char *argv[]) {
     } else if (argv[i][0] == '-') {
       fprintf(stderr, "Unknown flag: %s\n", argv[i]);
       fprintf(stderr, "Usage: moon [--debug] [--ast] [--scan] [--bytecode] "
-                      "[--no-run] [--lsp] [path]\n");
+                      "[--sigtrie] [--no-run] [--lsp] [path]\n");
       exit(64);
     } else {
       if (filePath != NULL) {

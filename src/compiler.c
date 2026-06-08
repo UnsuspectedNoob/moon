@@ -4,6 +4,7 @@
 #include "debug.h" // <--- 1. ADDED THIS
 #include "emitter.h"
 #include "parser.h"
+#include "sigtrie.h"
 
 // The Master Compilation Pipeline
 ObjFunction *compile(const char *source, ObjModule *module, int startLine) {
@@ -28,6 +29,10 @@ ObjFunction *compile(const char *source, ObjModule *module, int startLine) {
     printf("============================\n");
   }
   // ----------------------------
+
+  if (printSigTrieFlag) {
+    printSignatureTrie();
+  }
 
   // Phase 2: Back-End (Abstract Syntax Tree -> VM Bytecode)
   ObjFunction *function = generateCode(ast);

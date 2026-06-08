@@ -35,6 +35,7 @@ static TrieNode *newNode(PhraseNodeType type) {
   node->arity = 0;
   node->isTerminal = false;
   node->isCore = g_isBootstrappingCore;
+  node->labelName = NULL;
   node->mangledName = NULL;
   node->children = NULL;
   node->childCount = 0;
@@ -50,6 +51,8 @@ static void destroyTrieNode(TrieNode *node) {
   }
   if (node->children != NULL)
     FREE_TRIE(node->children);
+  if (node->labelName != NULL)
+    FREE_TRIE(node->labelName);
   if (node->mangledName != NULL)
     FREE_TRIE(node->mangledName);
   FREE_TRIE(node);
@@ -145,6 +148,9 @@ TrieNode *addLabelBranch(TrieNode *current, const char *label, int length) {
 
   TrieNode *child = newNode(NODE_LABEL);
   child->labelHash = lHash;
+  child->labelName = malloc(length + 1);
+  memcpy(child->labelName, label, length);
+  child->labelName[length] = '\0';
 
   if (current->childCapacity < current->childCount + 1) {
     int old = current->childCapacity;
@@ -181,6 +187,52 @@ void finalizePhrase(TrieNode *endNode, const char *mangledName) {
   if (endNode->mangledName)
     free(endNode->mangledName);
   endNode->mangledName = my_strdup(mangledName);
+}
+
+static void printTrieNode(TrieNode *node, int indent, bool isLast) {
+  for (int i = 0; i < indent - 1; i++) {
+    printf("│   ");
+  }
+  if (indent > 0) {
+    if (isLast) printf("└─ ");
+    else printf("├─ ");
+  }
+
+  if (node->type == NODE_LABEL) {
+    printf("[LABEL: %s]", node->labelName ? node->labelName : "?");
+  } else if (node->type == NODE_ARGUMENT) {
+    printf("[ARG: $%d]", node->arity);
+  }
+
+  if (node->isTerminal) {
+    printf(" -> %s", node->mangledName);
+  }
+  printf("\n");
+
+  for (int i = 0; i < node->childCount; i++) {
+    printTrieNode(node->children[i], indent + 1, i == node->childCount - 1);
+  }
+}
+
+void printSignatureTrie() {
+  printf("=== SIGNATURE TRIE ===\n");
+  int bucketCount = 0;
+  for (int i = 0; i < TABLE_CAPACITY; i++) {
+    if (phrasalTable[i].rootWord != NULL) {
+      bucketCount++;
+      printf("[ROOT: %s]", phrasalTable[i].rootWord);
+      if (phrasalTable[i].trieRoot->isTerminal) {
+        printf(" -> %s\n", phrasalTable[i].trieRoot->mangledName);
+      } else {
+        printf("\n");
+      }
+      for (int j = 0; j < phrasalTable[i].trieRoot->childCount; j++) {
+        printTrieNode(phrasalTable[i].trieRoot->children[j], 1, j == phrasalTable[i].trieRoot->childCount - 1);
+      }
+    }
+  }
+  printf("======================\n");
+  printf("Total Roots: %d\n\n", bucketCount);
 }
 
 void registerSignature(const char *root, const char *path,

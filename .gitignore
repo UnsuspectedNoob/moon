@@ -3,3 +3,5 @@ moon/src/copy
 moon/moon
 moon_lsp.log
 moon/test
+moon/src/*.d
+core.*

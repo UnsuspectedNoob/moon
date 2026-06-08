@@ -12,6 +12,7 @@ void debugStack(VM *vm);
 extern bool printAstFlag;
 extern bool printScanFlag;
 extern bool printBytecodeFlag;
+extern bool printSigTrieFlag;
 extern bool noRunFlag;
 // Add this near your disassembleChunk prototype
 void printAST(Node *node, int indent);

@@ -16,6 +16,7 @@ typedef struct TrieNode {
 
   // Payload
   uint32_t labelHash; // Used if type == NODE_LABEL
+  char *labelName;    // Stored string for debugging/printing
   int arity;          // Used if type == NODE_ARGUMENT
 
   // Accept State
@@ -32,6 +33,7 @@ typedef struct TrieNode {
 // 3. The Public API
 void initSignatureTable();
 void freeSignatureTable();
+void printSignatureTrie();
 TrieNode *getSignatureTrie(const char *rootWord);
 
 // --- THE DIRECT BUILDER API ---
