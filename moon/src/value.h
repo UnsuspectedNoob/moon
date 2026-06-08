@@ -4,9 +4,6 @@
 #include "common.h"
 #include <stdint.h>
 
-// For now, all values are doubles.
-// Phase 5 will upgrade this to a Tagged Union (for Strings/Objects).
-
 // 1. the Core Definition
 typedef uint64_t Value;
 
@@ -45,8 +42,8 @@ static inline Value numToValue(double num) {
 #define NIL_VAL ((Value)(uint64_t)(QNAN | TAG_NIL))
 #define FALSE_VAL ((Value)(uint64_t)(QNAN | TAG_FALSE))
 #define TRUE_VAL ((Value)(uint64_t)(QNAN | TAG_TRUE))
-#define EMPTY_VAL ((Value)(uint64_t)(QNAN | TAG_EMPTY))    // <-- NEW
-#define TOMBSTONE_VAL ((Value)(uint64_t)(QNAN | TAG_TOMB)) // <-- NEW
+#define EMPTY_VAL ((Value)(uint64_t)(QNAN | TAG_EMPTY))
+#define TOMBSTONE_VAL ((Value)(uint64_t)(QNAN | TAG_TOMB))
 #define BOOL_VAL(b) ((b) ? TRUE_VAL : FALSE_VAL)
 
 // Object pointers get the SIGN_BIT + QNAN mask + their actual memory address
@@ -56,8 +53,9 @@ static inline Value numToValue(double num) {
 // If the bits do NOT equal the QNAN mask, it's a valid math decimal!
 #define IS_NUMBER(value) (((value) & QNAN) != QNAN)
 #define IS_NIL(value) ((value) == NIL_VAL)
-#define IS_EMPTY(value) ((value) == EMPTY_VAL)    // <-- NEW
-#define IS_TOMB(value) ((value) == TOMBSTONE_VAL) // <-- NEW
+#define IS_EMPTY(value) ((value) == EMPTY_VAL)
+#define IS_TOMB(value) ((value) == TOMBSTONE_VAL)
+
 // Checks for both TAG_FALSE (2) and TAG_TRUE (3)
 #define IS_BOOL(value) (((value) | 1) == TRUE_VAL)
 #define IS_OBJ(value) (((value) & (SIGN_BIT | QNAN)) == (SIGN_BIT | QNAN))

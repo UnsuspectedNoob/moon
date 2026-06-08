@@ -120,8 +120,8 @@ static void printSnippet(int targetLine, int targetCol, int length) {
   int lineLen = (int)(lineEnd - lineStart);
 
   // 3. Print the code snippet! (Dim line number, Cyan code)
-  fprintf(stderr, "\n" COLOR_DIM "  %d | " COLOR_CYAN "%.*s\n" COLOR_RESET, targetLine,
-         lineLen, lineStart);
+  fprintf(stderr, "\n" COLOR_DIM "  %d | " COLOR_CYAN "%.*s\n" COLOR_RESET,
+          targetLine, lineLen, lineStart);
 
   // 4. Print the squiggles! (Dim pipe, Red squiggles)
   if (targetCol > 0) {
