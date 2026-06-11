@@ -128,6 +128,7 @@ void freeVM() {
   freeObjects();
   free(vm.grayStack);
   freeSignatureTable();
+  freePropertySignatureTable();
 }
 
 void push(Value value) {
@@ -225,9 +226,9 @@ void defineModuleNative(ObjModule *module, const char *name,
   pop(); // pop name
 }
 
-void registerNativePhrasal(ObjModule *module, const char *root, const char *path,
-                           int arity, const char *mangledName, NativeFn function,
-                           ObjType **expectedTypes) {
+void registerNativePhrasal(ObjModule *module, const char *root,
+                           const char *path, int arity, const char *mangledName,
+                           NativeFn function, ObjType **expectedTypes) {
   // 1. Build the phrasal Trie
   registerSignature(root, path, mangledName);
 
@@ -272,14 +273,15 @@ void registerNativePhrasal(ObjModule *module, const char *root, const char *path
 
   // Protect signatures while arrays expand
   for (int i = 0; i < arity; i++) {
-    if (signatures) push(signatures[i]);
+    if (signatures)
+      push(signatures[i]);
   }
 
   if (multi->methodCapacity < multi->methodCount + 1) {
     int oldCap = multi->methodCapacity;
     multi->methodCapacity = GROW_CAPACITY(oldCap);
-    multi->methods = GROW_ARRAY(Value, multi->methods, oldCap,
-                                multi->methodCapacity);
+    multi->methods =
+        GROW_ARRAY(Value, multi->methods, oldCap, multi->methodCapacity);
     multi->signatures =
         GROW_ARRAY(Value *, multi->signatures, oldCap, multi->methodCapacity);
   }
@@ -293,7 +295,8 @@ void registerNativePhrasal(ObjModule *module, const char *root, const char *path
 
   pop(); // native
   for (int i = 0; i < arity; i++) {
-    if (signatures) pop(); // signatures
+    if (signatures)
+      pop(); // signatures
   }
   pop(); // nameStr
 }
@@ -348,6 +351,7 @@ void initVM() {
   vm.sequenceCount = 0;
 
   initSignatureTable();
+  initPropertySignatureTable();
 
   // --- NEW GC INIT ---
   vm.bytesAllocated = 0;
@@ -424,6 +428,66 @@ ObjType *getObjType(Value val) {
   return vm.anyType; // Absolute fallback
 }
 
+// ==========================================
+// METHOD RESOLUTION
+// ==========================================
+
+static Value resolveOverload(ObjMultiFunction *multi, int argCount, Value *args, bool *isAmbiguous) {
+  Value bestMethodVal = NIL_VAL;
+  int bestScore = -1;
+  *isAmbiguous = false;
+
+  for (int i = 0; i < multi->methodCount; i++) {
+    Value *signature = multi->signatures[i];
+    bool isMatch = true;
+    int currentScore = 0;
+
+    for (int j = 0; j < argCount; j++) {
+      Value expectedVal = signature[j];
+      ObjType *actualType = getObjType(args[j]);
+
+      if (IS_UNION(expectedVal)) {
+        ObjUnion *unionObj = AS_UNION(expectedVal);
+        bool matchedUnion = false;
+        for (int k = 0; k < unionObj->count; k++) {
+          if (AS_TYPE(unionObj->types[k]) == actualType) {
+            matchedUnion = true;
+            break;
+          }
+        }
+        if (matchedUnion) {
+          currentScore += (15 - unionObj->count);
+        } else {
+          isMatch = false;
+          break;
+        }
+      } else {
+        ObjType *expectedType = AS_TYPE(expectedVal);
+        if (expectedType == actualType) {
+          currentScore += 20;
+        } else if (expectedType == vm.anyType) {
+          currentScore += 1;
+        } else {
+          isMatch = false;
+          break;
+        }
+      }
+    }
+
+    if (isMatch) {
+      if (currentScore > bestScore) {
+        bestScore = currentScore;
+        bestMethodVal = multi->methods[i];
+        *isAmbiguous = false;
+      } else if (currentScore == bestScore) {
+        *isAmbiguous = true;
+      }
+    }
+  }
+
+  return bestMethodVal;
+}
+
 // Run()
 static InterpretResult run() {
   CallFrame *frame = &vm.frames[vm.frameCount - 1];
@@ -432,38 +496,67 @@ static InterpretResult run() {
 
   // 1. THE DISPATCH TABLE
   // WARNING: This must exactly match the order of the OpCode enum in chunk.h!
-  static void *dispatchTable[] = {
-      &&TARGET_OP_CONSTANT,      &&TARGET_OP_CONSTANT_LONG,
-      &&TARGET_OP_PUSH_BYTE,     &&TARGET_OP_NIL,
-      &&TARGET_OP_TRUE,          &&TARGET_OP_FALSE,
-      &&TARGET_OP_POP,           &&TARGET_OP_POP_N,
-      &&TARGET_OP_GET_LOCAL,     &&TARGET_OP_SET_LOCAL,
-      &&TARGET_OP_GET_LOCAL_LONG,&&TARGET_OP_SET_LOCAL_LONG,
-      &&TARGET_OP_GET_GLOBAL,    &&TARGET_OP_DEFINE_GLOBAL,
-      &&TARGET_OP_SET_GLOBAL,    &&TARGET_OP_ADD,
-      &&TARGET_OP_ADD_INPLACE,   &&TARGET_OP_SUBTRACT,
-      &&TARGET_OP_MULTIPLY,      &&TARGET_OP_DIVIDE,
-      &&TARGET_OP_MOD,           &&TARGET_OP_JUMP_IF_FALSE,
-      &&TARGET_OP_NEGATE,        &&TARGET_OP_JUMP,
-      &&TARGET_OP_LOOP,          &&TARGET_OP_EQUAL,
-      &&TARGET_OP_GREATER,       &&TARGET_OP_LESS,
-      &&TARGET_OP_NOT,           &&TARGET_OP_BUILD_STRING,
-      &&TARGET_OP_BUILD_LIST,    &&TARGET_OP_BUILD_DICT,
-      &&TARGET_OP_BUILD_UNION,   &&TARGET_OP_GET_PROPERTY,
-      &&TARGET_OP_SET_PROPERTY,  &&TARGET_OP_GET_SUBSCRIPT,
-      &&TARGET_OP_SET_SUBSCRIPT, &&TARGET_OP_GET_END_INDEX,
-      &&TARGET_OP_RANGE,         &&TARGET_OP_FOR_ITER,
-      &&TARGET_OP_FOR_ITER_LONG, &&TARGET_OP_GET_ITER,
-      &&TARGET_OP_GET_ITER_VALUE,&&TARGET_OP_GET_ITER_VALUE_LONG,
-      &&TARGET_OP_CALL,          &&TARGET_OP_TYPE_DEF,
-      &&TARGET_OP_INSTANTIATE,   &&TARGET_OP_DEFINE_METHOD,
-      &&TARGET_OP_CAST,          &&TARGET_OP_LOAD,
-      &&TARGET_OP_KEEP_LIST,     &&TARGET_OP_KEEP_DICT,
-      &&TARGET_OP_RETURN,        &&TARGET_OP_PUSH_SEQUENCE,
-      &&TARGET_OP_PUSH_STICKY,   &&TARGET_OP_POP_STICKY,
-      &&TARGET_OP_SET_STICKY,    &&TARGET_OP_LOAD_STICKY,
-      &&TARGET_OP_SHOW_REPL,
-  };
+  static void *dispatchTable[] = {&&TARGET_OP_CONSTANT,
+                                  &&TARGET_OP_CONSTANT_LONG,
+                                  &&TARGET_OP_PUSH_BYTE,
+                                  &&TARGET_OP_NIL,
+                                  &&TARGET_OP_TRUE,
+                                  &&TARGET_OP_FALSE,
+                                  &&TARGET_OP_POP,
+                                  &&TARGET_OP_POP_N,
+                                  &&TARGET_OP_GET_LOCAL,
+                                  &&TARGET_OP_SET_LOCAL,
+                                  &&TARGET_OP_GET_LOCAL_LONG,
+                                  &&TARGET_OP_SET_LOCAL_LONG,
+                                  &&TARGET_OP_GET_GLOBAL,
+                                  &&TARGET_OP_DEFINE_GLOBAL,
+                                  &&TARGET_OP_SET_GLOBAL,
+                                  &&TARGET_OP_ADD,
+                                  &&TARGET_OP_ADD_INPLACE,
+                                  &&TARGET_OP_SUBTRACT,
+                                  &&TARGET_OP_MULTIPLY,
+                                  &&TARGET_OP_DIVIDE,
+                                  &&TARGET_OP_MOD,
+                                  &&TARGET_OP_JUMP_IF_FALSE,
+                                  &&TARGET_OP_NEGATE,
+                                  &&TARGET_OP_JUMP,
+                                  &&TARGET_OP_LOOP,
+                                  &&TARGET_OP_EQUAL,
+                                  &&TARGET_OP_GREATER,
+                                  &&TARGET_OP_LESS,
+                                  &&TARGET_OP_NOT,
+                                  &&TARGET_OP_BUILD_STRING,
+                                  &&TARGET_OP_BUILD_LIST,
+                                  &&TARGET_OP_BUILD_DICT,
+                                  &&TARGET_OP_BUILD_UNION,
+                                  &&TARGET_OP_GET_PROPERTY,
+                                  &&TARGET_OP_SET_PROPERTY,
+                                  &&TARGET_OP_GET_SUBSCRIPT,
+                                  &&TARGET_OP_SET_SUBSCRIPT,
+                                  &&TARGET_OP_GET_END_INDEX,
+                                  &&TARGET_OP_RANGE,
+                                  &&TARGET_OP_FOR_ITER,
+                                  &&TARGET_OP_FOR_ITER_LONG,
+                                  &&TARGET_OP_GET_ITER,
+                                  &&TARGET_OP_GET_ITER_VALUE,
+                                  &&TARGET_OP_GET_ITER_VALUE_LONG,
+                                  &&TARGET_OP_CALL,
+                                  &&TARGET_OP_TYPE_DEF,
+                                  &&TARGET_OP_INSTANTIATE,
+                                  &&TARGET_OP_DEFINE_METHOD,
+                                  &&TARGET_OP_CAST,
+                                  &&TARGET_OP_LOAD,
+                                  &&TARGET_OP_KEEP_LIST,
+                                  &&TARGET_OP_KEEP_DICT,
+                                  &&TARGET_OP_RETURN,
+                                  &&TARGET_OP_PUSH_SEQUENCE,
+                                  &&TARGET_OP_PUSH_STICKY,
+                                  &&TARGET_OP_POP_STICKY,
+                                  &&TARGET_OP_SET_STICKY,
+                                  &&TARGET_OP_LOAD_STICKY,
+                                  &&TARGET_OP_SHOW_REPL,
+                                  &&TARGET_OP_INVOKE,
+                                  &&TARGET_OP_DEFINE_EXTENSION_METHOD};
 
 #define READ_BYTE() (*ip++)
 #define READ_CONSTANT() (frame->function->chunk.constants.values[READ_BYTE()])
@@ -591,7 +684,8 @@ TARGET_OP_ADD: {
 
       // 3. Clone the original list into the new one (O(1) block copy)
       if (leftList->count > 0) {
-        memcpy(newListObj->items, leftList->items, sizeof(Value) * leftList->count);
+        memcpy(newListObj->items, leftList->items,
+               sizeof(Value) * leftList->count);
       }
       newListObj->count = leftList->count;
 
@@ -599,7 +693,8 @@ TARGET_OP_ADD: {
       if (IS_LIST(b)) {
         ObjList *rightList = AS_LIST(b);
         if (rightList->count > 0) {
-          memcpy(&newListObj->items[newListObj->count], rightList->items, sizeof(Value) * rightList->count);
+          memcpy(&newListObj->items[newListObj->count], rightList->items,
+                 sizeof(Value) * rightList->count);
           newListObj->count += rightList->count;
         }
       } else {
@@ -641,14 +736,16 @@ TARGET_OP_ADD_INPLACE: {
     if (IS_LIST(b)) {
       ObjList *rightList = AS_LIST(b);
       int addedCount = rightList->count;
-      
+
       if (addedCount > 0) {
         if (list->capacity < list->count + addedCount) {
           int newCapacity = list->count + addedCount;
-          list->items = GROW_ARRAY(Value, list->items, list->capacity, newCapacity);
+          list->items =
+              GROW_ARRAY(Value, list->items, list->capacity, newCapacity);
           list->capacity = newCapacity;
         }
-        memcpy(&list->items[list->count], rightList->items, sizeof(Value) * addedCount);
+        memcpy(&list->items[list->count], rightList->items,
+               sizeof(Value) * addedCount);
         list->count += addedCount;
       }
     } else {
@@ -856,30 +953,29 @@ TARGET_OP_SET_GLOBAL: {
     // Check if it exists in Universe scope instead
     tableSet(&vm.globals, OBJ_VAL(name), peek(0));
   } else {
-      // --- THE ORACLE INTERCEPT ---
-      const char *suggestion =
-          findVariableSuggestion(frame->globals, name->chars);
-      if (suggestion == NULL)
-        suggestion = findVariableSuggestion(&vm.globals, name->chars);
+    // --- THE ORACLE INTERCEPT ---
+    const char *suggestion =
+        findVariableSuggestion(frame->globals, name->chars);
+    if (suggestion == NULL)
+      suggestion = findVariableSuggestion(&vm.globals, name->chars);
 
-      if (suggestion != NULL) {
-        // 1. Build the dynamic hint string first!
-        char hintBuf[256];
-        snprintf(hintBuf, sizeof(hintBuf),
-                 "Did you mean '" COLOR_CYAN "%s" COLOR_RESET "'?", suggestion);
+    if (suggestion != NULL) {
+      // 1. Build the dynamic hint string first!
+      char hintBuf[256];
+      snprintf(hintBuf, sizeof(hintBuf),
+               "Did you mean '" COLOR_CYAN "%s" COLOR_RESET "'?", suggestion);
 
-        // 2. Throw the error with the properly aligned arguments
-        THROW_ERROR(ERR_REFERENCE, hintBuf, "Undefined variable '%s'.",
-                    name->chars);
-      } else {
-        // No close matches found. Fall back to the standard error.
-        THROW_ERROR(
-            ERR_REFERENCE,
-            "Did you misspell the variable name, or forget to declare it "
-            "with 'let'?",
-            "Undefined variable '%s'.", name->chars);
-      }
+      // 2. Throw the error with the properly aligned arguments
+      THROW_ERROR(ERR_REFERENCE, hintBuf, "Undefined variable '%s'.",
+                  name->chars);
+    } else {
+      // No close matches found. Fall back to the standard error.
+      THROW_ERROR(ERR_REFERENCE,
+                  "Did you misspell the variable name, or forget to declare it "
+                  "with 'let'?",
+                  "Undefined variable '%s'.", name->chars);
     }
+  }
 
   DISPATCH();
 }
@@ -1018,27 +1114,29 @@ TARGET_OP_BUILD_LIST: {
       // --- THE FLOATING-POINT DRIFT FIX ---
       // Calculate exact number of steps safely using round() to absorb float
       // fuzziness
-        if (start <= end && step > 0) {
+      if (start <= end && step > 0) {
         int count = (int)round((end - start) / step) + 1;
-        
+
         if (list->capacity < list->count + count) {
           int newCapacity = list->count + count;
-          list->items = GROW_ARRAY(Value, list->items, list->capacity, newCapacity);
+          list->items =
+              GROW_ARRAY(Value, list->items, list->capacity, newCapacity);
           list->capacity = newCapacity;
         }
-        
+
         for (int k = 0; k < count; k++) {
           list->items[list->count++] = NUMBER_VAL(start + (k * step));
         }
       } else if (start >= end && step > 0) {
         int count = (int)round((start - end) / step) + 1;
-        
+
         if (list->capacity < list->count + count) {
           int newCapacity = list->count + count;
-          list->items = GROW_ARRAY(Value, list->items, list->capacity, newCapacity);
+          list->items =
+              GROW_ARRAY(Value, list->items, list->capacity, newCapacity);
           list->capacity = newCapacity;
         }
-        
+
         for (int k = 0; k < count; k++) {
           list->items[list->count++] = NUMBER_VAL(start - (k * step));
         }
@@ -1286,7 +1384,7 @@ TARGET_OP_SET_SUBSCRIPT: {
     return INTERPRET_RUNTIME_ERROR;
   }
 
-  push(result); // Push value back for chained assignments
+  push(result);       // Push value back for chained assignments
   vm.sequenceCount--; // Clean up sequence tracking implicitly
   DISPATCH();
 }
@@ -1313,8 +1411,7 @@ TARGET_OP_SET_STICKY: {
 
 TARGET_OP_LOAD_STICKY: {
   if (IS_NIL(frame->stickySubject)) {
-    THROW_ERROR(ERR_SYNTAX,
-                "This operator is missing its left side.",
+    THROW_ERROR(ERR_SYNTAX, "This operator is missing its left side.",
                 "It looks like you used an operator (like '<', '>=', or 'is') "
                 "without providing a value on its left, and there is no active "
                 "subject to attach it to.");
@@ -1511,13 +1608,13 @@ TARGET_OP_FOR_ITER_LONG: {
   } else if (IS_DICT(seqVal)) {
     ObjDict *dict = AS_DICT(seqVal);
     int index = (int)AS_NUMBER(iteratorVal);
-    index++; 
+    index++;
 
     while (index < dict->fields.capacity) {
       Entry *entry = &dict->fields.entries[index];
       if (!IS_EMPTY(entry->key) && !IS_TOMB(entry->key)) {
-        frame->slots[slot] = NUMBER_VAL(index); 
-        loopValue = entry->key;                 
+        frame->slots[slot] = NUMBER_VAL(index);
+        loopValue = entry->key;
         hasNext = true;
         break;
       }
@@ -1587,58 +1684,8 @@ TARGET_OP_CALL: {
     }
 
     Value *args = vm.stackTop - argCount;
-
-    Value bestMethodVal = NIL_VAL;
-    int bestScore = -1;
     bool isAmbiguous = false;
-
-    for (int i = 0; i < multi->methodCount; i++) {
-      Value *signature = multi->signatures[i];
-      bool isMatch = true;
-      int currentScore = 0;
-
-      for (int j = 0; j < argCount; j++) {
-        Value expectedVal = signature[j];
-        ObjType *actualType = getObjType(args[j]);
-
-        if (IS_UNION(expectedVal)) {
-          ObjUnion *unionObj = AS_UNION(expectedVal);
-          bool matchedUnion = false;
-          for (int k = 0; k < unionObj->count; k++) {
-            if (AS_TYPE(unionObj->types[k]) == actualType) {
-              matchedUnion = true;
-              break;
-            }
-          }
-          if (matchedUnion) {
-            currentScore += (15 - unionObj->count);
-          } else {
-            isMatch = false;
-            break;
-          }
-        } else {
-          ObjType *expectedType = AS_TYPE(expectedVal);
-          if (expectedType == actualType) {
-            currentScore += 20;
-          } else if (expectedType == vm.anyType) {
-            currentScore += 1;
-          } else {
-            isMatch = false;
-            break;
-          }
-        }
-      }
-
-      if (isMatch) {
-        if (currentScore > bestScore) {
-          bestScore = currentScore;
-          bestMethodVal = multi->methods[i];
-          isAmbiguous = false;
-        } else if (currentScore == bestScore) {
-          isAmbiguous = true;
-        }
-      }
-    }
+    Value bestMethodVal = resolveOverload(multi, argCount, args, &isAmbiguous);
 
     if (IS_NIL(bestMethodVal)) {
       THROW_ERROR(ERR_REFERENCE,
@@ -1698,8 +1745,7 @@ TARGET_OP_CALL: {
 
   THROW_ERROR(
       ERR_TYPE, "You appended parentheses to a value that isn't executable.",
-      "You tried to call a %s as if it were a function.",
-      TYPE_NAME(callee));
+      "You tried to call a %s as if it were a function.", TYPE_NAME(callee));
 }
 
 TARGET_OP_TYPE_DEF: {
@@ -1764,11 +1810,11 @@ TARGET_OP_DEFINE_METHOD: {
   } else if (tableGet(&vm.globals, OBJ_VAL(name), &existing) &&
              IS_MULTI_FUNCTION(existing)) {
     multi = AS_MULTI_FUNCTION(existing);
-    
-    // We found it in the standard library! Let's bring a reference 
+
+    // We found it in the standard library! Let's bring a reference
     // into the local scope so it's prioritized and visible locally.
     tableSet(frame->globals, OBJ_VAL(name), OBJ_VAL(multi));
-    
+
     const char *dollar = strchr(name->chars, '$');
     if (dollar != NULL) {
       int rootLen = (int)(dollar - name->chars);
@@ -1810,8 +1856,8 @@ TARGET_OP_DEFINE_METHOD: {
   if (multi->methodCapacity < multi->methodCount + 1) {
     int oldCap = multi->methodCapacity;
     multi->methodCapacity = GROW_CAPACITY(oldCap);
-    multi->methods = GROW_ARRAY(Value, multi->methods, oldCap,
-                                multi->methodCapacity);
+    multi->methods =
+        GROW_ARRAY(Value, multi->methods, oldCap, multi->methodCapacity);
     multi->signatures =
         GROW_ARRAY(Value *, multi->signatures, oldCap, multi->methodCapacity);
   }
@@ -1829,6 +1875,191 @@ TARGET_OP_DEFINE_METHOD: {
   pop();
   vm.stackTop -= arity;
   DISPATCH();
+}
+
+TARGET_OP_DEFINE_EXTENSION_METHOD: {
+  ObjString *name = READ_STRING();
+  ObjFunction *method = AS_FUNCTION(peek(0));
+  int arity = method->arity;
+  Value *typesStart = vm.stackTop - 1 - arity;
+
+  // 1. Extract the Expected Types
+  Value *signatures = ALLOCATE(Value, arity);
+  for (int i = 0; i < arity; i++) {
+    if (!IS_TYPE(typesStart[i]) && !IS_UNION(typesStart[i])) {
+      THROW_ERROR(
+          ERR_TYPE,
+          "Make sure the type you specified is defined before using it.",
+          "Type annotation must resolve to a valid Type Blueprint or Union.");
+    }
+    signatures[i] = typesStart[i];
+  }
+
+  // 2. Extract Receiver Type
+  Value receiverTypeVal = *(typesStart - 1);
+  if (!IS_TYPE(receiverTypeVal) && !IS_UNION(receiverTypeVal)) {
+    THROW_ERROR(
+        ERR_TYPE,
+        "Extension method receiver must be a concrete Type Blueprint or Union.",
+        "Invalid receiver type.");
+  }
+
+  // 3. Resolve Concrete Types
+  int receiverCount = 1;
+  ObjType **receivers = NULL;
+
+  if (IS_UNION(receiverTypeVal)) {
+    ObjUnion *unionObj = AS_UNION(receiverTypeVal);
+    receiverCount = unionObj->count;
+    receivers = ALLOCATE(ObjType *, receiverCount);
+    for (int i = 0; i < receiverCount; i++) {
+      receivers[i] = AS_TYPE(unionObj->types[i]);
+    }
+  } else {
+    ObjType *typeObj = AS_TYPE(receiverTypeVal);
+    if (typeObj == vm.anyType) {
+      THROW_ERROR(ERR_TYPE, "Cannot attach an extension method to 'Any'.",
+                  "Receiver must be a concrete Type Blueprint.");
+    }
+    receivers = ALLOCATE(ObjType *, 1);
+    receivers[0] = typeObj;
+  }
+
+  // 4. Attach Method to Each Concrete Type
+  for (int t = 0; t < receiverCount; t++) {
+    ObjType *targetType = receivers[t];
+
+    Value existing;
+    ObjMultiFunction *multi = NULL;
+    if (tableGet(&targetType->properties, OBJ_VAL(name), &existing) &&
+        IS_MULTI_FUNCTION(existing)) {
+      multi = AS_MULTI_FUNCTION(existing);
+    } else {
+      multi = newMultiFunction(name, arity);
+      push(OBJ_VAL(multi));
+      tableSet(&targetType->properties, OBJ_VAL(name), OBJ_VAL(multi));
+      pop();
+    }
+
+    Value *sigCopy = ALLOCATE(Value, arity);
+    for (int i = 0; i < arity; i++) {
+      sigCopy[i] = signatures[i];
+      push(sigCopy[i]); // Shield
+    }
+
+    if (multi->methodCapacity < multi->methodCount + 1) {
+      int oldCap = multi->methodCapacity;
+      multi->methodCapacity = GROW_CAPACITY(oldCap);
+      multi->methods =
+          GROW_ARRAY(Value, multi->methods, oldCap, multi->methodCapacity);
+      multi->signatures =
+          GROW_ARRAY(Value *, multi->signatures, oldCap, multi->methodCapacity);
+    }
+
+    multi->methods[multi->methodCount] = OBJ_VAL(method);
+    multi->signatures[multi->methodCount] = sigCopy;
+    multi->methodCount++;
+
+    for (int i = 0; i < arity; i++)
+      pop(); // Drop shield
+  }
+
+  FREE_ARRAY(Value, signatures,
+             arity); // Free original array since we copied it
+  FREE_ARRAY(ObjType *, receivers, receiverCount);
+
+  // Pop the method, types, and receiverType
+  pop();
+  vm.stackTop -= (arity + 1);
+  DISPATCH();
+}
+
+TARGET_OP_INVOKE: {
+  ObjString *name = READ_STRING();
+  int argCount = READ_BYTE();
+  EXPECT_STACK(argCount + 1);
+
+  Value receiver = peek(argCount);
+  ObjType *receiverType = getObjType(receiver);
+
+  Value callee;
+  if (!tableGet(&receiverType->properties, OBJ_VAL(name), &callee)) {
+    THROW_ERROR(ERR_REFERENCE,
+                "Check the name of the property you're trying to access.",
+                "Property '%s' not found on type '%s'.", name->chars,
+                receiverType->name->chars);
+  }
+
+  if (IS_MULTI_FUNCTION(callee)) {
+    ObjMultiFunction *multi = AS_MULTI_FUNCTION(callee);
+
+    if (argCount != multi->arity) {
+      THROW_ERROR(
+          ERR_RUNTIME,
+          "Check the property signature to see how many values it requires.",
+          "Expected %d arguments but got %d.", multi->arity, argCount);
+    }
+
+    Value *args = vm.stackTop - argCount;
+    bool isAmbiguous = false;
+    Value bestMethodVal = resolveOverload(multi, argCount, args, &isAmbiguous);
+
+    if (IS_NIL(bestMethodVal)) {
+      THROW_ERROR(ERR_REFERENCE,
+                  "The arguments you passed don't match any overloaded version "
+                  "of this property.",
+                  "No matching signature found.");
+    }
+
+    if (isAmbiguous) {
+      THROW_ERROR(ERR_RUNTIME,
+                  "Multiple methods match this call with the exact same "
+                  "specificity. Define an intersection method to clarify.",
+                  "Ambiguous Dispatch Error.");
+    }
+
+    callee = bestMethodVal;
+    // Note: Do NOT overwrite the receiver at stackTop[-1 - argCount].
+  }
+
+  if (IS_NATIVE(callee)) {
+    NativeFn native = AS_NATIVE(callee);
+    Value result = native(argCount + 1, vm.stackTop - argCount - 1);
+    vm.stackTop -= argCount + 1;
+    push(result);
+    DISPATCH();
+  } else if (IS_FUNCTION(callee)) {
+    ObjFunction *function = AS_FUNCTION(callee);
+    if (argCount != function->arity) {
+      THROW_ERROR(
+          ERR_RUNTIME,
+          "Check the property signature to see how many values it requires.",
+          "Expected %d arguments but got %d.", function->arity, argCount);
+    }
+
+    if (vm.frameCount == FRAMES_MAX) {
+      THROW_ERROR(ERR_RUNTIME,
+                  "You have too many nested function calls. Do you have "
+                  "infinite recursion?",
+                  "Stack overflow.");
+    }
+
+    frame->ip = ip;
+    CallFrame *newFrame = &vm.frames[vm.frameCount++];
+    newFrame->function = function;
+    newFrame->globals =
+        function->homeGlobals ? function->homeGlobals : &vm.globals;
+    newFrame->ip = function->chunk.code;
+    newFrame->slots = vm.stackTop - argCount - 1; // slots[0] is the Receiver!
+    newFrame->stickySubject = NIL_VAL;
+
+    frame = newFrame;
+    ip = frame->ip;
+    DISPATCH();
+  } else {
+    THROW_ERROR(ERR_RUNTIME, "Expected a callable property.",
+                "Property '%s' is not callable.", name->chars);
+  }
 }
 
 TARGET_OP_CAST: {
@@ -2047,9 +2278,11 @@ InterpretResult interpret(const char *source, int startLine) {
 
   ObjModule *mainModule = NULL;
   Value existingModule;
-  if (isReplMode && tableGet(&vm.loadedModules, OBJ_VAL(mainName), &existingModule)) {
+  if (isReplMode &&
+      tableGet(&vm.loadedModules, OBJ_VAL(mainName), &existingModule)) {
     mainModule = AS_MODULE(existingModule);
-    // Append the new source to the persistent module's source string for error reporting
+    // Append the new source to the persistent module's source string for error
+    // reporting
     ObjString *oldSrc = mainModule->source;
     if (oldSrc != NULL) {
       int newLen = oldSrc->length + mainSrc->length;

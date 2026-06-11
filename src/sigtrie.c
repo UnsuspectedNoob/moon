@@ -17,6 +17,7 @@ typedef struct {
 
 #define TABLE_CAPACITY 1024
 static RegistryEntry phrasalTable[TABLE_CAPACITY];
+static RegistryEntry propertyTable[TABLE_CAPACITY];
 
 // --- UTILS ---
 static char *my_strdup(const char *s) {
@@ -119,6 +120,67 @@ TrieNode *startPhrase(const char *rootWord, int length) {
 
   for (;;) {
     RegistryEntry *entry = &phrasalTable[index];
+    if (entry->rootWord == NULL) {
+      entry->rootHash = rHash;
+      char *rootStr = malloc(length + 1);
+      memcpy(rootStr, rootWord, length);
+      rootStr[length] = '\0';
+      entry->rootWord = rootStr;
+
+      entry->trieRoot = newNode(NODE_LABEL);
+      return entry->trieRoot;
+    } else if (entry->rootHash == rHash &&
+               strncmp(entry->rootWord, rootWord, length) == 0 &&
+               entry->rootWord[length] == '\0') {
+      return entry->trieRoot;
+    }
+    index = (index + 1) & (TABLE_CAPACITY - 1);
+  }
+}
+
+// --- PROPERTY SIGNATURE TRIE API ---
+
+void initPropertySignatureTable() {
+  for (int i = 0; i < TABLE_CAPACITY; i++) {
+    propertyTable[i].rootWord = NULL;
+  }
+}
+
+void freePropertySignatureTable() {
+  for (int i = 0; i < TABLE_CAPACITY; i++) {
+    if (propertyTable[i].rootWord != NULL) {
+      if (propertyTable[i].trieRoot->isCore) {
+        freeTrieNode(propertyTable[i].trieRoot);
+        continue;
+      }
+      FREE_TRIE(propertyTable[i].rootWord);
+      destroyTrieNode(propertyTable[i].trieRoot);
+      propertyTable[i].rootWord = NULL;
+    }
+  }
+}
+
+TrieNode *getPropertySignatureTrie(const char *rootWord) {
+  uint32_t hash = hashString(rootWord, strlen(rootWord));
+  uint32_t index = hash & (TABLE_CAPACITY - 1);
+
+  for (;;) {
+    RegistryEntry *entry = &propertyTable[index];
+    if (entry->rootWord == NULL)
+      return NULL;
+    if (entry->rootHash == hash && strcmp(entry->rootWord, rootWord) == 0) {
+      return entry->trieRoot;
+    }
+    index = (index + 1) & (TABLE_CAPACITY - 1);
+  }
+}
+
+TrieNode *startPropertyPhrase(const char *rootWord, int length) {
+  uint32_t rHash = hashString(rootWord, length);
+  uint32_t index = rHash & (TABLE_CAPACITY - 1);
+
+  for (;;) {
+    RegistryEntry *entry = &propertyTable[index];
     if (entry->rootWord == NULL) {
       entry->rootHash = rHash;
       char *rootStr = malloc(length + 1);

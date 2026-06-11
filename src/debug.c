@@ -98,6 +98,16 @@ static int forIterLongInstruction(const char *name, Chunk *chunk, int offset) {
   return offset + 5;
 }
 
+static int invokeInstruction(const char *name, Chunk *chunk, int offset) {
+  uint16_t constant = (uint16_t)(chunk->code[offset + 1] << 8);
+  constant |= chunk->code[offset + 2];
+  uint8_t argCount = chunk->code[offset + 3];
+  printf("%-16s (%d args) %4d '", name, argCount, constant);
+  printValue(chunk->constants.values[constant]);
+  printf("'\n");
+  return offset + 4;
+}
+
 int disassembleInstruction(Chunk *chunk, int offset) {
   printf("%04d ", offset);
   if (offset > 0 && chunk->lines[offset] == chunk->lines[offset - 1]) {
@@ -154,7 +164,7 @@ int disassembleInstruction(Chunk *chunk, int offset) {
     return simpleInstruction("OP_MULTIPLY", offset);
   case OP_DIVIDE:
     return simpleInstruction("OP_DIVIDE", offset);
-  case OP_MOD: // <--- ADD THIS
+  case OP_MOD:
     return simpleInstruction("OP_MOD", offset);
   case OP_NOT:
     return simpleInstruction("OP_NOT", offset);
@@ -172,7 +182,7 @@ int disassembleInstruction(Chunk *chunk, int offset) {
     return shortInstruction("OP_BUILD_LIST", chunk, offset);
   case OP_BUILD_DICT:
     return shortInstruction("OP_BUILD_DICT", chunk, offset);
-  case OP_BUILD_UNION: // <--- NEW!
+  case OP_BUILD_UNION:
     return shortInstruction("OP_BUILD_UNION", chunk, offset);
   case OP_CALL:
     return shortInstruction("OP_CALL", chunk, offset);
@@ -224,8 +234,12 @@ int disassembleInstruction(Chunk *chunk, int offset) {
     return simpleInstruction("OP_SET_STICKY", offset);
   case OP_LOAD_STICKY:
     return simpleInstruction("OP_LOAD_STICKY", offset);
-  case OP_SHOW_REPL: // <--- ADD THIS
+  case OP_SHOW_REPL:
     return simpleInstruction("OP_SHOW_REPL", offset);
+  case OP_INVOKE:
+    return invokeInstruction("OP_INVOKE", chunk, offset);
+  case OP_DEFINE_EXTENSION_METHOD:
+    return constantLongInstruction("OP_DEFINE_EXTENSION_METHOD", chunk, offset);
   default:
     printf("Unknown opcode %d\n", instruction);
     return offset + 1;
@@ -393,6 +407,36 @@ void printAST(Node *node, int indent) {
     }
     printIndentLabel(indent, "[BODY]\n");
     printAST(node->as.function.body, indent + 2);
+    break;
+
+  case NODE_EXTENSION_METHOD:
+    printf("[EXTENSION METHOD: %.*s]\n", node->as.extensionMethod.mangledName.length,
+           node->as.extensionMethod.mangledName.start);
+    printIndentLabel(indent, "[RECEIVER TYPE]\n");
+    printAST(node->as.extensionMethod.receiverType, indent + 2);
+    for (int i = 0; i < node->as.extensionMethod.paramCount; i++) {
+      for (int j = 0; j <= indent; j++) {
+        printf((j == indent) ? " ├─ Param: %.*s (Type:)\n" : " │  ",
+               node->as.extensionMethod.parameters[i].length,
+               node->as.extensionMethod.parameters[i].start);
+      }
+      printAST(node->as.extensionMethod.paramTypes[i], indent + 2);
+    }
+    printIndentLabel(indent, "[BODY]\n");
+    printAST(node->as.extensionMethod.body, indent + 2);
+    break;
+
+  case NODE_PHRASAL_METHOD_CALL:
+    printf("[PHRASAL METHOD CALL: %.*s]\n", node->as.phrasalMethodCall.mangledName.length,
+           node->as.phrasalMethodCall.mangledName.start);
+    printIndentLabel(indent, "[TARGET]\n");
+    printAST(node->as.phrasalMethodCall.target, indent + 2);
+    if (node->as.phrasalMethodCall.argCount > 0) {
+      printIndentLabel(indent, "[ARGUMENTS]\n");
+      for (int i = 0; i < node->as.phrasalMethodCall.argCount; i++) {
+        printAST(node->as.phrasalMethodCall.arguments[i], indent + 2);
+      }
+    }
     break;
 
   case NODE_UNION_TYPE:

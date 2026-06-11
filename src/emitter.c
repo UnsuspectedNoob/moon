@@ -17,7 +17,7 @@ int currentLine = 0;
 // COMPILER INITIALIZATION
 // ==========================================
 
-void initCompiler(Compiler *compiler, FunctionType type) {
+void initCompiler(Compiler *compiler, FunctionType type, Token *receiverName) {
   compiler->enclosing = current;
   compiler->function = NULL;
   compiler->type = type;
@@ -42,8 +42,12 @@ void initCompiler(Compiler *compiler, FunctionType type) {
   local->depth = 0;
   local->isCaptured = false;
   local->slot = 0;
-  local->name.start = "";
-  local->name.length = 0;
+  if (receiverName != NULL) {
+    local->name = *receiverName;
+  } else {
+    local->name.start = "";
+    local->name.length = 0;
+  }
 }
 
 ObjFunction *endCompiler() {

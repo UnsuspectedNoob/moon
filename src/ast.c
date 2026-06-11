@@ -372,6 +372,57 @@ Node *newPhrasalCallNode(Token mangledName, Node **args, int argCount,
   return node;
 }
 
+Node *newPhrasalMethodCallNode(Node *target, Token mangledName, Node **args, int argCount, int line) {
+  Node *node = allocateNode(NODE_PHRASAL_METHOD_CALL, line);
+  if (target != NULL && target->usesIt) {
+    node->usesIt = true;
+  }
+  if (args != NULL) {
+    for (int i = 0; i < argCount; i++) {
+      if (args[i] != NULL && args[i]->usesIt)
+        node->usesIt = true;
+    }
+  }
+  node->as.phrasalMethodCall.target = target;
+  node->as.phrasalMethodCall.mangledName = mangledName;
+  node->as.phrasalMethodCall.argCount = argCount;
+  node->as.phrasalMethodCall.arguments = ALLOCATE(Node *, argCount);
+
+  if (target != NULL)
+    target->parent = node;
+
+  for (int i = 0; i < argCount; i++) {
+    node->as.phrasalMethodCall.arguments[i] = args[i];
+    if (args[i] != NULL)
+      args[i]->parent = node;
+  }
+  return node;
+}
+
+Node *newExtensionMethodNode(Token mangledName, Token receiverName, Node *receiverType, Token *parameters, Node **paramTypes, int paramCount, Node *body, int line) {
+  Node *node = allocateNode(NODE_EXTENSION_METHOD, line);
+  node->as.extensionMethod.mangledName = mangledName;
+  node->as.extensionMethod.receiverName = receiverName;
+  node->as.extensionMethod.receiverType = receiverType;
+  node->as.extensionMethod.paramCount = paramCount;
+  node->as.extensionMethod.parameters = ALLOCATE(Token, paramCount);
+  node->as.extensionMethod.paramTypes = ALLOCATE(Node *, paramCount);
+
+  if (receiverType != NULL)
+    receiverType->parent = node;
+
+  for (int i = 0; i < paramCount; i++) {
+    node->as.extensionMethod.parameters[i] = parameters[i];
+    node->as.extensionMethod.paramTypes[i] = paramTypes[i];
+    if (paramTypes[i] != NULL)
+      paramTypes[i]->parent = node;
+  }
+  node->as.extensionMethod.body = body;
+  if (body != NULL)
+    body->parent = node;
+  return node;
+}
+
 Node *newLetNode(Token *names, int nameCount, Node **exprs, int exprCount,
                  int line) {
   Node *node = allocateNode(NODE_LET, line);
@@ -690,9 +741,19 @@ void freeNode(Node *root) {
       break;
     case NODE_FUNCTION:
       writeNodeArray(&worklist, node->as.function.body);
-      // Push the new type nodes to the GC worklist!
       for (int i = 0; i < node->as.function.paramCount; i++)
         writeNodeArray(&worklist, node->as.function.paramTypes[i]);
+      break;
+    case NODE_EXTENSION_METHOD:
+      writeNodeArray(&worklist, node->as.extensionMethod.receiverType);
+      writeNodeArray(&worklist, node->as.extensionMethod.body);
+      for (int i = 0; i < node->as.extensionMethod.paramCount; i++)
+        writeNodeArray(&worklist, node->as.extensionMethod.paramTypes[i]);
+      break;
+    case NODE_PHRASAL_METHOD_CALL:
+      writeNodeArray(&worklist, node->as.phrasalMethodCall.target);
+      for (int i = 0; i < node->as.phrasalMethodCall.argCount; i++)
+        writeNodeArray(&worklist, node->as.phrasalMethodCall.arguments[i]);
       break;
     case NODE_SUBSCRIPT:
       writeNodeArray(&worklist, node->as.subscript.left);
@@ -784,8 +845,20 @@ void freeNode(Node *root) {
       FREE_ARRAY(Token, node->as.function.parameters,
                  node->as.function.paramCount);
       FREE_ARRAY(Node *, node->as.function.paramTypes,
-                 node->as.function.paramCount); // Free Node* array!
+                 node->as.function.paramCount);
       free((void *)node->as.function.name.start);
+      break;
+    case NODE_EXTENSION_METHOD:
+      FREE_ARRAY(Token, node->as.extensionMethod.parameters,
+                 node->as.extensionMethod.paramCount);
+      FREE_ARRAY(Node *, node->as.extensionMethod.paramTypes,
+                 node->as.extensionMethod.paramCount);
+      free((void *)node->as.extensionMethod.mangledName.start);
+      break;
+    case NODE_PHRASAL_METHOD_CALL:
+      FREE_ARRAY(Node *, node->as.phrasalMethodCall.arguments,
+                 node->as.phrasalMethodCall.argCount);
+      free((void *)node->as.phrasalMethodCall.mangledName.start);
       break;
     case NODE_TYPE_DECL:
       FREE_ARRAY(Token, node->as.typeDecl.propertyNames,

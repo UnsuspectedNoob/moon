@@ -697,6 +697,33 @@ static void walkNode(Node *node) {
     break;
   }
 
+  case NODE_PHRASAL_METHOD_CALL: {
+    // 1. Evaluate and Push Receiver
+    walkNode(node->as.phrasalMethodCall.target);
+    current->temporaries++; // <-- TRACK RECEIVER
+
+    // 2. Evaluate and Push Arguments
+    for (int i = 0; i < node->as.phrasalMethodCall.argCount; i++) {
+      walkNode(node->as.phrasalMethodCall.arguments[i]);
+      current->temporaries++; // <-- TRACK EACH ARGUMENT
+    }
+
+    // 3. Emit OP_INVOKE
+    uint16_t nameConstant = identifierConstant(&node->as.phrasalMethodCall.mangledName);
+    emitByte(OP_INVOKE);
+    emitByte((nameConstant >> 8) & 0xff);
+    emitByte(nameConstant & 0xff);
+    emitByte((uint8_t)node->as.phrasalMethodCall.argCount);
+
+    // UNTRACK RECEIVER + ALL ARGUMENTS
+    current->temporaries -= (1 + node->as.phrasalMethodCall.argCount);
+    // Since OP_INVOKE replaces the receiver + args with the result, 
+    // the result acts as 1 item on the stack. Wait, the caller handles adding 1 to temporaries if needed.
+    // Actually, Moon tracks temporaries by decrementing the popped items. 
+    // Usually expressions don't manually track the result in `temporaries`, the parent expression does.
+    break;
+  }
+
   case NODE_CAST: {
     walkNode(node->as.cast.left);
     current->temporaries++; // <-- TRACK LEFT
@@ -719,7 +746,7 @@ static void walkNode(Node *node) {
   case NODE_FUNCTION: {
     // 1. Boot up a new compiler context for this function
     Compiler fnCompiler;
-    initCompiler(&fnCompiler, TYPE_FUNCTION);
+    initCompiler(&fnCompiler, TYPE_FUNCTION, NULL);
 
     fnCompiler.function->name =
         copyString(node->as.function.name.start, node->as.function.name.length);
@@ -758,6 +785,49 @@ static void walkNode(Node *node) {
 
     // (Note: We skip the local scope logic for methods. Multiple Dispatch
     // methods must be globally accessible).
+    break;
+  }
+
+  case NODE_EXTENSION_METHOD: {
+    Compiler fnCompiler;
+    initCompiler(&fnCompiler, TYPE_FUNCTION, &node->as.extensionMethod.receiverName);
+
+    fnCompiler.function->name =
+        copyString(node->as.extensionMethod.mangledName.start, node->as.extensionMethod.mangledName.length);
+
+    beginScope();
+    
+    // Now inject the parameters!
+    for (int i = 0; i < node->as.extensionMethod.paramCount; i++) {
+      fnCompiler.function->arity++;
+      addLocal(node->as.extensionMethod.parameters[i]);
+      markInitialized();
+    }
+
+    walkNode(node->as.extensionMethod.body);
+    ObjFunction *fn = endCompiler();
+
+    // Push Receiver Type
+    walkNode(node->as.extensionMethod.receiverType);
+    current->temporaries++;
+
+    // Push Param Types
+    for (int i = 0; i < node->as.extensionMethod.paramCount; i++) {
+      walkNode(node->as.extensionMethod.paramTypes[i]);
+      current->temporaries++;
+    }
+
+    // Push Function
+    uint8_t fnConstant = makeConstant(OBJ_VAL(fn));
+    emitBytes(OP_CONSTANT, fnConstant);
+    current->temporaries++;
+
+    uint16_t globalName = identifierConstant(&node->as.extensionMethod.mangledName);
+    emitByte(OP_DEFINE_EXTENSION_METHOD);
+    emitByte((globalName >> 8) & 0xff);
+    emitByte(globalName & 0xff);
+
+    current->temporaries -= (1 + node->as.extensionMethod.paramCount + 1);
     break;
   }
 
@@ -973,7 +1043,7 @@ ObjFunction *generateCode(Node *rootAST) {
 
   // 1. Boot up the compiler scope tracking
   Compiler compiler;
-  initCompiler(&compiler, TYPE_SCRIPT);
+  initCompiler(&compiler, TYPE_SCRIPT, NULL);
   current = &compiler;
 
   // 2. Fire the Tree Walker!

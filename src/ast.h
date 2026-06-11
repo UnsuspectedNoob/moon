@@ -43,7 +43,9 @@ typedef enum {
   NODE_UNION_TYPE,
   NODE_COMPREHENSION,
   NODE_KEEP,
-  NODE_CHAIN
+  NODE_CHAIN,
+  NODE_PHRASAL_METHOD_CALL,
+  NODE_EXTENSION_METHOD
 } NodeType;
 
 // Forward declaration
@@ -113,6 +115,13 @@ typedef struct {
   Token *phraseTokens;
   int phraseTokenCount;
 } PhrasalCallPayload;
+
+typedef struct {
+  Node *target;
+  Token mangledName;
+  Node **arguments;
+  int argCount;
+} PhrasalMethodCallPayload;
 typedef struct {
   Node **parts;
   int partCount;
@@ -164,6 +173,16 @@ typedef struct {
   int paramCount;
   Node *body;
 } FunctionPayload;
+
+typedef struct {
+  Token mangledName;
+  Token receiverName; // e.g., 'p' in let (p: Player)'s...
+  Node *receiverType;
+  Token *parameters;
+  Node **paramTypes;
+  int paramCount;
+  Node *body;
+} ExtensionMethodPayload;
 
 typedef struct {
   Token name;
@@ -245,6 +264,8 @@ struct sNode {
     ComprehensionPayload comprehension;
     KeepPayload keepStmt;
     ChainPayload chain;
+    PhrasalMethodCallPayload phrasalMethodCall;
+    ExtensionMethodPayload extensionMethod;
   } as;
 };
 
@@ -276,6 +297,8 @@ Node *newSkipNode(int line);
 
 Node *newPhrasalCallNode(Token mangledName, Node **args, int argCount, Token *phraseTokens, int phraseTokenCount,
                          int line);
+Node *newPhrasalMethodCallNode(Node *target, Token mangledName, Node **args, int argCount, int line);
+Node *newExtensionMethodNode(Token mangledName, Token receiverName, Node *receiverType, Token *parameters, Node **paramTypes, int paramCount, Node *body, int line);
 
 Node *newListNode(Node **elements, int count, int line);
 Node *newTupleNode(Node **elements, int count, int line);

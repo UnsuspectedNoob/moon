@@ -66,6 +66,8 @@ typedef enum {
   OP_SET_STICKY,
   OP_LOAD_STICKY,
   OP_SHOW_REPL,
+  OP_INVOKE,
+  OP_DEFINE_EXTENSION_METHOD,
 } OpCode;
 
 typedef struct {

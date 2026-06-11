@@ -445,6 +445,14 @@ static Node *variable() {
   TrieNode *currentNode = getSignatureTrie(rootWord);
 
   if (currentNode == NULL) {
+    if (rootToken.length == 2 && memcmp(rootToken.start, "my", 2) == 0) {
+      if (check(TOKEN_IDENTIFIER)) {
+        advance();
+        Token propertyToken = parser.previous;
+        Node *myVar = newVariableNode(rootToken, rootToken.line);
+        return newPropertyNode(myVar, propertyToken, propertyToken.line);
+      }
+    }
     return newVariableNode(rootToken, rootToken.line);
   }
 
@@ -1075,8 +1083,132 @@ static Node *range(Node *left) {
 static Node *possessive(Node *left) {
   int line = parser.previous.line;
 
-  // Moon's Property Accessor!
-  // e.g. `player's health`
+  if (parser.current.type == TOKEN_IDENTIFIER) {
+    Token rootToken = parser.current;
+    char rootWord[256] = {0};
+    snprintf(rootWord, sizeof(rootWord), "%.*s", rootToken.length, rootToken.start);
+
+    TrieNode *currentNode = getPropertySignatureTrie(rootWord);
+
+    if (currentNode != NULL) {
+      advance(); // consume the root word
+
+      NodeArray args;
+      initNodeArray(&args);
+
+      TrieNode *startNode = currentNode;
+      TrieNode *lastGoodState = currentNode->isTerminal ? currentNode : NULL;
+
+      while (currentNode->childCount > 0) {
+        uint32_t nextHash = hashString(parser.current.start, parser.current.length);
+        TrieNode *matchedLabel = NULL;
+        bool expectsArgument = false;
+
+        for (int i = 0; i < currentNode->childCount; i++) {
+          TrieNode *child = currentNode->children[i];
+          if (child->type == NODE_LABEL && child->labelHash == nextHash) {
+            matchedLabel = child;
+          } else if (child->type == NODE_ARGUMENT) {
+            expectsArgument = true;
+          }
+        }
+
+        if (matchedLabel != NULL) {
+          advance();
+          currentNode = matchedLabel;
+          if (currentNode->isTerminal) lastGoodState = currentNode;
+          continue;
+        }
+
+        if (expectsArgument && canStartExpression(parser.current.type)) {
+          int labelsPushed = 0;
+          for (int i = 0; i < currentNode->childCount; i++) {
+            if (currentNode->children[i]->type == NODE_ARGUMENT) {
+              TrieNode *ac = currentNode->children[i];
+              for (int j = 0; j < ac->childCount; j++) {
+                if (ac->children[j]->type == NODE_LABEL) {
+                  expectedLabelStack[expectedLabelCount].hash = ac->children[j]->labelHash;
+                  expectedLabelStack[expectedLabelCount].depth = groupingDepth;
+                  expectedLabelCount++;
+                  labelsPushed++;
+                }
+              }
+            }
+          }
+
+          NodeArray tempArgs;
+          initNodeArray(&tempArgs);
+          Node *arg = expression();
+          if (arg == NULL) {
+            for (int i = 0; i < tempArgs.count; i++) freeNode(tempArgs.items[i]);
+            freeNodeArray(&tempArgs);
+            break;
+          }
+          if (arg->type == NODE_TUPLE) {
+            for (int j = 0; j < arg->as.tuple.count; j++) writeNodeArray(&tempArgs, arg->as.tuple.items[j]);
+            free(arg->as.tuple.items); free(arg);
+          } else if (arg->type == NODE_GROUPING) {
+            writeNodeArray(&tempArgs, arg->as.singleExpr.expression);
+            free(arg);
+          } else writeNodeArray(&tempArgs, arg);
+
+          expectedLabelCount -= labelsPushed;
+
+          TrieNode *matchedArgChild = NULL;
+          for (int i = 0; i < currentNode->childCount; i++) {
+            if (currentNode->children[i]->type == NODE_ARGUMENT && currentNode->children[i]->arity == tempArgs.count) {
+              matchedArgChild = currentNode->children[i];
+              break;
+            }
+          }
+
+          if (matchedArgChild != NULL) {
+            for (int i = 0; i < tempArgs.count; i++) writeNodeArray(&args, tempArgs.items[i]);
+            freeNodeArray(&tempArgs);
+            currentNode = matchedArgChild;
+            if (currentNode->isTerminal) lastGoodState = currentNode;
+            continue;
+          } else {
+            for (int i = 0; i < tempArgs.count; i++) freeNode(tempArgs.items[i]);
+            freeNodeArray(&tempArgs);
+            break;
+          }
+        }
+        break;
+      }
+
+      if (lastGoodState != NULL) {
+        if (currentNode != lastGoodState) {
+          errorAt(&parser.previous, ERR_SYNTAX, "This property phrase looks incomplete.", "");
+          for (int i = 0; i < args.count; i++) freeNode(args.items[i]);
+          freeNodeArray(&args);
+          return newPropertyNode(left, rootToken, line);
+        }
+
+        Token mangledToken = rootToken;
+        mangledToken.start = my_strdup(lastGoodState->mangledName);
+        mangledToken.length = strlen(lastGoodState->mangledName);
+
+        for (int i = 0; i < args.count - 1; i++) {
+          validatePureExpression(args.items[i], "as a non-final argument in a property phrase");
+        }
+
+        Node *node = newPhrasalMethodCallNode(left, mangledToken, args.items, args.count, line);
+        freeNodeArray(&args);
+        return node;
+      }
+
+      if (currentNode != startNode) {
+        errorAt(&parser.previous, ERR_REFERENCE, "Unknown property phrase.", "");
+      }
+      for (int i = 0; i < args.count; i++) freeNode(args.items[i]);
+      freeNodeArray(&args);
+
+      return newPropertyNode(left, rootToken, line);
+    }
+  }
+
+  // Fallback
   consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
               "I was expecting a property name after the possessive 's.",
               "Provide the name of the property you want to access (e.g., "
@@ -1246,6 +1378,14 @@ static Node *parseLValue() {
               "Provide a target variable. For example: 'set score to 10'.");
 
   Node *lvalue = newVariableNode(parser.previous, parser.previous.line);
+
+  if (parser.previous.length == 2 && memcmp(parser.previous.start, "my", 2) == 0) {
+    if (check(TOKEN_IDENTIFIER)) {
+      advance();
+      Token propertyToken = parser.previous;
+      lvalue = newPropertyNode(lvalue, propertyToken, propertyToken.line);
+    }
+  }
 
   // The Recursive Modifier Loop: [ <expr> ] | . <expr> | 's <id>
   while (true) {
@@ -1564,6 +1704,8 @@ static Node *skipStatement() {
   return newSkipNode(parser.previous.line);
 }
 
+static Node *parsePropertySignatureBody(Token receiverName, Node *receiverType, int line);
+
 static Node *typeDeclaration() {
   int line = parser.previous.line;
   consumeHint(
@@ -1580,39 +1722,82 @@ static Node *typeDeclaration() {
   initTokenArray(&propertyNames);
   NodeArray defaultValues;
   initNodeArray(&defaultValues);
+  
+  NodeArray methods;
+  initNodeArray(&methods);
 
   ignoreNewlines();
 
   if (!check(TOKEN_END)) {
-    do {
+    while (!check(TOKEN_END) && !check(TOKEN_EOF)) {
       ignoreNewlines();
       if (check(TOKEN_END))
         break; // Allow trailing commas before 'end'
+
+      // Check for embedded methods using 'my'
+      if (check(TOKEN_IDENTIFIER) && parser.current.length == 2 && memcmp(parser.current.start, "my", 2) == 0) {
+        const char *next = parser.current.start + parser.current.length;
+        while (*next == ' ' || *next == '\t') next++;
+        
+        if (*next != ':' && *next != ',' && *next != '\n' && *next != '\r' && *next != '\0') {
+           advance(); // consume 'my'
+           Token receiverName = parser.previous;
+           Node *receiverType = newVariableNode(name, line); // name is from 'type Person:'
+           
+           Node *method = parsePropertySignatureBody(receiverName, receiverType, line);
+           writeNodeArray(&methods, method);
+
+           match(TOKEN_COMMA); // optional trailing comma
+           continue;
+        }
+      }
 
       consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
                   "I was expecting a property name here.",
                   "List the properties that belong to this type.");
       writeTokenArray(&propertyNames, parser.previous);
 
-      // If they type `be 300`, parse the 300. Otherwise, silently default to
-      // `nil`.
       if (match(TOKEN_COLON)) {
         writeNodeArray(&defaultValues, expression());
       } else {
         writeNodeArray(&defaultValues,
                        newLiteralNode(NIL_VAL, parser.previous.line));
       }
-    } while (match(TOKEN_COMMA));
+      
+      // we require comma unless we are at the end
+      if (!match(TOKEN_COMMA)) {
+        ignoreNewlines();
+        if (!check(TOKEN_END)) {
+          errorAt(&parser.current, ERR_SYNTAX, "Expected ',' between properties.", "");
+          break;
+        }
+      }
+    }
   }
 
   ignoreNewlines();
   consumeBlockEnd(typeStart, "type definition");
 
-  Node *node = newTypeNode(name, propertyNames.items, defaultValues.items,
+  Node *typeNode = newTypeNode(name, propertyNames.items, defaultValues.items,
                            propertyNames.count, line);
   freeTokenArray(&propertyNames);
   freeNodeArray(&defaultValues);
-  return node;
+
+  if (methods.count > 0) {
+    NodeArray stmts;
+    initNodeArray(&stmts);
+    writeNodeArray(&stmts, typeNode);
+    for (int i = 0; i < methods.count; i++) {
+      writeNodeArray(&stmts, methods.items[i]);
+    }
+    Node *blockNode = newBlockNode(stmts.items, stmts.count, line);
+    freeNodeArray(&stmts);
+    freeNodeArray(&methods);
+    return blockNode;
+  }
+  
+  freeNodeArray(&methods);
+  return typeNode;
 }
 
 // Helper to create our invisible ghost tokens
@@ -2206,6 +2391,112 @@ static Node *grouping() {
   }
 }
 
+static Node *propertySignatureDeclaration(int line) {
+  consumeHint(TOKEN_LEFT_PAREN, ERR_SYNTAX, "Expected '('", "");
+  
+  consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX, "Expected receiver name", "");
+  Token receiverName = parser.previous;
+  
+  Node *receiverType;
+  if (match(TOKEN_COLON)) {
+    ignoreNewlines();
+    receiverType = parseTypeAnnotation();
+  } else {
+    Token anyToken = {.type = TOKEN_IDENTIFIER, .start = "Any", .length = 3, .line = parser.previous.line};
+    receiverType = newVariableNode(anyToken, line);
+  }
+  
+  consumeHint(TOKEN_RIGHT_PAREN, ERR_SYNTAX, "Expected ')'", "");
+  consumeHint(TOKEN_POSSESSIVE, ERR_SYNTAX, "Expected ''s' after receiver declaration.", "");
+  
+  return parsePropertySignatureBody(receiverName, receiverType, line);
+}
+
+
+  
+static Node *parsePropertySignatureBody(Token receiverName, Node *receiverType, int line) {
+  consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX, "Expected property name.", "");
+  Token rootName = parser.previous;
+  
+  TokenArray parameters;
+  initTokenArray(&parameters);
+  NodeArray paramTypes;
+  initNodeArray(&paramTypes);
+  
+  char mangled[1024] = {0};
+  strncat(mangled, rootName.start, rootName.length);
+  
+  TrieNode *currentNode = startPropertyPhrase(rootName.start, rootName.length);
+  
+  if (check(TOKEN_COLON)) {
+    strcat(mangled, "$0");
+    finalizePhrase(currentNode, mangled);
+  } else {
+      bool lastWasLabel = false; 
+
+      while (!check(TOKEN_COLON) && !check(TOKEN_EOF) && !check(TOKEN_NEWLINE)) {
+        if (match(TOKEN_LEFT_PAREN)) {
+          lastWasLabel = false;
+          int segmentArity = 0;
+          if (!check(TOKEN_RIGHT_PAREN)) {
+            do {
+              consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
+                          "You opened a parameter definition but forgot to name the parameter.",
+                          "Give the parameter a name inside the parentheses.");
+              writeTokenArray(&parameters, parser.previous);
+
+              if (match(TOKEN_COLON)) {
+                ignoreNewlines();
+                writeNodeArray(&paramTypes, parseTypeAnnotation());
+              } else {
+                Token anyToken = {.type = TOKEN_IDENTIFIER, .start = "Any", .length = 3, .line = parser.previous.line};
+                writeNodeArray(&paramTypes, newVariableNode(anyToken, parser.previous.line));
+              }
+              segmentArity++;
+            } while (match(TOKEN_COMMA));
+          }
+          consumeHint(TOKEN_RIGHT_PAREN, ERR_SYNTAX, "Expected ')'", "");
+
+          char arityStr[32];
+          snprintf(arityStr, sizeof(arityStr), "$%d", segmentArity);
+          strcat(mangled, arityStr);
+
+          currentNode = addArgumentBranch(currentNode, segmentArity);
+        } else {
+          lastWasLabel = true;
+          advance();
+          strcat(mangled, "_");
+          strncat(mangled, parser.previous.start, parser.previous.length);
+
+          currentNode = addLabelBranch(currentNode, parser.previous.start, parser.previous.length);
+        }
+      }
+
+      if (lastWasLabel) {
+        strcat(mangled, "$0");
+      }
+      finalizePhrase(currentNode, mangled);
+  }
+  
+  consumeHint(TOKEN_COLON, ERR_SYNTAX, "Expected ':' to start property method body.", "");
+  Token blockOpener = parser.previous;
+  ignoreNewlines();
+  
+  TokenType functionEnds[] = {TOKEN_END};
+  Node *body = block(functionEnds, 1);
+  consumeBlockEnd(blockOpener, "property method declaration");
+  
+  Token mangledToken = rootName;
+  mangledToken.start = my_strdup(mangled);
+  mangledToken.length = strlen(mangled);
+  
+  Node *node = newExtensionMethodNode(mangledToken, receiverName, receiverType, parameters.items, paramTypes.items, parameters.count, body, line);
+  
+  freeTokenArray(&parameters);
+  freeNodeArray(&paramTypes);
+  return node;
+}
+
 static Node *declaration() {
   ignoreNewlines();
   if (check(TOKEN_EOF))
@@ -2215,7 +2506,12 @@ static Node *declaration() {
   if (match(TOKEN_TYPE)) {    // <--- NEW
     decl = typeDeclaration(); // <--- NEW
   } else if (match(TOKEN_LET)) {
-    decl = letDeclaration();
+    int line = parser.previous.line;
+    if (check(TOKEN_LEFT_PAREN)) {
+      decl = propertySignatureDeclaration(line);
+    } else {
+      decl = letDeclaration();
+    }
   } else {
     decl = statement();
   }
@@ -2285,6 +2581,7 @@ static void resetParserState() {
     // Destroy the old Signature Trie so deleted/edited functions don't haunt
     // the parser!
     freeSignatureTable();
+    freePropertySignatureTable();
   }
 }
 

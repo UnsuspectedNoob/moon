@@ -40,7 +40,7 @@ extern int currentLine;
 // ==========================================
 
 // Compiler State
-void initCompiler(Compiler *compiler, FunctionType type);
+void initCompiler(Compiler *compiler, FunctionType type, Token *receiverName);
 ObjFunction *endCompiler();
 
 // Scopes

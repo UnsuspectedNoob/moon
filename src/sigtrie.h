@@ -45,6 +45,12 @@ void finalizePhrase(TrieNode *endNode, const char *mangledName);
 // Used by the Parser to fetch the tree
 TrieNode *getSignatureTrie(const char *rootWord);
 
+// --- PROPERTY SIGNATURE TRIE ---
+void initPropertySignatureTable();
+void freePropertySignatureTable();
+TrieNode *getPropertySignatureTrie(const char *rootWord);
+TrieNode *startPropertyPhrase(const char *rootWord, int length);
+
 // Used by the Static Linker to register C-level natives
 void registerSignature(const char *root, const char *path, const char *mangledName);
 

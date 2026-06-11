@@ -88,13 +88,22 @@ end}
 type Vector3:
   x: 0.0,
   y: 0.0,
-  z: 0.0
+  z: 0.0,
+  
+  my move to (newX: Number) and (newY: Number):
+    set my x to newX
+    set my y to newY
+  end
 end
 
 type Player:
   name: "Unknown",
   health: 100,
-  position: Vector3 {} # Nested default instantiation
+  position: Vector3 {}, # Nested default instantiation
+  
+  my battle cry:
+    show "`my name` charges forward with `my health` health!"
+  end
 end
 
 # 9. INSTANTIATION & OVERRIDES
@@ -118,6 +127,28 @@ end
 let process (data: String or List):
   show "Processing a string or a list!"
 end
+
+type Enemy:
+  kind: "Goblin",
+  health: 50
+end
+
+let describe (entity: Player or Enemy)'s status:
+  if entity as Type is Player:
+    show "The valiant player `entity's name` has `entity's health` health remaining."
+  else:
+    show "A wild `entity's kind` appears with `entity's health` health."
+  end
+end
+
+# Test embedded methods
+let p3 be Player with name: "Emrys" end
+p3's battle cry
+
+# Test union extension methods
+describe p3's status
+let e1 be Enemy {}
+describe e1's status
 
 # 11. THE STANDARD LIBRARY (Built-ins)
 

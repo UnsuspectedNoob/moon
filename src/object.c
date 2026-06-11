@@ -527,5 +527,68 @@ void stringifyValueToBuffer(Value value, int indent, StringBuffer* sb) {
     return;
   }
 
+  // Fallbacks for other object types
+  if (IS_TYPE(value)) {
+    ObjType *type = AS_TYPE(value);
+    char buffer[256];
+    int len = snprintf(buffer, sizeof(buffer), "<type %s>", type->name->chars);
+    appendBuffer(sb, buffer, len);
+    return;
+  }
+  
+  if (IS_INSTANCE(value)) {
+    ObjInstance *inst = AS_INSTANCE(value);
+    char buffer[256];
+    int len = snprintf(buffer, sizeof(buffer), "<%s instance>", inst->type->name->chars);
+    appendBuffer(sb, buffer, len);
+    return;
+  }
+  
+  if (IS_RANGE(value)) {
+    ObjRange *range = AS_RANGE(value);
+    char buffer[256];
+    int len = snprintf(buffer, sizeof(buffer), "<%.14g to %.14g>", range->start, range->end);
+    appendBuffer(sb, buffer, len);
+    return;
+  }
+
+  if (IS_FUNCTION(value)) {
+    ObjFunction *fn = AS_FUNCTION(value);
+    if (fn->name == NULL) {
+      appendBuffer(sb, "<script>", 8);
+    } else {
+      char buffer[256];
+      int len = snprintf(buffer, sizeof(buffer), "<fn %s>", fn->name->chars);
+      appendBuffer(sb, buffer, len);
+    }
+    return;
+  }
+
+  if (IS_MULTI_FUNCTION(value)) {
+    ObjMultiFunction *mfn = AS_MULTI_FUNCTION(value);
+    char buffer[256];
+    int len = snprintf(buffer, sizeof(buffer), "<multi-fn %s>", mfn->name->chars);
+    appendBuffer(sb, buffer, len);
+    return;
+  }
+
+  if (IS_NATIVE(value)) {
+    appendBuffer(sb, "<native fn>", 11);
+    return;
+  }
+
+  if (IS_UNION(value)) {
+    appendBuffer(sb, "<union type>", 12);
+    return;
+  }
+
+  if (IS_MODULE(value)) {
+    ObjModule *mod = AS_MODULE(value);
+    char buffer[256];
+    int len = snprintf(buffer, sizeof(buffer), "<module %s>", mod->name->chars);
+    appendBuffer(sb, buffer, len);
+    return;
+  }
+
   appendBuffer(sb, "<object>", 8);
 }

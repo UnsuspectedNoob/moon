@@ -116,7 +116,7 @@ end
 if 10 < fetchValue <= 100:
   show "It works natively!"
 end
-show "fetchValue was called: " + fetchCount + " times (should be 1!)."
+show "fetchValue was called: `fetchCount` times (should be 1!)."
 
 printTitle "8. Action Statements & Modifiers"
 let counter be 0
@@ -194,7 +194,32 @@ show slice
 let backwards be list[end to 1]
 show backwards
 
-let midSlice be list[end / 2 to 1]
-show midSlice
+printTitle "13. Embedded & Extension Methods"
+type Warrior:
+  name, health, damage,
+  my attack description:
+    give "`my name` swings their sword for `my damage` damage!"
+  end
+end
+
+type Mage:
+  name, health, mana,
+  my attack description:
+    give "`my name` casts a spell using `my mana` mana!"
+  end
+end
+
+let w be Warrior with name: "Arthur", health: 100, damage: 25 end
+let m be Mage with name: "Merlin", health: 70, mana: 50 end
+
+show w's attack description
+show m's attack description
+
+let describe (entity: Warrior or Mage)'s status:
+  give "`entity's name` is ready for battle with `entity's health` health remaining."
+end
+
+show describe w's status
+show describe m's status
 
 show "Showcase executed successfully!"
