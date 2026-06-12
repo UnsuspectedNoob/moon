@@ -487,6 +487,25 @@ static Value resolveOverload(ObjMultiFunction *multi, int argCount, Value *args,
 
   return bestMethodVal;
 }
+// --- UNION SIMPLIFICATION LOGIC ---
+static void flattenUnion(Value val, ValueArray *arr, bool *hasAny) {
+  if (IS_UNION(val)) {
+    ObjUnion *unionObj = AS_UNION(val);
+    for (int i = 0; i < unionObj->count; i++) {
+      flattenUnion(unionObj->types[i], arr, hasAny);
+    }
+  } else {
+    if (AS_OBJ(val) == (Obj *)vm.anyType) {
+      *hasAny = true;
+      return;
+    }
+    // Deduplicate
+    for (int i = 0; i < arr->count; i++) {
+      if (arr->values[i] == val) return;
+    }
+    writeValueArray(arr, val);
+  }
+}
 
 // Run()
 static InterpretResult run() {
@@ -1188,25 +1207,38 @@ TARGET_OP_BUILD_UNION: {
   uint16_t count = READ_SHORT();
   EXPECT_STACK(count);
 
-  // 1. Create the Union object and protect it from GC
-  ObjUnion *unionObj = newUnion(count);
-  push(OBJ_VAL(unionObj));
+  Value *typesStart = vm.stackTop - count;
 
-  // 2. Extract the Blueprints from the stack
-  Value *typesStart = vm.stackTop - 1 - count;
+  ValueArray flattenedTypes;
+  initValueArray(&flattenedTypes);
+  bool hasAny = false;
+
   for (int i = 0; i < count; i++) {
-    if (!IS_TYPE(typesStart[i])) {
+    if (!IS_TYPE(typesStart[i]) && !IS_UNION(typesStart[i])) {
+      freeValueArray(&flattenedTypes);
       THROW_ERROR(ERR_TYPE, "Unions can only contain valid Type Blueprints.",
                   "Invalid type inside Union.");
     }
-    unionObj->types[i] = typesStart[i];
+    flattenUnion(typesStart[i], &flattenedTypes, &hasAny);
   }
 
-  // 3. Cleanup: Pop the union temporarily, pop the raw types, push the finished
-  // union
-  pop();
-  vm.stackTop -= count;
-  push(OBJ_VAL(unionObj));
+  vm.stackTop -= count; // Pop the raw types off
+
+  if (hasAny) {
+    freeValueArray(&flattenedTypes);
+    push(OBJ_VAL(vm.anyType));
+  } else if (flattenedTypes.count == 1) {
+    push(flattenedTypes.values[0]);
+    freeValueArray(&flattenedTypes);
+  } else {
+    ObjUnion *unionObj = newUnion(flattenedTypes.count);
+    push(OBJ_VAL(unionObj)); // Protect from GC during copying
+    for (int i = 0; i < flattenedTypes.count; i++) {
+      unionObj->types[i] = flattenedTypes.values[i];
+    }
+    freeValueArray(&flattenedTypes);
+  }
+
   DISPATCH();
 }
 

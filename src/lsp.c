@@ -266,8 +266,7 @@ static void registerBlueprint(const char *name, Token *props, int propCount) {
   if (lspBlueprintCount >= 50)
     return;
 
-  strncpy(lspBlueprints[lspBlueprintCount].name, name, 63);
-  lspBlueprints[lspBlueprintCount].name[63] = '\0';
+  snprintf(lspBlueprints[lspBlueprintCount].name, sizeof(lspBlueprints[lspBlueprintCount].name), "%s", name);
 
   int maxProps = propCount < 20 ? propCount : 20;
   lspBlueprints[lspBlueprintCount].propCount = maxProps;
@@ -600,8 +599,8 @@ static void analyzeNode(Node *node) {
 
       if (bestMatch != NULL) {
         snprintf(d->message, sizeof(d->message),
-                 "Reference Error: Undefined variable '%s'.\n\nHint: Did you "
-                 "mean '%s'?",
+                 "Reference Error: Undefined variable '%.256s'.\n\nHint: Did you "
+                 "mean '%.256s'?",
                  varName, bestMatch);
       } else {
         snprintf(d->message, sizeof(d->message),
@@ -1001,9 +1000,9 @@ static void sendHoverResponse(cJSON *id, int cursorLine, int cursorCol) {
       } else {
         // It's a normal variable
         snprintf(markdown, sizeof(markdown),
-                 "### MOON Variable: `%s`\n"
-                 "**Inferred Type:** `%s`\n\n"
-                 "*Scope Depth: %d*%s",
+                 "### MOON Variable: `%.256s`\n"
+                 "**Inferred Type:** `%.256s`\n\n"
+                 "*Scope Depth: %d*%.2048s",
                  lspSymbols[i].name, typeStr, lspSymbols[i].depth, docSection);
       }
 

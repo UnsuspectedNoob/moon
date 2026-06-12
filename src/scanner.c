@@ -304,19 +304,17 @@ static Token identifier() {
 }
 
 static Token number() {
-  // --- THE HEX/BINARY FIX ---
-  if (peek() == '0') {
-    char next = peekNext();
+  if (scanner.start[0] == '0') {
+    while (peek() == '0') advance();
+    char next = peek();
     if (next == 'x' || next == 'X') {
-      advance();
-      advance(); // Consume 0x
+      advance(); // Consume x
       while (isDigit(peek()) || (peek() >= 'a' && peek() <= 'f') ||
              (peek() >= 'A' && peek() <= 'F'))
         advance();
       return makeToken(TOKEN_NUMBER);
     } else if (next == 'b' || next == 'B') {
-      advance();
-      advance(); // Consume 0b
+      advance(); // Consume b
       while (peek() == '0' || peek() == '1')
         advance();
       return makeToken(TOKEN_NUMBER);

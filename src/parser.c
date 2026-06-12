@@ -422,7 +422,20 @@ static Node *interpolation() {
 }
 
 static Node *number() {
-  double value = strtod(parser.previous.start, NULL);
+  const char *start = parser.previous.start;
+  double value;
+
+  int i = 0;
+  while (start[i] == '0') i++;
+
+  if (start[i] == 'x' || start[i] == 'X') {
+    value = (double)strtoull(start + i + 1, NULL, 16);
+  } else if (start[i] == 'b' || start[i] == 'B') {
+    value = (double)strtoull(start + i + 1, NULL, 2);
+  } else {
+    value = strtod(start, NULL);
+  }
+
   return newLiteralNode(NUMBER_VAL(value), parser.previous.line);
 }
 
@@ -1715,13 +1728,19 @@ static Node *skipStatement() {
 }
 
 static Node *parsePropertySignatureBody(Token receiverName, Node *receiverType, int line);
-
+static Node *parseTypeAnnotation();
 static Node *typeDeclaration() {
   int line = parser.previous.line;
   consumeHint(
       TOKEN_IDENTIFIER, ERR_SYNTAX, "You started defining a type but didn't give it a name.",
       "Every type needs a unique name, and I recommend capitalizing it. (e.g., 'type Player:')");
   Token name = parser.previous;
+  
+  if (match(TOKEN_IS)) {
+    Node *aliasType = parseTypeAnnotation();
+    return newLetNode(&name, 1, &aliasType, 1, line);
+  }
+
   consumeHint(TOKEN_COLON, ERR_SYNTAX,
               "This type definition is missing the colon separator.",
               "Type definitions must begin with a colon before listing properties.");

@@ -239,17 +239,36 @@ void printObject(Value value) {
     printf("<%s instance>", AS_INSTANCE(value)->type->name->chars);
     break;
 
-  case OBJ_MULTI_FUNCTION:
-    printf("<multi-fn %s>", AS_MULTI_FUNCTION(value)->name->chars);
+  case OBJ_MULTI_FUNCTION: {
+    ObjMultiFunction *multi = AS_MULTI_FUNCTION(value);
+    printf("<multi-fn %s (", multi->name->chars);
+    for (int i = 0; i < multi->methodCount; i++) {
+       printf("[");
+       for (int j = 0; j < multi->arity; j++) {
+         printObject(multi->signatures[i][j]);
+         if (j < multi->arity - 1) printf(", ");
+       }
+       printf("]");
+       if (i < multi->methodCount - 1) printf(" | ");
+    }
+    printf(")>");
     break;
+  }
 
   case OBJ_NATIVE:
     printf("<native fn>");
     break;
 
-  case OBJ_UNION:
-    printf("<union type>");
+  case OBJ_UNION: {
+    ObjUnion *unionObj = AS_UNION(value);
+    printf("<union [");
+    for (int i = 0; i < unionObj->count; i++) {
+      printObject(unionObj->types[i]);
+      if (i < unionObj->count - 1) printf(", ");
+    }
+    printf("]>");
     break;
+  }
 
   default:
     printf("<unknown>");
@@ -567,8 +586,18 @@ void stringifyValueToBuffer(Value value, int indent, StringBuffer* sb) {
   if (IS_MULTI_FUNCTION(value)) {
     ObjMultiFunction *mfn = AS_MULTI_FUNCTION(value);
     char buffer[256];
-    int len = snprintf(buffer, sizeof(buffer), "<multi-fn %s>", mfn->name->chars);
+    int len = snprintf(buffer, sizeof(buffer), "<multi-fn %s (", mfn->name->chars);
     appendBuffer(sb, buffer, len);
+    for (int i = 0; i < mfn->methodCount; i++) {
+       appendBuffer(sb, "[", 1);
+       for (int j = 0; j < mfn->arity; j++) {
+         stringifyValueToBuffer(mfn->signatures[i][j], indent, sb);
+         if (j < mfn->arity - 1) appendBuffer(sb, ", ", 2);
+       }
+       appendBuffer(sb, "]", 1);
+       if (i < mfn->methodCount - 1) appendBuffer(sb, " | ", 3);
+    }
+    appendBuffer(sb, ")>", 2);
     return;
   }
 
@@ -578,7 +607,13 @@ void stringifyValueToBuffer(Value value, int indent, StringBuffer* sb) {
   }
 
   if (IS_UNION(value)) {
-    appendBuffer(sb, "<union type>", 12);
+    ObjUnion *unionObj = AS_UNION(value);
+    appendBuffer(sb, "<union [", 8);
+    for (int i = 0; i < unionObj->count; i++) {
+      stringifyValueToBuffer(unionObj->types[i], indent, sb);
+      if (i < unionObj->count - 1) appendBuffer(sb, ", ", 2);
+    }
+    appendBuffer(sb, "]>", 2);
     return;
   }
 
