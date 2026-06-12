@@ -1,16 +1,9 @@
-let cache (n):
-  give "Cache: running `n`"
-end
-
-let build cache (n):
-  give "Build Cache: running `n`"
-end
-
-let build (n):
-  give "Build: running `n`"
-end
-
-show build 20
-show cache 30
-show build cache 50
-show build (cache 300)
+show memory
+let list be [ 1 to 10000000 ]
+let x be [ 1 to 100000000 ]
+show gc
+set x to nil
+[ 1 to 1000000000 ]
+show memory
+gc
+show memory
