@@ -39,6 +39,13 @@ bool executeGetSubscript(Value seqVal, Value indexVal, Value *result) {
       int end = (int)range->end;
       int step = (int)range->step;
 
+      if (step == 0) {
+        runtimeErrorDetailed(ERR_RUNTIME,
+                             "The step size for slicing a list must be at least 1 or -1. Fractions less than 1 evaluate to 0.",
+                             "Slice step cannot be zero.");
+        return false;
+      }
+
       if (start < 0)
         start = list->count + start + 1;
       if (end < 0)
@@ -139,6 +146,13 @@ bool executeGetSubscript(Value seqVal, Value indexVal, Value *result) {
       int start = (int)range->start;
       int end = (int)range->end;
       int step = (int)range->step;
+
+      if (step == 0) {
+        runtimeErrorDetailed(ERR_RUNTIME,
+                             "The step size for slicing a string must be at least 1 or -1. Fractions less than 1 evaluate to 0.",
+                             "Slice step cannot be zero.");
+        return false;
+      }
 
       if (start < 0)
         start = str->length + start + 1;

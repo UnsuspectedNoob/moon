@@ -1239,7 +1239,15 @@ TARGET_OP_INSTANTIATE: {
   push(OBJ_VAL(instance)); // GC Protection
 
   // 1. INHERITANCE MERGE: Copy all default properties from the Blueprint
-  tableAddAll(&type->properties, &instance->fields);
+  // We ONLY copy data properties, NOT methods. Methods stay on the blueprint!
+  for (int i = 0; i < type->properties.capacity; i++) {
+    Entry *entry = &type->properties.entries[i];
+    if (!IS_EMPTY(entry->key) && !IS_TOMB(entry->key)) {
+      if (!IS_MULTI_FUNCTION(entry->value)) {
+        tableSet(&instance->fields, entry->key, entry->value);
+      }
+    }
+  }
 
   // 2. OVERRIDE MERGE: Apply the user's specific instantiation values
   for (int i = 0; i < propCount; i++) {
@@ -1329,8 +1337,20 @@ TARGET_OP_GET_PROPERTY: {
 
 TARGET_OP_SET_PROPERTY: {
   Value value = peek(0);
-  ObjString *name = READ_STRING();
   Value target = peek(1);
+  ObjString *name = READ_STRING();
+  
+  // Method Mutability Lockdown!
+  // If the Type has this key and it's a MultiFunction (method), BLOCK IT!
+  ObjType *type = getObjType(target);
+  Value blueprintValue;
+  if (tableGet(&type->properties, OBJ_VAL(name), &blueprintValue)) {
+    if (IS_MULTI_FUNCTION(blueprintValue)) {
+      THROW_ERROR(ERR_TYPE, 
+        "Cannot reassign a method defined on the Blueprint.",
+        "Method '%s' is immutable on instances of '%s'.", name->chars, type->name->chars);
+    }
+  }
 
   if (IS_INSTANCE(target)) {
     ObjInstance *instance = AS_INSTANCE(target);
@@ -1669,6 +1689,7 @@ TARGET_OP_GET_ITER_VALUE_LONG: {
 
 TARGET_OP_CALL: {
   int argCount = READ_SHORT();
+  uint16_t cacheIdx = READ_SHORT();
   EXPECT_STACK(argCount + 1);
 
   Value callee = peek(argCount);
@@ -1684,24 +1705,52 @@ TARGET_OP_CALL: {
     }
 
     Value *args = vm.stackTop - argCount;
-    bool isAmbiguous = false;
-    Value bestMethodVal = resolveOverload(multi, argCount, args, &isAmbiguous);
-
-    if (IS_NIL(bestMethodVal)) {
-      THROW_ERROR(ERR_REFERENCE,
-                  "The arguments you passed don't match any overloaded version "
-                  "of this function.",
-                  "No matching signature found.");
+    InlineCacheEntry *cache = &frame->function->chunk.caches.entries[cacheIdx];
+    
+    // --- IC FAST PATH ---
+    bool cacheHit = true;
+    if (cache->type == CACHE_CALL) {
+      for (int i = 0; i < argCount; i++) {
+        if (cache->argTypes[i] != (struct ObjType*)getObjType(args[i])) {
+          cacheHit = false;
+          break;
+        }
+      }
+    } else {
+      cacheHit = false;
     }
 
-    if (isAmbiguous) {
-      THROW_ERROR(ERR_RUNTIME,
-                  "Multiple methods match this call with the exact same "
-                  "specificity. Define an intersection method to clarify.",
-                  "Ambiguous Dispatch Error.");
+    Value bestMethodVal;
+    if (cacheHit) {
+      bestMethodVal = cache->cachedValue;
+    } else {
+      // --- SLOW PATH ---
+      bool isAmbiguous = false;
+      bestMethodVal = resolveOverload(multi, argCount, args, &isAmbiguous);
+
+      if (IS_NIL(bestMethodVal)) {
+        THROW_ERROR(ERR_REFERENCE,
+                    "The arguments you passed don't match any overloaded version "
+                    "of this function.",
+                    "No matching signature found.");
+      }
+
+      if (isAmbiguous) {
+        THROW_ERROR(ERR_RUNTIME,
+                    "Multiple methods match this call with the exact same "
+                    "specificity. Define an intersection method to clarify.",
+                    "Ambiguous multi-function call.");
+      }
+      
+      // Update the cache!
+      cache->type = CACHE_CALL;
+      for (int i = 0; i < argCount; i++) {
+        cache->argTypes[i] = (struct ObjType*)getObjType(args[i]);
+      }
+      cache->cachedValue = bestMethodVal;
     }
 
-    // Overwrite the multi-function with the resolved method
+    // Prepare for call
     callee = bestMethodVal;
     vm.stackTop[-1 - argCount] = callee;
   }
@@ -1977,50 +2026,87 @@ TARGET_OP_DEFINE_EXTENSION_METHOD: {
 TARGET_OP_INVOKE: {
   ObjString *name = READ_STRING();
   int argCount = READ_BYTE();
+  uint16_t cacheIdx = READ_SHORT();
   EXPECT_STACK(argCount + 1);
 
   Value receiver = peek(argCount);
   ObjType *receiverType = getObjType(receiver);
 
+  InlineCacheEntry *cache = &frame->function->chunk.caches.entries[cacheIdx];
   Value callee;
-  if (!tableGet(&receiverType->properties, OBJ_VAL(name), &callee)) {
-    THROW_ERROR(ERR_REFERENCE,
-                "Check the name of the property you're trying to access.",
-                "Property '%s' not found on type '%s'.", name->chars,
-                receiverType->name->chars);
-  }
-
-  if (IS_MULTI_FUNCTION(callee)) {
-    ObjMultiFunction *multi = AS_MULTI_FUNCTION(callee);
-
-    if (argCount != multi->arity) {
-      THROW_ERROR(
-          ERR_RUNTIME,
-          "Check the property signature to see how many values it requires.",
-          "Expected %d arguments but got %d.", multi->arity, argCount);
-    }
-
+  Value bestMethodVal;
+  
+  // --- IC FAST PATH ---
+  bool cacheHit = true;
+  if (cache->type == CACHE_INVOKE && cache->receiverType == (struct ObjType*)receiverType) {
     Value *args = vm.stackTop - argCount;
-    bool isAmbiguous = false;
-    Value bestMethodVal = resolveOverload(multi, argCount, args, &isAmbiguous);
-
-    if (IS_NIL(bestMethodVal)) {
-      THROW_ERROR(ERR_REFERENCE,
-                  "The arguments you passed don't match any overloaded version "
-                  "of this property.",
-                  "No matching signature found.");
+    for (int i = 0; i < argCount; i++) {
+      if (cache->argTypes[i] != (struct ObjType*)getObjType(args[i])) {
+        cacheHit = false;
+        break;
+      }
     }
-
-    if (isAmbiguous) {
-      THROW_ERROR(ERR_RUNTIME,
-                  "Multiple methods match this call with the exact same "
-                  "specificity. Define an intersection method to clarify.",
-                  "Ambiguous Dispatch Error.");
-    }
-
-    callee = bestMethodVal;
-    // Note: Do NOT overwrite the receiver at stackTop[-1 - argCount].
+  } else {
+    cacheHit = false;
   }
+
+  if (cacheHit) {
+    bestMethodVal = cache->cachedValue;
+  } else {
+    // --- SLOW PATH ---
+    if (!tableGet(&receiverType->properties, OBJ_VAL(name), &callee)) {
+      THROW_ERROR(ERR_REFERENCE,
+                  "Check the name of the property you're trying to access.",
+                  "Property '%s' not found on type '%s'.", name->chars,
+                  receiverType->name->chars);
+    }
+
+    if (IS_MULTI_FUNCTION(callee)) {
+      ObjMultiFunction *multi = AS_MULTI_FUNCTION(callee);
+
+      if (argCount != multi->arity) {
+        THROW_ERROR(
+            ERR_RUNTIME,
+            "Check the property signature to see how many values it requires.",
+            "Expected %d arguments but got %d.", multi->arity, argCount);
+      }
+
+      Value *args = vm.stackTop - argCount;
+      bool isAmbiguous = false;
+      bestMethodVal = resolveOverload(multi, argCount, args, &isAmbiguous);
+
+      if (IS_NIL(bestMethodVal)) {
+        THROW_ERROR(ERR_REFERENCE,
+                    "The arguments you passed don't match any overloaded version "
+                    "of this property.",
+                    "No matching signature found.");
+      }
+
+      if (isAmbiguous) {
+        THROW_ERROR(ERR_RUNTIME,
+                    "Multiple methods match this call with the exact same "
+                    "specificity. Define an intersection method to clarify.",
+                    "Ambiguous multi-function call.");
+      }
+      
+      // Update Cache!
+      cache->type = CACHE_INVOKE;
+      cache->receiverType = (struct ObjType*)receiverType;
+      for (int i = 0; i < argCount; i++) {
+        cache->argTypes[i] = (struct ObjType*)getObjType(args[i]);
+      }
+      cache->cachedValue = bestMethodVal;
+      
+    } else {
+      // If it's not a multi-function (like a closure or native function)
+      // We don't cache it for now, just fall back to standard call
+      bestMethodVal = callee;
+    }
+  }
+
+  // Common Call Path for MultiFunction
+  callee = bestMethodVal;
+    // Note: Do NOT overwrite the receiver at stackTop[-1 - argCount].
 
   if (IS_NATIVE(callee)) {
     NativeFn native = AS_NATIVE(callee);

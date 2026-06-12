@@ -179,7 +179,15 @@ static bool hydrateInstance(Value val, ObjType *targetType, Value *result) {
   ObjInstance *inst = newInstance(targetType);
   push(OBJ_VAL(inst));
 
-  tableAddAll(&targetType->properties, &inst->fields); // Load defaults
+  // Load defaults, but ignore methods!
+  for (int i = 0; i < targetType->properties.capacity; i++) {
+    Entry *entry = &targetType->properties.entries[i];
+    if (!IS_EMPTY(entry->key) && !IS_TOMB(entry->key)) {
+      if (!IS_MULTI_FUNCTION(entry->value)) {
+        tableSet(&inst->fields, entry->key, entry->value);
+      }
+    }
+  }
 
   for (int i = 0; i < d->fields.capacity; i++) {
     Entry *e = &d->fields.entries[i];

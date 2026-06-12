@@ -1,7 +1,17 @@
-moon/src/*.o
-moon/src/copy
-moon/moon
+src/*.o
+src/*.d
+src/copy
+moon
 moon_lsp.log
-moon/test
-moon/src/*.d
+*.log
+test
 core.*
+
+# Scratch and test files
+test_*.moon
+debug_output.txt
+
+# Editor / IDE
+.vscode/
+.idea/
+.DS_Store

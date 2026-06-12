@@ -102,10 +102,23 @@ static int invokeInstruction(const char *name, Chunk *chunk, int offset) {
   uint16_t constant = (uint16_t)(chunk->code[offset + 1] << 8);
   constant |= chunk->code[offset + 2];
   uint8_t argCount = chunk->code[offset + 3];
-  printf("%-16s (%d args) %4d '", name, argCount, constant);
+  uint16_t cacheIdx = (uint16_t)(chunk->code[offset + 4] << 8);
+  cacheIdx |= chunk->code[offset + 5];
+  
+  printf("%-16s (%d args) [cache: %d] %4d '", name, argCount, cacheIdx, constant);
   printValue(chunk->constants.values[constant]);
   printf("'\n");
-  return offset + 4;
+  return offset + 6;
+}
+
+static int callInstruction(const char *name, Chunk *chunk, int offset) {
+  uint16_t argCount = (uint16_t)(chunk->code[offset + 1] << 8);
+  argCount |= chunk->code[offset + 2];
+  uint16_t cacheIdx = (uint16_t)(chunk->code[offset + 3] << 8);
+  cacheIdx |= chunk->code[offset + 4];
+  
+  printf("%-16s (%d args) [cache: %d]\n", name, argCount, cacheIdx);
+  return offset + 5;
 }
 
 int disassembleInstruction(Chunk *chunk, int offset) {
@@ -185,7 +198,7 @@ int disassembleInstruction(Chunk *chunk, int offset) {
   case OP_BUILD_UNION:
     return shortInstruction("OP_BUILD_UNION", chunk, offset);
   case OP_CALL:
-    return shortInstruction("OP_CALL", chunk, offset);
+    return callInstruction("OP_CALL", chunk, offset);
   case OP_GET_PROPERTY:
     return constantLongInstruction("OP_GET_PROPERTY", chunk, offset);
   case OP_SET_PROPERTY:

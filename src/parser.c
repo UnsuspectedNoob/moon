@@ -152,6 +152,16 @@ void consume(TokenType type, const char *message) {
   consumeHint(type, ERR_SYNTAX, message, NULL);
 }
 
+static void consumeStatementEnd() {
+  if (check(TOKEN_NEWLINE) || check(TOKEN_EOF) || check(TOKEN_END) ||
+      check(TOKEN_ELSE) || check(TOKEN_THEN)) {
+    return;
+  }
+  
+  errorAt(&parser.current, ERR_SYNTAX, "I was expecting a newline after this statement.", 
+    "Make sure you only write one statement per line. If you are trying to write multiple statements, they must be separated by a newline.");
+}
+
 void synchronize() {
   parser.panicMode = false;
 
@@ -2514,6 +2524,10 @@ static Node *declaration() {
     }
   } else {
     decl = statement();
+  }
+
+  if (!parser.hadError) {
+    consumeStatementEnd();
   }
 
   if (parser.panicMode)

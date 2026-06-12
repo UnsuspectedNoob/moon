@@ -691,6 +691,10 @@ static void walkNode(Node *node) {
     uint16_t count = (uint16_t)node->as.phrasalCall.argCount;
     emitByte((count >> 8) & 0xff); // High byte
     emitByte(count & 0xff);        // Low byte
+    
+    int cacheIdx = addCacheEntry(currentChunk());
+    emitByte((cacheIdx >> 8) & 0xff);
+    emitByte(cacheIdx & 0xff);
 
     // UNTRACK CALLEE + ALL ARGUMENTS
     current->temporaries -= (1 + node->as.phrasalCall.argCount);
@@ -714,6 +718,10 @@ static void walkNode(Node *node) {
     emitByte((nameConstant >> 8) & 0xff);
     emitByte(nameConstant & 0xff);
     emitByte((uint8_t)node->as.phrasalMethodCall.argCount);
+    
+    int cacheIdx = addCacheEntry(currentChunk());
+    emitByte((cacheIdx >> 8) & 0xff);
+    emitByte(cacheIdx & 0xff);
 
     // UNTRACK RECEIVER + ALL ARGUMENTS
     current->temporaries -= (1 + node->as.phrasalMethodCall.argCount);

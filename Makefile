@@ -14,6 +14,10 @@ TARGET = moon
 # Default rule when you just type 'make'
 all: $(TARGET)
 
+# Release target for optimized performance
+release: CFLAGS = -O3 -std=c99 -Wall -Wextra -I./src -MMD -MP
+release: clean $(TARGET)
+
 # 3. Linking the final executable
 $(TARGET): $(OBJ)
 	$(CC) $(CFLAGS) -o $@ $^ -lm

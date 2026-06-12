@@ -646,8 +646,13 @@ static void analyzeNode(Node *node) {
         node->as.typeDecl.name.length < 63 ? node->as.typeDecl.name.length : 63;
     strncpy(typeName, node->as.typeDecl.name.start, len);
     typeName[len] = '\0';
+    
+    // THE FIX: Type Blueprints are ALWAYS global in MOON!
+    int oldScope = currentScopeDepth;
+    currentScopeDepth = 1;
     registerSymbol(typeName, LSP_TYPE_BLUEPRINT, NULL,
                    node->as.typeDecl.name.line, node->as.typeDecl.name.column);
+    currentScopeDepth = oldScope;
 
     addSemToken(node->as.typeDecl.name.line, node->as.typeDecl.name.column, len,
                 1, 1);
@@ -660,6 +665,35 @@ static void analyzeNode(Node *node) {
                   node->as.typeDecl.propertyNames[i].length, 9, 1);
       analyzeNode(node->as.typeDecl.defaultValues[i]);
     }
+    break;
+  }
+
+  case NODE_EXTENSION_METHOD: {
+    currentScopeDepth++;
+    
+    // Register the receiver (e.g., 'my')
+    char receiverName[64];
+    int len = node->as.extensionMethod.receiverName.length < 63 ? node->as.extensionMethod.receiverName.length : 63;
+    strncpy(receiverName, node->as.extensionMethod.receiverName.start, len);
+    receiverName[len] = '\0';
+    registerSymbol(receiverName, LSP_TYPE_BLUEPRINT, NULL,
+                   node->as.extensionMethod.receiverName.line,
+                   node->as.extensionMethod.receiverName.column);
+                   
+    // Register the parameters
+    for (int i = 0; i < node->as.extensionMethod.paramCount; i++) {
+      char paramName[64];
+      int pLen = node->as.extensionMethod.parameters[i].length < 63 ? node->as.extensionMethod.parameters[i].length : 63;
+      strncpy(paramName, node->as.extensionMethod.parameters[i].start, pLen);
+      paramName[pLen] = '\0';
+      registerSymbol(paramName, LSP_TYPE_UNKNOWN, NULL,
+                     node->as.extensionMethod.parameters[i].line,
+                     node->as.extensionMethod.parameters[i].column);
+    }
+    
+    analyzeNode(node->as.extensionMethod.body);
+    
+    if (!isWalkingPaused) popScope();
     break;
   }
 

@@ -70,17 +70,40 @@ typedef enum {
   OP_DEFINE_EXTENSION_METHOD,
 } OpCode;
 
+#define MAX_CACHE_ARGS 4
+
+typedef enum {
+  CACHE_EMPTY,
+  CACHE_INVOKE,
+  CACHE_CALL
+} CacheType;
+
+typedef struct {
+  CacheType type;
+  struct ObjType *receiverType;
+  struct ObjType *argTypes[MAX_CACHE_ARGS];
+  Value cachedValue;
+} InlineCacheEntry;
+
+typedef struct {
+  int capacity;
+  int count;
+  InlineCacheEntry *entries;
+} InlineCacheArray;
+
 typedef struct {
   int count;
   int capacity;
   uint8_t *code;        // The actual bytecode bytes
   int *lines;           // Line number for each byte (for debugging)
   ValueArray constants; // The pool of numbers/strings
+  InlineCacheArray caches; // The pool of inline cache entries
 } Chunk;
 
 void initChunk(Chunk *chunk);
 void freeChunk(Chunk *chunk);
 void writeChunk(Chunk *chunk, uint8_t byte, int line);
 int addConstant(Chunk *chunk, Value value);
+int addCacheEntry(Chunk *chunk);
 
 #endif
