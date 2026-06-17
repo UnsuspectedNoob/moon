@@ -104,8 +104,9 @@ static int invokeInstruction(const char *name, Chunk *chunk, int offset) {
   uint8_t argCount = chunk->code[offset + 3];
   uint16_t cacheIdx = (uint16_t)(chunk->code[offset + 4] << 8);
   cacheIdx |= chunk->code[offset + 5];
-  
-  printf("%-16s (%d args) [cache: %d] %4d '", name, argCount, cacheIdx, constant);
+
+  printf("%-16s (%d args) [cache: %d] %4d '", name, argCount, cacheIdx,
+         constant);
   printValue(chunk->constants.values[constant]);
   printf("'\n");
   return offset + 6;
@@ -116,7 +117,7 @@ static int callInstruction(const char *name, Chunk *chunk, int offset) {
   argCount |= chunk->code[offset + 2];
   uint16_t cacheIdx = (uint16_t)(chunk->code[offset + 3] << 8);
   cacheIdx |= chunk->code[offset + 4];
-  
+
   printf("%-16s (%d args) [cache: %d]\n", name, argCount, cacheIdx);
   return offset + 5;
 }
@@ -259,7 +260,7 @@ int disassembleInstruction(Chunk *chunk, int offset) {
   }
 }
 
-static void printIndentLabel(int indent, const char* label) {
+static void printIndentLabel(int indent, const char *label) {
   for (int i = 0; i <= indent; i++) {
     printf((i == indent) ? " ├─ %s" : " │  ", label);
   }
@@ -423,7 +424,8 @@ void printAST(Node *node, int indent) {
     break;
 
   case NODE_EXTENSION_METHOD:
-    printf("[EXTENSION METHOD: %.*s]\n", node->as.extensionMethod.mangledName.length,
+    printf("[EXTENSION METHOD: %.*s]\n",
+           node->as.extensionMethod.mangledName.length,
            node->as.extensionMethod.mangledName.start);
     printIndentLabel(indent, "[RECEIVER TYPE]\n");
     printAST(node->as.extensionMethod.receiverType, indent + 2);
@@ -440,7 +442,8 @@ void printAST(Node *node, int indent) {
     break;
 
   case NODE_PHRASAL_METHOD_CALL:
-    printf("[PHRASAL METHOD CALL: %.*s]\n", node->as.phrasalMethodCall.mangledName.length,
+    printf("[PHRASAL METHOD CALL: %.*s]\n",
+           node->as.phrasalMethodCall.mangledName.length,
            node->as.phrasalMethodCall.mangledName.start);
     printIndentLabel(indent, "[TARGET]\n");
     printAST(node->as.phrasalMethodCall.target, indent + 2);

@@ -9,11 +9,20 @@
 #include "memory.h"
 #include "table.h"
 
+#include <sys/time.h>
+
 static Value clockNative(int argCount, Value *args) {
   (void)args;
   if (argCount != 0)
     return NIL_VAL; // Arity Shield
+
+#ifdef _WIN32
   return NUMBER_VAL((double)clock() / CLOCKS_PER_SEC);
+#else
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  return NUMBER_VAL((double)tv.tv_sec + (double)tv.tv_usec / 1000000.0);
+#endif
 }
 
 static Value showNative(int argCount, Value *args) {

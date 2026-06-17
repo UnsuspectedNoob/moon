@@ -432,7 +432,8 @@ ObjType *getObjType(Value val) {
 // METHOD RESOLUTION
 // ==========================================
 
-static Value resolveOverload(ObjMultiFunction *multi, int argCount, Value *args, bool *isAmbiguous) {
+static Value resolveOverload(ObjMultiFunction *multi, int argCount, Value *args,
+                             bool *isAmbiguous) {
   Value bestMethodVal = NIL_VAL;
   int bestScore = -1;
   *isAmbiguous = false;
@@ -501,7 +502,8 @@ static void flattenUnion(Value val, ValueArray *arr, bool *hasAny) {
     }
     // Deduplicate
     for (int i = 0; i < arr->count; i++) {
-      if (arr->values[i] == val) return;
+      if (arr->values[i] == val)
+        return;
     }
     writeValueArray(arr, val);
   }
@@ -1371,16 +1373,17 @@ TARGET_OP_SET_PROPERTY: {
   Value value = peek(0);
   Value target = peek(1);
   ObjString *name = READ_STRING();
-  
+
   // Method Mutability Lockdown!
   // If the Type has this key and it's a MultiFunction (method), BLOCK IT!
   ObjType *type = getObjType(target);
   Value blueprintValue;
   if (tableGet(&type->properties, OBJ_VAL(name), &blueprintValue)) {
     if (IS_MULTI_FUNCTION(blueprintValue)) {
-      THROW_ERROR(ERR_TYPE, 
-        "Cannot reassign a method defined on the Blueprint.",
-        "Method '%s' is immutable on instances of '%s'.", name->chars, type->name->chars);
+      THROW_ERROR(ERR_TYPE,
+                  "Cannot reassign a method defined on the Blueprint.",
+                  "Method '%s' is immutable on instances of '%s'.", name->chars,
+                  type->name->chars);
     }
   }
 
@@ -1738,12 +1741,12 @@ TARGET_OP_CALL: {
 
     Value *args = vm.stackTop - argCount;
     InlineCacheEntry *cache = &frame->function->chunk.caches.entries[cacheIdx];
-    
+
     // --- IC FAST PATH ---
     bool cacheHit = true;
     if (cache->type == CACHE_CALL) {
       for (int i = 0; i < argCount; i++) {
-        if (cache->argTypes[i] != (struct ObjType*)getObjType(args[i])) {
+        if (cache->argTypes[i] != (struct ObjType *)getObjType(args[i])) {
           cacheHit = false;
           break;
         }
@@ -1761,10 +1764,11 @@ TARGET_OP_CALL: {
       bestMethodVal = resolveOverload(multi, argCount, args, &isAmbiguous);
 
       if (IS_NIL(bestMethodVal)) {
-        THROW_ERROR(ERR_REFERENCE,
-                    "The arguments you passed don't match any overloaded version "
-                    "of this function.",
-                    "No matching signature found.");
+        THROW_ERROR(
+            ERR_REFERENCE,
+            "The arguments you passed don't match any overloaded version "
+            "of this function.",
+            "No matching signature found.");
       }
 
       if (isAmbiguous) {
@@ -1773,11 +1777,11 @@ TARGET_OP_CALL: {
                     "specificity. Define an intersection method to clarify.",
                     "Ambiguous multi-function call.");
       }
-      
+
       // Update the cache!
       cache->type = CACHE_CALL;
       for (int i = 0; i < argCount; i++) {
-        cache->argTypes[i] = (struct ObjType*)getObjType(args[i]);
+        cache->argTypes[i] = (struct ObjType *)getObjType(args[i]);
       }
       cache->cachedValue = bestMethodVal;
     }
@@ -2067,13 +2071,14 @@ TARGET_OP_INVOKE: {
   InlineCacheEntry *cache = &frame->function->chunk.caches.entries[cacheIdx];
   Value callee;
   Value bestMethodVal;
-  
+
   // --- IC FAST PATH ---
   bool cacheHit = true;
-  if (cache->type == CACHE_INVOKE && cache->receiverType == (struct ObjType*)receiverType) {
+  if (cache->type == CACHE_INVOKE &&
+      cache->receiverType == (struct ObjType *)receiverType) {
     Value *args = vm.stackTop - argCount;
     for (int i = 0; i < argCount; i++) {
-      if (cache->argTypes[i] != (struct ObjType*)getObjType(args[i])) {
+      if (cache->argTypes[i] != (struct ObjType *)getObjType(args[i])) {
         cacheHit = false;
         break;
       }
@@ -2108,10 +2113,11 @@ TARGET_OP_INVOKE: {
       bestMethodVal = resolveOverload(multi, argCount, args, &isAmbiguous);
 
       if (IS_NIL(bestMethodVal)) {
-        THROW_ERROR(ERR_REFERENCE,
-                    "The arguments you passed don't match any overloaded version "
-                    "of this property.",
-                    "No matching signature found.");
+        THROW_ERROR(
+            ERR_REFERENCE,
+            "The arguments you passed don't match any overloaded version "
+            "of this property.",
+            "No matching signature found.");
       }
 
       if (isAmbiguous) {
@@ -2120,15 +2126,15 @@ TARGET_OP_INVOKE: {
                     "specificity. Define an intersection method to clarify.",
                     "Ambiguous multi-function call.");
       }
-      
+
       // Update Cache!
       cache->type = CACHE_INVOKE;
-      cache->receiverType = (struct ObjType*)receiverType;
+      cache->receiverType = (struct ObjType *)receiverType;
       for (int i = 0; i < argCount; i++) {
-        cache->argTypes[i] = (struct ObjType*)getObjType(args[i]);
+        cache->argTypes[i] = (struct ObjType *)getObjType(args[i]);
       }
       cache->cachedValue = bestMethodVal;
-      
+
     } else {
       // If it's not a multi-function (like a closure or native function)
       // We don't cache it for now, just fall back to standard call
@@ -2138,7 +2144,7 @@ TARGET_OP_INVOKE: {
 
   // Common Call Path for MultiFunction
   callee = bestMethodVal;
-    // Note: Do NOT overwrite the receiver at stackTop[-1 - argCount].
+  // Note: Do NOT overwrite the receiver at stackTop[-1 - argCount].
 
   if (IS_NATIVE(callee)) {
     NativeFn native = AS_NATIVE(callee);
