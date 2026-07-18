@@ -157,9 +157,11 @@ static void consumeStatementEnd() {
       check(TOKEN_ELSE) || check(TOKEN_THEN)) {
     return;
   }
-  
-  errorAt(&parser.current, ERR_SYNTAX, "I was expecting a newline after this statement.", 
-    "Make sure you only write one statement per line. If you are trying to write multiple statements, they must be separated by a newline.");
+
+  errorAt(&parser.current, ERR_SYNTAX,
+          "I was expecting a newline after this statement.",
+          "Make sure you only write one statement per line. If you are trying "
+          "to write multiple statements, they must be separated by a newline.");
 }
 
 void synchronize() {
@@ -190,14 +192,16 @@ void advance() {
   for (;;) {
     parser.current = scanToken();
     if (printScanFlag) {
-      if (parser.current.line != parser.previous.line && parser.previous.line != 0) {
+      if (parser.current.line != parser.previous.line &&
+          parser.previous.line != 0) {
         printf("%4d ", parser.current.line);
       } else if (parser.previous.line == 0) {
         printf("%4d ", parser.current.line);
       } else {
         printf("   | ");
       }
-      printf("%-22s '%.*s'\n", getTokenTypeName(parser.current.type), parser.current.length, parser.current.start);
+      printf("%-22s '%.*s'\n", getTokenTypeName(parser.current.type),
+             parser.current.length, parser.current.start);
     }
     if (parser.current.type != TOKEN_ERROR)
       break;
@@ -289,7 +293,10 @@ static Node *parsePrecedence(Precedence precedence) {
   // 1. Tracks recursive depth (Right-heavy trees)
   parseDepth++;
   if (parseDepth > MAX_AST_DEPTH) {
-    errorAt(&parser.previous, ERR_SYNTAX, "This expression is too deeply nested and I'm losing track of it!", "Try breaking this complex calculation into smaller steps using intermediate variables.");
+    errorAt(&parser.previous, ERR_SYNTAX,
+            "This expression is too deeply nested and I'm losing track of it!",
+            "Try breaking this complex calculation into smaller steps using "
+            "intermediate variables.");
     parseDepth--;
     return NULL;
   }
@@ -426,7 +433,8 @@ static Node *number() {
   double value;
 
   int i = 0;
-  while (start[i] == '0') i++;
+  while (start[i] == '0')
+    i++;
 
   if (start[i] == 'x' || start[i] == 'X') {
     value = (double)strtoull(start + i + 1, NULL, 16);
@@ -543,7 +551,7 @@ static Node *variable() {
         freeNodeArray(&tempArgs);
         break;
       }
-      
+
       if (arg->type == NODE_TUPLE) {
         for (int j = 0; j < arg->as.tuple.count; j++) {
           writeNodeArray(&tempArgs, arg->as.tuple.items[j]);
@@ -622,10 +630,10 @@ static Node *variable() {
   }
 
   if (currentNode != startNode) {
-    errorAt(
-        &parser.previous, ERR_REFERENCE,
-        "You called a phrasal function that I don't recognize.",
-        "Did you misspell a word, or forget to define this function earlier in the file?");
+    errorAt(&parser.previous, ERR_REFERENCE,
+            "You called a phrasal function that I don't recognize.",
+            "Did you misspell a word, or forget to define this function "
+            "earlier in the file?");
   }
   for (int i = 0; i < args.count; i++)
     freeNode(args.items[i]);
@@ -735,43 +743,45 @@ static Node *binary(Node *left) {
         // Extend the existing chain!
         int newExprCount = left->as.chain.exprCount + 1;
 
-      Node **newExprs = ALLOCATE(Node *, newExprCount);
-      Token *newOps = ALLOCATE(Token, newExprCount - 1);
+        Node **newExprs = ALLOCATE(Node *, newExprCount);
+        Token *newOps = ALLOCATE(Token, newExprCount - 1);
 
-      for (int i = 0; i < left->as.chain.exprCount; i++)
-        newExprs[i] = left->as.chain.expressions[i];
-      newExprs[newExprCount - 1] = right;
+        for (int i = 0; i < left->as.chain.exprCount; i++)
+          newExprs[i] = left->as.chain.expressions[i];
+        newExprs[newExprCount - 1] = right;
 
-      for (int i = 0; i < left->as.chain.exprCount - 1; i++)
-        newOps[i] = left->as.chain.operators[i];
-      newOps[newExprCount - 2] = opToken;
+        for (int i = 0; i < left->as.chain.exprCount - 1; i++)
+          newOps[i] = left->as.chain.operators[i];
+        newOps[newExprCount - 2] = opToken;
 
-      FREE_ARRAY(Node *, left->as.chain.expressions, left->as.chain.exprCount);
-      FREE_ARRAY(Token, left->as.chain.operators, left->as.chain.exprCount - 1);
+        FREE_ARRAY(Node *, left->as.chain.expressions,
+                   left->as.chain.exprCount);
+        FREE_ARRAY(Token, left->as.chain.operators,
+                   left->as.chain.exprCount - 1);
 
-      left->as.chain.expressions = newExprs;
-      left->as.chain.operators = newOps;
-      left->as.chain.exprCount = newExprCount;
+        left->as.chain.expressions = newExprs;
+        left->as.chain.operators = newOps;
+        left->as.chain.exprCount = newExprCount;
 
-      if (right) {
-        if (right->usesIt)
-          left->usesIt = true;
-        right->parent = left;
-      }
+        if (right) {
+          if (right->usesIt)
+            left->usesIt = true;
+          right->parent = left;
+        }
 
-      return left;
+        return left;
       }
     }
-    
+
     // Start a new chain!
-      Node **exprs = ALLOCATE(Node *, 2);
-      exprs[0] = left;
-      exprs[1] = right;
+    Node **exprs = ALLOCATE(Node *, 2);
+    exprs[0] = left;
+    exprs[1] = right;
 
-      Token *ops = ALLOCATE(Token, 1);
-      ops[0] = opToken;
+    Token *ops = ALLOCATE(Token, 1);
+    ops[0] = opToken;
 
-      return newChainNode(exprs, ops, 2, opToken.line);
+    return newChainNode(exprs, ops, 2, opToken.line);
   }
 
   // --- STANDARD BINARY OPERATORS (+, -, *, etc) ---
@@ -825,12 +835,13 @@ static Node *listComprehension(int line) {
   Node *sequence = expression();
 
   Node *body = NULL;
-  
+
   if (match(TOKEN_COLON)) {
     Token blockOpener = parser.previous;   // <--- Capture the colon
     TokenType terminators[] = {TOKEN_END}; // <--- Stop at 'end'!
     body = block(terminators, 1);
-    consumeBlockEnd(blockOpener, "list comprehension"); // <--- Safely eat the 'end'
+    consumeBlockEnd(blockOpener,
+                    "list comprehension"); // <--- Safely eat the 'end'
   } else {
     body = statement();
   }
@@ -838,10 +849,11 @@ static Node *listComprehension(int line) {
   ignoreNewlines();
   consumeHint(TOKEN_RIGHT_BRACKET, ERR_SYNTAX,
               "You opened a block or list here, but forgot to close it.",
-              "Make sure to balance your brackets! Add a closing bracket ']' at the end.");
+              "Make sure to balance your brackets! Add a closing bracket ']' "
+              "at the end.");
 
-  return newComprehensionNode(iterator, indexVar, hasIndex, sequence,
-                              body, false, line);
+  return newComprehensionNode(iterator, indexVar, hasIndex, sequence, body,
+                              false, line);
 }
 
 static Node *dictComprehension(int line) {
@@ -878,18 +890,20 @@ static Node *dictComprehension(int line) {
     Token blockOpener = parser.previous;   // <--- Capture the colon
     TokenType terminators[] = {TOKEN_END}; // <--- Stop at 'end'!
     body = block(terminators, 1);
-    consumeBlockEnd(blockOpener, "dictionary comprehension"); // <--- Safely eat the 'end'
+    consumeBlockEnd(blockOpener,
+                    "dictionary comprehension"); // <--- Safely eat the 'end'
   } else {
     body = statement();
   }
 
   ignoreNewlines();
-  consumeHint(TOKEN_RIGHT_BRACE, ERR_SYNTAX,
-              "You opened a block or dictionary here, but forgot to close it.",
-              "Make sure to balance your braces! Add a closing brace '}' at the end.");
+  consumeHint(
+      TOKEN_RIGHT_BRACE, ERR_SYNTAX,
+      "You opened a block or dictionary here, but forgot to close it.",
+      "Make sure to balance your braces! Add a closing brace '}' at the end.");
 
-  return newComprehensionNode(iterator, indexVar, hasIndex, sequence,
-                              body, true, line);
+  return newComprehensionNode(iterator, indexVar, hasIndex, sequence, body,
+                              true, line);
 }
 
 static Node *list() {
@@ -1109,7 +1123,8 @@ static Node *possessive(Node *left) {
   if (parser.current.type == TOKEN_IDENTIFIER) {
     Token rootToken = parser.current;
     char rootWord[256] = {0};
-    snprintf(rootWord, sizeof(rootWord), "%.*s", rootToken.length, rootToken.start);
+    snprintf(rootWord, sizeof(rootWord), "%.*s", rootToken.length,
+             rootToken.start);
 
     TrieNode *currentNode = getPropertySignatureTrie(rootWord);
 
@@ -1123,7 +1138,8 @@ static Node *possessive(Node *left) {
       TrieNode *lastGoodState = currentNode->isTerminal ? currentNode : NULL;
 
       while (currentNode->childCount > 0) {
-        uint32_t nextHash = hashString(parser.current.start, parser.current.length);
+        uint32_t nextHash =
+            hashString(parser.current.start, parser.current.length);
         TrieNode *matchedLabel = NULL;
         bool expectsArgument = false;
 
@@ -1139,7 +1155,8 @@ static Node *possessive(Node *left) {
         if (matchedLabel != NULL) {
           advance();
           currentNode = matchedLabel;
-          if (currentNode->isTerminal) lastGoodState = currentNode;
+          if (currentNode->isTerminal)
+            lastGoodState = currentNode;
           continue;
         }
 
@@ -1150,7 +1167,8 @@ static Node *possessive(Node *left) {
               TrieNode *ac = currentNode->children[i];
               for (int j = 0; j < ac->childCount; j++) {
                 if (ac->children[j]->type == NODE_LABEL) {
-                  expectedLabelStack[expectedLabelCount].hash = ac->children[j]->labelHash;
+                  expectedLabelStack[expectedLabelCount].hash =
+                      ac->children[j]->labelHash;
                   expectedLabelStack[expectedLabelCount].depth = groupingDepth;
                   expectedLabelCount++;
                   labelsPushed++;
@@ -1163,36 +1181,44 @@ static Node *possessive(Node *left) {
           initNodeArray(&tempArgs);
           Node *arg = expression();
           if (arg == NULL) {
-            for (int i = 0; i < tempArgs.count; i++) freeNode(tempArgs.items[i]);
+            for (int i = 0; i < tempArgs.count; i++)
+              freeNode(tempArgs.items[i]);
             freeNodeArray(&tempArgs);
             break;
           }
           if (arg->type == NODE_TUPLE) {
-            for (int j = 0; j < arg->as.tuple.count; j++) writeNodeArray(&tempArgs, arg->as.tuple.items[j]);
-            free(arg->as.tuple.items); free(arg);
+            for (int j = 0; j < arg->as.tuple.count; j++)
+              writeNodeArray(&tempArgs, arg->as.tuple.items[j]);
+            free(arg->as.tuple.items);
+            free(arg);
           } else if (arg->type == NODE_GROUPING) {
             writeNodeArray(&tempArgs, arg->as.singleExpr.expression);
             free(arg);
-          } else writeNodeArray(&tempArgs, arg);
+          } else
+            writeNodeArray(&tempArgs, arg);
 
           expectedLabelCount -= labelsPushed;
 
           TrieNode *matchedArgChild = NULL;
           for (int i = 0; i < currentNode->childCount; i++) {
-            if (currentNode->children[i]->type == NODE_ARGUMENT && currentNode->children[i]->arity == tempArgs.count) {
+            if (currentNode->children[i]->type == NODE_ARGUMENT &&
+                currentNode->children[i]->arity == tempArgs.count) {
               matchedArgChild = currentNode->children[i];
               break;
             }
           }
 
           if (matchedArgChild != NULL) {
-            for (int i = 0; i < tempArgs.count; i++) writeNodeArray(&args, tempArgs.items[i]);
+            for (int i = 0; i < tempArgs.count; i++)
+              writeNodeArray(&args, tempArgs.items[i]);
             freeNodeArray(&tempArgs);
             currentNode = matchedArgChild;
-            if (currentNode->isTerminal) lastGoodState = currentNode;
+            if (currentNode->isTerminal)
+              lastGoodState = currentNode;
             continue;
           } else {
-            for (int i = 0; i < tempArgs.count; i++) freeNode(tempArgs.items[i]);
+            for (int i = 0; i < tempArgs.count; i++)
+              freeNode(tempArgs.items[i]);
             freeNodeArray(&tempArgs);
             break;
           }
@@ -1202,8 +1228,10 @@ static Node *possessive(Node *left) {
 
       if (lastGoodState != NULL) {
         if (currentNode != lastGoodState) {
-          errorAt(&parser.previous, ERR_SYNTAX, "This property phrase looks incomplete.", "");
-          for (int i = 0; i < args.count; i++) freeNode(args.items[i]);
+          errorAt(&parser.previous, ERR_SYNTAX,
+                  "This property phrase looks incomplete.", "");
+          for (int i = 0; i < args.count; i++)
+            freeNode(args.items[i]);
           freeNodeArray(&args);
           return newPropertyNode(left, rootToken, line);
         }
@@ -1213,18 +1241,22 @@ static Node *possessive(Node *left) {
         mangledToken.length = strlen(lastGoodState->mangledName);
 
         for (int i = 0; i < args.count - 1; i++) {
-          validatePureExpression(args.items[i], "as a non-final argument in a property phrase");
+          validatePureExpression(
+              args.items[i], "as a non-final argument in a property phrase");
         }
 
-        Node *node = newPhrasalMethodCallNode(left, mangledToken, args.items, args.count, line);
+        Node *node = newPhrasalMethodCallNode(left, mangledToken, args.items,
+                                              args.count, line);
         freeNodeArray(&args);
         return node;
       }
 
       if (currentNode != startNode) {
-        errorAt(&parser.previous, ERR_REFERENCE, "Unknown property phrase.", "");
+        errorAt(&parser.previous, ERR_REFERENCE, "Unknown property phrase.",
+                "");
       }
-      for (int i = 0; i < args.count; i++) freeNode(args.items[i]);
+      for (int i = 0; i < args.count; i++)
+        freeNode(args.items[i]);
       freeNodeArray(&args);
 
       return newPropertyNode(left, rootToken, line);
@@ -1396,13 +1428,15 @@ static Node *forStatement() {
 
 static Node *parseLValue() {
   // Base Case: The root must be an identifier
-  consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
-              "You started an assignment but didn't tell me what variable to update.",
-              "Provide a target variable. For example: 'set score to 10'.");
+  consumeHint(
+      TOKEN_IDENTIFIER, ERR_SYNTAX,
+      "You started an assignment but didn't tell me what variable to update.",
+      "Provide a target variable. For example: 'set score to 10'.");
 
   Node *lvalue = newVariableNode(parser.previous, parser.previous.line);
 
-  if (parser.previous.length == 2 && memcmp(parser.previous.start, "my", 2) == 0) {
+  if (parser.previous.length == 2 &&
+      memcmp(parser.previous.start, "my", 2) == 0) {
     if (check(TOKEN_IDENTIFIER)) {
       advance();
       Token propertyToken = parser.previous;
@@ -1433,7 +1467,10 @@ static Node *addStatement() {
 
   // --- THE BLINDFOLD FIX ---
   if (expectedLabelCount >= 256) {
-    errorAt(&parser.previous, ERR_SYNTAX, "This expression is too deeply nested and I'm losing track of it!", "Try breaking this complex calculation into smaller steps using intermediate variables.");
+    errorAt(&parser.previous, ERR_SYNTAX,
+            "This expression is too deeply nested and I'm losing track of it!",
+            "Try breaking this complex calculation into smaller steps using "
+            "intermediate variables.");
     return NULL;
   }
 
@@ -1608,7 +1645,11 @@ static Node *setStatement() {
   }
 
   if (values.count > 1 && values.count != targets.count) {
-    errorAt(&parser.previous, ERR_SYNTAX, "The number of variables doesn't match the number of values in this assignment.", "Make sure you provide exactly one value for each variable on the left, or just a single value on the right for all of them.");
+    errorAt(&parser.previous, ERR_SYNTAX,
+            "The number of variables doesn't match the number of values in "
+            "this assignment.",
+            "Make sure you provide exactly one value for each variable on the "
+            "left, or just a single value on the right for all of them.");
 
     // --- THE PATCH: Destroy the children before the container! ---
     for (int i = 0; i < targets.count; i++)
@@ -1721,29 +1762,34 @@ static Node *breakStatement() {
 
 static Node *skipStatement() {
   if (loopingDepth == 0) {
-    errorAt(&parser.previous, ERR_SYNTAX, "You tried to use 'skip' outside of a loop block.",
-            "The 'skip' keyword (which jumps to the next iteration) can only be used inside 'for' or 'while' loops.");
+    errorAt(&parser.previous, ERR_SYNTAX,
+            "You tried to use 'skip' outside of a loop block.",
+            "The 'skip' keyword (which jumps to the next iteration) can only "
+            "be used inside 'for' or 'while' loops.");
   }
   return newSkipNode(parser.previous.line);
 }
 
-static Node *parsePropertySignatureBody(Token receiverName, Node *receiverType, int line);
+static Node *parsePropertySignatureBody(Token receiverName, Node *receiverType,
+                                        int line);
 static Node *parseTypeAnnotation();
 static Node *typeDeclaration() {
   int line = parser.previous.line;
-  consumeHint(
-      TOKEN_IDENTIFIER, ERR_SYNTAX, "You started defining a type but didn't give it a name.",
-      "Every type needs a unique name, and I recommend capitalizing it. (e.g., 'type Player:')");
+  consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
+              "You started defining a type but didn't give it a name.",
+              "Every type needs a unique name, and I recommend capitalizing "
+              "it. (e.g., 'type Player:')");
   Token name = parser.previous;
-  
+
   if (match(TOKEN_IS)) {
     Node *aliasType = parseTypeAnnotation();
     return newLetNode(&name, 1, &aliasType, 1, line);
   }
 
-  consumeHint(TOKEN_COLON, ERR_SYNTAX,
-              "This type definition is missing the colon separator.",
-              "Type definitions must begin with a colon before listing properties.");
+  consumeHint(
+      TOKEN_COLON, ERR_SYNTAX,
+      "This type definition is missing the colon separator.",
+      "Type definitions must begin with a colon before listing properties.");
 
   Token typeStart = parser.previous;
 
@@ -1751,7 +1797,7 @@ static Node *typeDeclaration() {
   initTokenArray(&propertyNames);
   NodeArray defaultValues;
   initNodeArray(&defaultValues);
-  
+
   NodeArray methods;
   initNodeArray(&methods);
 
@@ -1764,20 +1810,25 @@ static Node *typeDeclaration() {
         break; // Allow trailing commas before 'end'
 
       // Check for embedded methods using 'my'
-      if (check(TOKEN_IDENTIFIER) && parser.current.length == 2 && memcmp(parser.current.start, "my", 2) == 0) {
+      if (check(TOKEN_IDENTIFIER) && parser.current.length == 2 &&
+          memcmp(parser.current.start, "my", 2) == 0) {
         const char *next = parser.current.start + parser.current.length;
-        while (*next == ' ' || *next == '\t') next++;
-        
-        if (*next != ':' && *next != ',' && *next != '\n' && *next != '\r' && *next != '\0') {
-           advance(); // consume 'my'
-           Token receiverName = parser.previous;
-           Node *receiverType = newVariableNode(name, line); // name is from 'type Person:'
-           
-           Node *method = parsePropertySignatureBody(receiverName, receiverType, line);
-           writeNodeArray(&methods, method);
+        while (*next == ' ' || *next == '\t')
+          next++;
 
-           match(TOKEN_COMMA); // optional trailing comma
-           continue;
+        if (*next != ':' && *next != ',' && *next != '\n' && *next != '\r' &&
+            *next != '\0') {
+          advance(); // consume 'my'
+          Token receiverName = parser.previous;
+          Node *receiverType =
+              newVariableNode(name, line); // name is from 'type Person:'
+
+          Node *method =
+              parsePropertySignatureBody(receiverName, receiverType, line);
+          writeNodeArray(&methods, method);
+
+          match(TOKEN_COMMA); // optional trailing comma
+          continue;
         }
       }
 
@@ -1792,12 +1843,13 @@ static Node *typeDeclaration() {
         writeNodeArray(&defaultValues,
                        newLiteralNode(NIL_VAL, parser.previous.line));
       }
-      
+
       // we require comma unless we are at the end
       if (!match(TOKEN_COMMA)) {
         ignoreNewlines();
         if (!check(TOKEN_END)) {
-          errorAt(&parser.current, ERR_SYNTAX, "Expected ',' between properties.", "");
+          errorAt(&parser.current, ERR_SYNTAX,
+                  "Expected ',' between properties.", "");
           break;
         }
       }
@@ -1808,7 +1860,7 @@ static Node *typeDeclaration() {
   consumeBlockEnd(typeStart, "type definition");
 
   Node *typeNode = newTypeNode(name, propertyNames.items, defaultValues.items,
-                           propertyNames.count, line);
+                               propertyNames.count, line);
   freeTokenArray(&propertyNames);
   freeNodeArray(&defaultValues);
 
@@ -1824,7 +1876,7 @@ static Node *typeDeclaration() {
     freeNodeArray(&methods);
     return blockNode;
   }
-  
+
   freeNodeArray(&methods);
   return typeNode;
 }
@@ -2179,7 +2231,8 @@ static Node *parseTypeAnnotation() {
 
     while (match(TOKEN_OR)) {
       consumeHint(TOKEN_IDENTIFIER, ERR_TYPE,
-                  "You created a Union type with 'or' but didn't provide the right-hand type.",
+                  "You created a Union type with 'or' but didn't provide the "
+                  "right-hand type.",
                   "Unions must link valid types. (e.g., 'String or Number')");
       writeNodeArray(&types,
                      newVariableNode(parser.previous, parser.previous.line));
@@ -2264,9 +2317,10 @@ static Node *letDeclaration() {
       check(TOKEN_IDENTIFIER) ||
       (parser.current.type >= TOKEN_ADD && parser.current.type <= TOKEN_WITH)) {
     if (names.count > 1) {
-      errorAt(&parser.previous, ERR_SYNTAX,
-              "You tried to define multiple functions in a single statement.",
-              "Function declarations must happen one at a time. Split these up!");
+      errorAt(
+          &parser.previous, ERR_SYNTAX,
+          "You tried to define multiple functions in a single statement.",
+          "Function declarations must happen one at a time. Split these up!");
       freeTokenArray(&names);
       return NULL;
     }
@@ -2305,8 +2359,10 @@ static Node *letDeclaration() {
           if (!check(TOKEN_RIGHT_PAREN)) {
             do {
               consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
-                          "You opened a parameter definition but forgot to name the parameter.",
-                          "Give the parameter a name inside the parentheses. (e.g., '(age: Number)')");
+                          "You opened a parameter definition but forgot to "
+                          "name the parameter.",
+                          "Give the parameter a name inside the parentheses. "
+                          "(e.g., '(age: Number)')");
               writeTokenArray(&parameters, parser.previous);
 
               // Extract the type annotation
@@ -2327,7 +2383,8 @@ static Node *letDeclaration() {
 
           consumeHint(TOKEN_RIGHT_PAREN, ERR_SYNTAX,
                       "You opened a parameter list, but forgot to close it.",
-                      "Make sure to balance your parentheses! Add a closing ')' at the end.");
+                      "Make sure to balance your parentheses! Add a closing "
+                      "')' at the end.");
 
           char buf[16];
           sprintf(buf, "$%d", segmentArity);
@@ -2342,7 +2399,8 @@ static Node *letDeclaration() {
           if (currentLen + parser.previous.length + 5 >= 1024) {
             errorAt(&parser.previous, ERR_SYNTAX,
                     "This function's signature is too massive for me to parse.",
-                    "Try to simplify the function name or break it into smaller functions.");
+                    "Try to simplify the function name or break it into "
+                    "smaller functions.");
             break;
           }
           strncat(mangled, parser.previous.start, parser.previous.length);
@@ -2380,8 +2438,10 @@ static Node *letDeclaration() {
     return node;
   }
 
-  errorAt(&parser.previous, ERR_SYNTAX, "I'm totally lost trying to read this declaration.",
-          "Take a close look at the syntax here. Something is missing or out of order.");
+  errorAt(&parser.previous, ERR_SYNTAX,
+          "I'm totally lost trying to read this declaration.",
+          "Take a close look at the syntax here. Something is missing or out "
+          "of order.");
 
   freeTokenArray(&names);
   return NULL;
@@ -2422,105 +2482,117 @@ static Node *grouping() {
 
 static Node *propertySignatureDeclaration(int line) {
   consumeHint(TOKEN_LEFT_PAREN, ERR_SYNTAX, "Expected '('", "");
-  
+
   consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX, "Expected receiver name", "");
   Token receiverName = parser.previous;
-  
+
   Node *receiverType;
   if (match(TOKEN_COLON)) {
     ignoreNewlines();
     receiverType = parseTypeAnnotation();
   } else {
-    Token anyToken = {.type = TOKEN_IDENTIFIER, .start = "Any", .length = 3, .line = parser.previous.line};
+    Token anyToken = {.type = TOKEN_IDENTIFIER,
+                      .start = "Any",
+                      .length = 3,
+                      .line = parser.previous.line};
     receiverType = newVariableNode(anyToken, line);
   }
-  
+
   consumeHint(TOKEN_RIGHT_PAREN, ERR_SYNTAX, "Expected ')'", "");
-  consumeHint(TOKEN_POSSESSIVE, ERR_SYNTAX, "Expected ''s' after receiver declaration.", "");
-  
+  consumeHint(TOKEN_POSSESSIVE, ERR_SYNTAX,
+              "Expected ''s' after receiver declaration.", "");
+
   return parsePropertySignatureBody(receiverName, receiverType, line);
 }
 
-
-  
-static Node *parsePropertySignatureBody(Token receiverName, Node *receiverType, int line) {
+static Node *parsePropertySignatureBody(Token receiverName, Node *receiverType,
+                                        int line) {
   consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX, "Expected property name.", "");
   Token rootName = parser.previous;
-  
+
   TokenArray parameters;
   initTokenArray(&parameters);
   NodeArray paramTypes;
   initNodeArray(&paramTypes);
-  
+
   char mangled[1024] = {0};
   strncat(mangled, rootName.start, rootName.length);
-  
+
   TrieNode *currentNode = startPropertyPhrase(rootName.start, rootName.length);
-  
+
   if (check(TOKEN_COLON)) {
     strcat(mangled, "$0");
     finalizePhrase(currentNode, mangled);
   } else {
-      bool lastWasLabel = false; 
+    bool lastWasLabel = false;
 
-      while (!check(TOKEN_COLON) && !check(TOKEN_EOF) && !check(TOKEN_NEWLINE)) {
-        if (match(TOKEN_LEFT_PAREN)) {
-          lastWasLabel = false;
-          int segmentArity = 0;
-          if (!check(TOKEN_RIGHT_PAREN)) {
-            do {
-              consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
-                          "You opened a parameter definition but forgot to name the parameter.",
-                          "Give the parameter a name inside the parentheses.");
-              writeTokenArray(&parameters, parser.previous);
+    while (!check(TOKEN_COLON) && !check(TOKEN_EOF) && !check(TOKEN_NEWLINE)) {
+      if (match(TOKEN_LEFT_PAREN)) {
+        lastWasLabel = false;
+        int segmentArity = 0;
+        if (!check(TOKEN_RIGHT_PAREN)) {
+          do {
+            consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
+                        "You opened a parameter definition but forgot to name "
+                        "the parameter.",
+                        "Give the parameter a name inside the parentheses.");
+            writeTokenArray(&parameters, parser.previous);
 
-              if (match(TOKEN_COLON)) {
-                ignoreNewlines();
-                writeNodeArray(&paramTypes, parseTypeAnnotation());
-              } else {
-                Token anyToken = {.type = TOKEN_IDENTIFIER, .start = "Any", .length = 3, .line = parser.previous.line};
-                writeNodeArray(&paramTypes, newVariableNode(anyToken, parser.previous.line));
-              }
-              segmentArity++;
-            } while (match(TOKEN_COMMA));
-          }
-          consumeHint(TOKEN_RIGHT_PAREN, ERR_SYNTAX, "Expected ')'", "");
-
-          char arityStr[32];
-          snprintf(arityStr, sizeof(arityStr), "$%d", segmentArity);
-          strcat(mangled, arityStr);
-
-          currentNode = addArgumentBranch(currentNode, segmentArity);
-        } else {
-          lastWasLabel = true;
-          advance();
-          strcat(mangled, "_");
-          strncat(mangled, parser.previous.start, parser.previous.length);
-
-          currentNode = addLabelBranch(currentNode, parser.previous.start, parser.previous.length);
+            if (match(TOKEN_COLON)) {
+              ignoreNewlines();
+              writeNodeArray(&paramTypes, parseTypeAnnotation());
+            } else {
+              Token anyToken = {.type = TOKEN_IDENTIFIER,
+                                .start = "Any",
+                                .length = 3,
+                                .line = parser.previous.line};
+              writeNodeArray(&paramTypes,
+                             newVariableNode(anyToken, parser.previous.line));
+            }
+            segmentArity++;
+          } while (match(TOKEN_COMMA));
         }
-      }
+        consumeHint(TOKEN_RIGHT_PAREN, ERR_SYNTAX, "Expected ')'", "");
 
-      if (lastWasLabel) {
-        strcat(mangled, "$0");
+        char arityStr[32];
+        snprintf(arityStr, sizeof(arityStr), "$%d", segmentArity);
+        strcat(mangled, arityStr);
+
+        currentNode = addArgumentBranch(currentNode, segmentArity);
+      } else {
+        lastWasLabel = true;
+        advance();
+        strcat(mangled, "_");
+        strncat(mangled, parser.previous.start, parser.previous.length);
+
+        currentNode = addLabelBranch(currentNode, parser.previous.start,
+                                     parser.previous.length);
       }
-      finalizePhrase(currentNode, mangled);
+    }
+
+    if (lastWasLabel) {
+      strcat(mangled, "$0");
+    }
+    finalizePhrase(currentNode, mangled);
   }
-  
-  consumeHint(TOKEN_COLON, ERR_SYNTAX, "Expected ':' to start property method body.", "");
+
+  consumeHint(TOKEN_COLON, ERR_SYNTAX,
+              "Expected ':' to start property method body.", "");
   Token blockOpener = parser.previous;
   ignoreNewlines();
-  
+
   TokenType functionEnds[] = {TOKEN_END};
   Node *body = block(functionEnds, 1);
   consumeBlockEnd(blockOpener, "property method declaration");
-  
+
   Token mangledToken = rootName;
   mangledToken.start = my_strdup(mangled);
   mangledToken.length = strlen(mangled);
-  
-  Node *node = newExtensionMethodNode(mangledToken, receiverName, receiverType, parameters.items, paramTypes.items, parameters.count, body, line);
-  
+
+  Node *node = newExtensionMethodNode(mangledToken, receiverName, receiverType,
+                                      parameters.items, paramTypes.items,
+                                      parameters.count, body, line);
+
   freeTokenArray(&parameters);
   freeNodeArray(&paramTypes);
   return node;

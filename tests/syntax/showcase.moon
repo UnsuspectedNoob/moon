@@ -195,22 +195,31 @@ let backwards be list[end to 1]
 show backwards
 
 printTitle "13. Embedded & Extension Methods"
+# when creating an object, ask what object is this,
+# same way when asking what number is this.
 type Warrior:
-  name, health, damage,
+  name,
+  health,
+  damage,
   my attack description:
-    give "`my name` swings their sword for `my damage` damage!"
-  end
+  give "`my name` swings their sword for `my damage` damage!"
+end
 end
 
 type Mage:
-  name, health, mana,
+  name,
+  health,
+  mana,
   my attack description:
-    give "`my name` casts a spell using `my mana` mana!"
-  end
+  give "`my name` casts a spell using `my mana` mana!"
+end
 end
 
-let w be Warrior with name: "Arthur", health: 100, damage: 25 end
-let m be Mage with name: "Merlin", health: 70, mana: 50 end
+let w be Warrior with name: "Arthur", health: 100, damage: 25
+end
+
+let m be Mage with name: "Merlin", health: 70, mana: 50
+end
 
 show w's attack description
 show m's attack description

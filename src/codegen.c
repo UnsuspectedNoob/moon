@@ -691,7 +691,7 @@ static void walkNode(Node *node) {
     uint16_t count = (uint16_t)node->as.phrasalCall.argCount;
     emitByte((count >> 8) & 0xff); // High byte
     emitByte(count & 0xff);        // Low byte
-    
+
     int cacheIdx = addCacheEntry(currentChunk());
     emitByte((cacheIdx >> 8) & 0xff);
     emitByte(cacheIdx & 0xff);
@@ -713,22 +713,24 @@ static void walkNode(Node *node) {
     }
 
     // 3. Emit OP_INVOKE
-    uint16_t nameConstant = identifierConstant(&node->as.phrasalMethodCall.mangledName);
+    uint16_t nameConstant =
+        identifierConstant(&node->as.phrasalMethodCall.mangledName);
     emitByte(OP_INVOKE);
     emitByte((nameConstant >> 8) & 0xff);
     emitByte(nameConstant & 0xff);
     emitByte((uint8_t)node->as.phrasalMethodCall.argCount);
-    
+
     int cacheIdx = addCacheEntry(currentChunk());
     emitByte((cacheIdx >> 8) & 0xff);
     emitByte(cacheIdx & 0xff);
 
     // UNTRACK RECEIVER + ALL ARGUMENTS
     current->temporaries -= (1 + node->as.phrasalMethodCall.argCount);
-    // Since OP_INVOKE replaces the receiver + args with the result, 
-    // the result acts as 1 item on the stack. Wait, the caller handles adding 1 to temporaries if needed.
-    // Actually, Moon tracks temporaries by decrementing the popped items. 
-    // Usually expressions don't manually track the result in `temporaries`, the parent expression does.
+    // Since OP_INVOKE replaces the receiver + args with the result,
+    // the result acts as 1 item on the stack. Wait, the caller handles adding 1
+    // to temporaries if needed. Actually, Moon tracks temporaries by
+    // decrementing the popped items. Usually expressions don't manually track
+    // the result in `temporaries`, the parent expression does.
     break;
   }
 
@@ -798,13 +800,15 @@ static void walkNode(Node *node) {
 
   case NODE_EXTENSION_METHOD: {
     Compiler fnCompiler;
-    initCompiler(&fnCompiler, TYPE_FUNCTION, &node->as.extensionMethod.receiverName);
+    initCompiler(&fnCompiler, TYPE_FUNCTION,
+                 &node->as.extensionMethod.receiverName);
 
     fnCompiler.function->name =
-        copyString(node->as.extensionMethod.mangledName.start, node->as.extensionMethod.mangledName.length);
+        copyString(node->as.extensionMethod.mangledName.start,
+                   node->as.extensionMethod.mangledName.length);
 
     beginScope();
-    
+
     // Now inject the parameters!
     for (int i = 0; i < node->as.extensionMethod.paramCount; i++) {
       fnCompiler.function->arity++;
@@ -830,7 +834,8 @@ static void walkNode(Node *node) {
     emitBytes(OP_CONSTANT, fnConstant);
     current->temporaries++;
 
-    uint16_t globalName = identifierConstant(&node->as.extensionMethod.mangledName);
+    uint16_t globalName =
+        identifierConstant(&node->as.extensionMethod.mangledName);
     emitByte(OP_DEFINE_EXTENSION_METHOD);
     emitByte((globalName >> 8) & 0xff);
     emitByte(globalName & 0xff);

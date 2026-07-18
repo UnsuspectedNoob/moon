@@ -1133,10 +1133,11 @@ TARGET_OP_BUILD_LIST: {
       double step = range->step;
 
       // --- THE FLOATING-POINT DRIFT FIX ---
-      // Calculate exact number of steps safely using round() to absorb float
+      // Calculate exact number of steps safely using floor() to absorb float
       // fuzziness
+
       if (start <= end && step > 0) {
-        int count = (int)round((end - start) / step) + 1;
+        int count = (int)floor((end - start) / step) + 1;
 
         if (list->capacity < list->count + count) {
           int newCapacity = list->count + count;
@@ -1149,7 +1150,7 @@ TARGET_OP_BUILD_LIST: {
           list->items[list->count++] = NUMBER_VAL(start + (k * step));
         }
       } else if (start >= end && step > 0) {
-        int count = (int)round((start - end) / step) + 1;
+        int count = (int)floor((start - end) / step) + 1;
 
         if (list->capacity < list->count + count) {
           int newCapacity = list->count + count;
@@ -1508,11 +1509,12 @@ TARGET_OP_RANGE: {
 
   // Protect against infinite loops and negative steps
   if (step <= 0) {
-    THROW_ERROR(ERR_RUNTIME,
-                "When creating a range with a 'by' step, the step size must be "
-                "greater than zero.\nThe VM will automatically handle counting "
-                "up or down for you.",
-                "Range step must be a positive number greater than 0.");
+    THROW_ERROR(
+        ERR_RUNTIME,
+        "When creating a range with the 'by' step, the step size must be "
+        "greater than zero.\nThe VM will automatically handle counting "
+        "up or down for you.",
+        "Range step must be a positive number greater than 0.");
   }
 
   ObjRange *range = newRange(start, end, step);
