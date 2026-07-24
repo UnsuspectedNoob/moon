@@ -11,6 +11,28 @@
 
 #include <sys/time.h>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#include <stdlib.h>
+
+EM_ASYNC_JS(char*, js_ask, (const char* prompt_str), {
+  const promptText = UTF8ToString(prompt_str);
+  if (Module.ask_handler) {
+    const result = await Module.ask_handler(promptText);
+    const lengthBytes = lengthBytesUTF8(result) + 1;
+    const stringOnWasmHeap = _malloc(lengthBytes);
+    stringToUTF8(result, stringOnWasmHeap, lengthBytes);
+    return stringOnWasmHeap;
+  } else {
+    const res = window.prompt(promptText) || "";
+    const lengthBytes = lengthBytesUTF8(res) + 1;
+    const stringOnWasmHeap = _malloc(lengthBytes);
+    stringToUTF8(res, stringOnWasmHeap, lengthBytes);
+    return stringOnWasmHeap;
+  }
+});
+#endif
+
 static Value clockNative(int argCount, Value *args) {
   (void)args;
   if (argCount != 0)
@@ -38,6 +60,13 @@ static Value askNative(int argCount, Value *args) {
   if (argCount != 1)
     return NIL_VAL;
   ObjString *prompt = valueToString(args[0]);
+
+#ifdef __EMSCRIPTEN__
+  char* result = js_ask(prompt->chars);
+  Value ret = OBJ_VAL(copyString(result, (int)strlen(result)));
+  free(result);
+  return ret;
+#else
   printf("%s", prompt->chars);
   fflush(stdout);
 
@@ -55,6 +84,7 @@ static Value askNative(int argCount, Value *args) {
     return OBJ_VAL(copyString(buffer, (int)length));
   }
   return OBJ_VAL(copyString("", 0));
+#endif
 }
 
 static void setDictNumber(ObjDict *dict, const char *key, double value) {
