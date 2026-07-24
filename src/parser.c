@@ -154,7 +154,7 @@ void consume(TokenType type, const char *message) {
 
 static void consumeStatementEnd() {
   if (check(TOKEN_NEWLINE) || check(TOKEN_EOF) || check(TOKEN_END) ||
-      check(TOKEN_ELSE) || check(TOKEN_THEN)) {
+      check(TOKEN_ELSE) || check(TOKEN_THEN) || parser.previous.type == TOKEN_NEWLINE) {
     return;
   }
 
