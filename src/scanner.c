@@ -71,6 +71,49 @@ static Token errorToken(const char *message) {
   return token;
 }
 
+static void consumeComment(bool isMultiline, int baseColumn) {
+  if (!isMultiline) {
+    while (peek() != '\n' && !isAtEnd())
+      advance();
+    return;
+  }
+
+  while (!isAtEnd()) {
+    while (peek() != '\n' && !isAtEnd())
+      advance();
+      
+    if (isAtEnd()) break;
+    
+    // Save state before consuming the newline
+    const char *savedCurrent = scanner.current;
+    int savedLine = scanner.line;
+    int savedColumn = scanner.column;
+    
+    // Consume '\n'
+    scanner.line++;
+    scanner.column = 0;
+    advance(); // now column is 1
+    
+    // Consume indentation
+    while ((peek() == ' ' || peek() == '\t') && !isAtEnd()) {
+      advance();
+    }
+    
+    if (peek() == '\n' || isAtEnd()) {
+      // Blank line. Keep it in the comment.
+      continue;
+    }
+    
+    if (scanner.column <= baseColumn) {
+      // The indentation broke! Backtrack to before the newline.
+      scanner.current = savedCurrent;
+      scanner.line = savedLine;
+      scanner.column = savedColumn;
+      break;
+    }
+  }
+}
+
 static void skipWhitespace() {
   for (;;) {
     char c = peek();
@@ -82,12 +125,14 @@ static void skipWhitespace() {
       break;
 
       // Handle Comments (##)
-    case '#':
+    case '#': {
       if (scanner.preserveComments)
         return; // <-- Crucial!
-      while (peek() != '\n' && !isAtEnd())
-        advance();
+      bool isMultiline = (peekNext() == '#');
+      int baseColumn = scanner.column;
+      consumeComment(isMultiline, baseColumn);
       break;
+    }
 
     default:
       return;
@@ -467,8 +512,9 @@ Token scanToken() {
     return string(false);
 
   case '#': {
-    while (peek() != '\n' && !isAtEnd())
-      advance();
+    bool isMultiline = (peek() == '#'); // first '#' is already consumed
+    int baseColumn = scanner.column - 1;
+    consumeComment(isMultiline, baseColumn);
     return makeToken(TOKEN_COMMENT);
   }
   case ';':
