@@ -993,11 +993,13 @@ static Node *dict() {
         ObjString *keyStr =
             copyString(parser.previous.start + 1, parser.previous.length - 2);
         keyNode = newLiteralNode(OBJ_VAL(keyStr), parser.previous.line);
+      } else if (match(TOKEN_NUMBER)) {
+        double value = strtod(parser.previous.start, NULL);
+        keyNode = newLiteralNode(NUMBER_VAL(value), parser.previous.line);
       } else {
         errorAt(&parser.previous, ERR_SYNTAX,
                 "I was expecting a property name for this dictionary item.",
-                "Dictionary keys should be words or strings (e.g., 'name:' "
-                "or '\"age\":').");
+                "Dictionary keys should be words, strings, or numbers (e.g., 'name:', '\"age\":', or '1:').");
         break;
       }
 
