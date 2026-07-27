@@ -378,16 +378,35 @@ static Node *expression() {
 }
 
 static Node *string() {
-  // Use copyStringUnescaped, and chop off 1 pipe from front and back (+1, -2)
-  ObjString *str = copyStringUnescaped(parser.previous.start + 1,
-                                       parser.previous.length - 2);
+  int prefixLen = 1;
+  int totalQuotes = 2;
+  if (parser.previous.start[0] == '\'') {
+    prefixLen = 3;
+    totalQuotes = 6;
+  }
+  ObjString *str = copyStringUnescaped(parser.previous.start + prefixLen,
+                                       parser.previous.length - totalQuotes);
   return newLiteralNode(OBJ_VAL(str), parser.previous.line);
 }
 
 static Node *extractInterpolationString(Token token) {
-  // Use copyStringUnescaped, and chop off 1 pipe/backtick from front and back
-  // (+1, -2)
-  ObjString *str = copyStringUnescaped(token.start + 1, token.length - 2);
+  int prefixLen = 1;
+  int suffixLen = 1;
+
+  if (token.type == TOKEN_STRING_OPEN) {
+    if (token.start[0] == '\'') prefixLen = 3;
+    else prefixLen = 1;
+    suffixLen = 1; // ends with `
+  } else if (token.type == TOKEN_STRING_CLOSE) {
+    prefixLen = 1; // starts with `
+    if (token.start[token.length - 1] == '\'') suffixLen = 3;
+    else suffixLen = 1;
+  } else if (token.type == TOKEN_STRING_MIDDLE) {
+    prefixLen = 1;
+    suffixLen = 1;
+  }
+
+  ObjString *str = copyStringUnescaped(token.start + prefixLen, token.length - prefixLen - suffixLen);
   return newLiteralNode(OBJ_VAL(str), token.line);
 }
 

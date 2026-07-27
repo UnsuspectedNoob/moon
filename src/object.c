@@ -172,6 +172,7 @@ ObjString *copyStringUnescaped(const char *chars, int length) {
         case 'r': heapChars[dest++] = '\r'; break;
         case '\\': heapChars[dest++] = '\\'; break;
         case '"': heapChars[dest++] = '"'; break;
+        case '\'': heapChars[dest++] = '\''; break;
         case '0': heapChars[dest++] = '\0'; break;
         default: 
           heapChars[dest++] = '\\';

@@ -98,6 +98,7 @@ typedef struct {
   int line;
   int column;
   int interpolationDepth;
+  bool multilineStack[16];
   bool preserveComments;
 } Scanner;
 

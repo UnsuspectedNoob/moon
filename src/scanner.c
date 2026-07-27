@@ -380,17 +380,18 @@ static Token number() {
   return makeToken(TOKEN_NUMBER);
 }
 
-static Token string(bool isResuming) {
+static Token string(bool isResuming, bool isMultiline) {
   for (;;) {
     char c = peek();
     if (isAtEnd()) {
       scanner.interpolationDepth = 0; // <--- THE REPL UNLOCK FIX
       return errorToken(
-          "Unterminated string. Make sure to close it with a '\"'.");
+          isMultiline ? "Unterminated multiline string. Make sure to close it with \"'''\"."
+                      : "Unterminated string. Make sure to close it with a '\"'.");
     }
 
     // --- THE NEW ESCAPE HATCH (Double Quote) ---
-    if (c == '"' && peekNext() == '"') {
+    if (!isMultiline && c == '"' && peekNext() == '"') {
       advance(); // Consume first "
       advance(); // Consume second "
       continue;
@@ -405,7 +406,7 @@ static Token string(bool isResuming) {
 
     // ------------------------------------------
 
-    if (c == '"') {
+    if (!isMultiline && c == '"') {
       advance(); // Consume the closing '"'
       if (isResuming) {
         scanner.interpolationDepth--;
@@ -415,6 +416,19 @@ static Token string(bool isResuming) {
       // DEBUG:
       // printf("DEBUG STRING: %.*s\n", t.length, t.start);
       return t;
+    }
+
+    if (isMultiline && c == '\'') {
+      if (peekNext() == '\'' && scanner.current[2] == '\'') {
+        advance(); // 1st '
+        advance(); // 2nd '
+        advance(); // 3rd '
+        if (isResuming) {
+          scanner.interpolationDepth--;
+          return makeToken(TOKEN_STRING_CLOSE);
+        }
+        return makeToken(TOKEN_STRING);
+      }
     }
 
     if (c == '`') {
@@ -427,11 +441,15 @@ static Token string(bool isResuming) {
       if (isResuming) {
         return makeToken(TOKEN_STRING_MIDDLE);
       }
+      scanner.multilineStack[scanner.interpolationDepth] = isMultiline;
       scanner.interpolationDepth++;
       return makeToken(TOKEN_STRING_OPEN);
     }
 
     if (c == '\n') {
+      if (!isMultiline) {
+        return errorToken("Unterminated string. Regular strings (\") cannot span multiple lines. Use ''' for multiline strings.");
+      }
       scanner.line++;
       scanner.column = 0; // advance() will immediately increment it to 1
     }
@@ -497,7 +515,8 @@ Token scanToken() {
     return makeToken(match('=') ? TOKEN_GREATER_EQUAL : TOKEN_GREATER);
   case '`': {
     if (scanner.interpolationDepth > 0) {
-      return string(true); // Resume string scanning
+      bool isMulti = scanner.multilineStack[scanner.interpolationDepth - 1];
+      return string(true, isMulti); // Resume string scanning
     }
     return errorToken("Unexpected backtick.");
   }
@@ -505,11 +524,17 @@ Token scanToken() {
   case '\'': {
     if (match('s'))
       return makeToken(TOKEN_POSSESSIVE);
+    if (match('\'')) {
+      if (match('\'')) {
+        return string(false, true);
+      }
+      return errorToken("Unexpected character (double single quote). Did you mean '''?");
+    }
     return errorToken("Unexpected character (orphan single quote).");
   }
 
   case '"':
-    return string(false);
+    return string(false, false);
 
   case '#': {
     bool isMultiline = (peek() == '#'); // first '#' is already consumed
