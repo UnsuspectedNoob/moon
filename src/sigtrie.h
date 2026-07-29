@@ -17,6 +17,7 @@ typedef struct TrieNode {
   // Payload
   uint32_t labelHash; // Used if type == NODE_LABEL
   char *labelName;    // Stored string for debugging/printing
+  int labelLength;
   int arity;          // Used if type == NODE_ARGUMENT
 
   // Accept State

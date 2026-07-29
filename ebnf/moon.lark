@@ -1,0 +1,12 @@
+// Master Moon Grammar File (Lark Format)
+
+%import .1_lexical (NEWLINE, COMMENT, IDENTIFIER, NUMBER, STRING_SIMPLE, STRING_MULTI, STRING_OPEN, STRING_MIDDLE, STRING_CLOSE)
+%import .2_expressions (expression, pratt_expr, range_expr, logic_or_expr, logic_and_expr, comparison_expr, term_expr, factor_expr, cast_expr, unary_expr, call_expr, call_modifier, instantiate_list, primary_expr, tuple_list, list_items, dict_items, dict_pair, interpolation)
+%import .3_statements (program, block, declaration, type_declaration, type_body, type_property, type_method, type_annotation, let_declaration, let_variable, let_function, let_extension, statement, if_statement, if_body, block_closer, else_clause, else_body, while_statement, for_statement, break_statement, skip_statement, statement_modifier, load_statement, set_statement, add_statement, update_statement, keep_statement, give_statement, expr_statement, lvalue, lvalue_modifier, math_operator)
+%import .4_phrasal_trie (function_signature, property_signature, signature_argument, param_decl, phrasal_call, call_argument)
+
+%ignore /[ \t\r\f]+/
+%ignore COMMENT
+
+// Entrypoint
+start: program

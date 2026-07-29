@@ -1,0 +1,67 @@
+// Expressions (Phase 2 - Pratt Parser mapped to CFG)
+
+// Modifiers can attach to any expression. This creates a ternary if 'else' is present,
+// or a statement modifier if it isn't. The C parser handles this at the top of the expression hierarchy.
+?expression: pratt_expr ("if" expression ("else" expression)? 
+                        | "unless" expression ("then" expression)?)?
+
+// The base of the Pratt parser (Lowest Precedence)
+?pratt_expr: range_expr
+
+// PREC_RANGE
+?range_expr: logic_or_expr ("to" logic_or_expr ("by" logic_or_expr)?)?
+
+// PREC_OR & PREC_AND
+?logic_or_expr: logic_and_expr ("or" logic_and_expr)*
+?logic_and_expr: comparison_expr ("and" comparison_expr)*
+
+// PREC_COMPARISON (Equality and Comparison unified into one mathematical chaining tier!)
+?comparison_expr: term_expr (("==" | "!=" | "<" | ">" | "<=" | ">=" | "=" | "is" | "is" "not") term_expr)*
+
+// PREC_TERM & PREC_FACTOR
+?term_expr: factor_expr (("+" | "-") factor_expr)*
+?factor_expr: cast_expr (("*" | "/" | "%" | "mod") cast_expr)*
+
+// PREC_CAST
+?cast_expr: unary_expr ("as" unary_expr)*
+
+// PREC_UNARY
+// Note: Moon dynamically allows `<` and `==` as sticky unaries, but they are omitted 
+// here to prevent LALR shift/reduce conflicts with comparison_expr.
+?unary_expr: unary_op unary_expr 
+           | call_expr
+
+unary_op: "-" | "not" | "*"
+
+// PREC_CALL
+?call_expr: primary_expr call_modifier*
+
+?call_modifier: "[" expression "]" 
+              | "." expression 
+              | "'s" IDENTIFIER 
+              | "{" instantiate_list? "}" 
+              | "with" "{" instantiate_list? "}"
+
+instantiate_list: IDENTIFIER ":" expression ("," IDENTIFIER ":" expression)* ","?
+
+// PREC_PRIMARY (Leaves)
+?primary_expr: NUMBER 
+             | STRING_SIMPLE 
+             | STRING_MULTI 
+             | "true" 
+             | "false" 
+             | "nil" 
+             | IDENTIFIER 
+             | "it" 
+             | "(" tuple_list? ")" 
+             | "[" list_items? "]" 
+             | "{" dict_items? "}" 
+             | interpolation
+             | phrasal_call
+
+tuple_list: expression ("," expression)*
+list_items: expression ("," expression)* ","?
+dict_items: dict_pair ("," dict_pair)* ","?
+dict_pair: (IDENTIFIER | STRING_SIMPLE | NUMBER) ":" expression
+
+interpolation: STRING_OPEN expression (STRING_MIDDLE expression)* STRING_CLOSE

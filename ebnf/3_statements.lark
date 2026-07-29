@@ -1,0 +1,74 @@
+// Statements & Declarations (Phase 3 - Recursive Descent mapped to CFG)
+
+program: declaration*
+block: declaration*
+
+declaration: (type_declaration 
+           | let_declaration 
+           | statement) NEWLINE*
+
+// --- TYPES & BLUEPRINTS ---
+type_declaration: "type" IDENTIFIER ("is" type_annotation | type_body)
+type_body: ":" (type_property ","? | type_method ","?)* "end"
+type_property: IDENTIFIER (":" expression)?
+type_method: "my" IDENTIFIER property_signature ":" block "end"
+
+type_annotation: IDENTIFIER ("or" IDENTIFIER)*
+
+// --- VARIABLES & FUNCTIONS ---
+let_declaration: let_variable | let_function | let_extension
+
+let_variable: "let" IDENTIFIER ("," IDENTIFIER)* "be" expression ("," expression)*
+let_function: "let" function_signature ":" block "end"
+let_extension: "let" "(" IDENTIFIER (":" type_annotation)? ")" "'s" function_signature ":" block "end"
+
+// --- THE STATEMENT ROUTER ---
+// Note: Moon handles statement modifiers individually inside the statements,
+// or relies on `expression` parsing to capture it for expression-based statements.
+statement: if_statement 
+         | while_statement 
+         | for_statement 
+         | break_statement 
+         | skip_statement 
+         | load_statement 
+         | set_statement 
+         | add_statement 
+         | give_statement 
+         | update_statement 
+         | keep_statement 
+         | expr_statement
+
+// --- CONTROL FLOW ---
+if_statement: ("if" | "unless") expression if_body
+if_body: ":" block block_closer 
+       | statement else_clause?
+
+block_closer: "end" | else_clause
+else_clause: ("else" | "then") else_body
+else_body: ":" block "end" 
+         | statement
+
+while_statement: ("while" | "until") expression (":" block "end" | statement)
+for_statement: "for" "each"? IDENTIFIER ("," IDENTIFIER)? ("in" | "from") expression (":" block "end" | statement)
+
+// Modifiers on statements that do NOT end with an expression
+break_statement: ("break" | "quit") statement_modifier?
+skip_statement: "skip" statement_modifier?
+
+statement_modifier: "if" expression | "unless" expression
+
+// --- MEMORY & MUTATION ---
+load_statement: "load" STRING_SIMPLE "as" IDENTIFIER
+
+set_statement: "set" lvalue ("," lvalue)* "to" expression ("," expression)*
+add_statement: "add" expression ("," expression)* "to" lvalue
+update_statement: "update" lvalue ("as" cast_expr | math_operator expression)
+
+keep_statement: "keep" (expression ":")? expression
+give_statement: "give" expression?
+expr_statement: expression
+
+// --- L-VALUES ---
+lvalue: ("my" IDENTIFIER | IDENTIFIER) lvalue_modifier*
+lvalue_modifier: "[" expression "]" | "." expression | "'s" IDENTIFIER
+math_operator: "+" | "-" | "*" | "/" | "%" | "mod"

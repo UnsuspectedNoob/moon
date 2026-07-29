@@ -13,14 +13,14 @@ let two_sum (nums, target):
 
     # Check if the difference is already in the dictionary
     if seen[diff] is not nil:
-      return [ seen[diff], i ]
+      give [ seen[diff], i ]
     end
 
     # Store the index of the current number using its value as the key
     set seen[num] to i
   end
 
-  return [ ]
+  give [ ]
 end
 
 show "--- Two Sum Algorithm ---"

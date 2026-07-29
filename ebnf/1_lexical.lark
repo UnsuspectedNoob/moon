@@ -1,0 +1,24 @@
+// 1. WHITESPACE & TERMINATORS
+NEWLINE: /\n/
+%ignore /[ \t\r\f]+/
+COMMENT: /#[^\n]*/ | /##[\s\S]*?##/
+%ignore COMMENT
+
+// 2. IDENTIFIERS & KEYWORDS
+IDENTIFIER: /[a-zA-Z_][a-zA-Z0-9_]*/
+
+// 3. LITERALS
+NUMBER: /0x[0-9a-fA-F]+/ | /0b[01]+/ | /[0-9]+(\.[0-9]+)?/
+
+STRING_SIMPLE: /"[^"\\]*(?:\\.[^"\\]*)*"/
+STRING_MULTI: /'''[\s\S]*?'''/
+
+// Interpolation is handled by the lexer natively in Moon. 
+// For Lark, we can model interpolation as just three separate tokens.
+STRING_OPEN: /("[^"\\]*(?:\\.[^"\\]*)*|'''[\s\S]*?)`/
+STRING_MIDDLE: /`([^"\\]*(?:\\.[^"\\]*)*|[\s\S]*?)`/
+STRING_CLOSE: /`([^"\\]*(?:\\.[^"\\]*)*"|[\s\S]*?''')/
+
+// 4. SYMBOLS & PUNCTUATION
+// Lark allows defining these directly in the grammar as strings (e.g. "+", "=="),
+// but we define them here for clarity if needed.

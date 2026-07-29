@@ -34,6 +34,7 @@ static TrieNode *newNode(PhraseNodeType type) {
   node->type = type;
   node->labelHash = 0;
   node->arity = 0;
+  node->labelLength = 0;
   node->isTerminal = false;
   node->isCore = g_isBootstrappingCore;
   node->labelName = NULL;
@@ -210,6 +211,7 @@ TrieNode *addLabelBranch(TrieNode *current, const char *label, int length) {
 
   TrieNode *child = newNode(NODE_LABEL);
   child->labelHash = lHash;
+  child->labelLength = length;
   child->labelName = malloc(length + 1);
   memcpy(child->labelName, label, length);
   child->labelName[length] = '\0';

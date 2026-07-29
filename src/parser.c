@@ -21,6 +21,8 @@ Parser parser;
 typedef struct {
   uint32_t hash;
   int depth;
+  const char *labelText;
+  int labelLength;
 } ExpectedLabel;
 
 static ExpectedLabel expectedLabelStack[256];
@@ -39,14 +41,13 @@ static bool isExpectedLabel() {
   if (expectedLabelCount == 0)
     return false;
 
-  // Hash the current token
-  uint32_t currentHash =
-      hashString(parser.current.start, parser.current.length);
-
   // Check if it matches an expected label AT THE CURRENT DEPTH
   for (int i = 0; i < expectedLabelCount; i++) {
-    if (expectedLabelStack[i].hash == currentHash &&
-        expectedLabelStack[i].depth == groupingDepth) {
+    if (expectedLabelStack[i].hash == parser.currentHash &&
+        expectedLabelStack[i].depth == groupingDepth &&
+        parser.current.length == expectedLabelStack[i].labelLength &&
+        memcmp(parser.current.start, expectedLabelStack[i].labelText,
+               parser.current.length) == 0) {
       return true;
     }
   }
@@ -154,7 +155,8 @@ void consume(TokenType type, const char *message) {
 
 static void consumeStatementEnd() {
   if (check(TOKEN_NEWLINE) || check(TOKEN_EOF) || check(TOKEN_END) ||
-      check(TOKEN_ELSE) || check(TOKEN_THEN) || parser.previous.type == TOKEN_NEWLINE) {
+      check(TOKEN_ELSE) || check(TOKEN_THEN) ||
+      parser.previous.type == TOKEN_NEWLINE) {
     return;
   }
 
@@ -203,8 +205,11 @@ void advance() {
       printf("%-22s '%.*s'\n", getTokenTypeName(parser.current.type),
              parser.current.length, parser.current.start);
     }
-    if (parser.current.type != TOKEN_ERROR)
+    if (parser.current.type != TOKEN_ERROR) {
+      parser.currentHash =
+          hashString(parser.current.start, parser.current.length);
       break;
+    }
 
     // Use the stowed errorMessage, otherwise fallback to the token text
     const char *message = parser.current.errorMessage != NULL
@@ -244,11 +249,9 @@ void ignoreNewlines() {
 
 typedef enum {
   PREC_NONE,
-  PREC_ASSIGNMENT,
   PREC_RANGE,
   PREC_OR,
   PREC_AND,
-  PREC_EQUALITY,
   PREC_COMPARISON,
   PREC_TERM,
   PREC_FACTOR,
@@ -341,7 +344,7 @@ static Node *parsePrecedence(Precedence precedence) {
 }
 
 static Node *expression() {
-  Node *expr = parsePrecedence(PREC_ASSIGNMENT);
+  Node *expr = parsePrecedence(PREC_RANGE);
 
   // Is it a Ternary or a Modifier?
   if (match(TOKEN_IF)) {
@@ -394,19 +397,24 @@ static Node *extractInterpolationString(Token token) {
   int suffixLen = 1;
 
   if (token.type == TOKEN_STRING_OPEN) {
-    if (token.start[0] == '\'') prefixLen = 3;
-    else prefixLen = 1;
+    if (token.start[0] == '\'')
+      prefixLen = 3;
+    else
+      prefixLen = 1;
     suffixLen = 1; // ends with `
   } else if (token.type == TOKEN_STRING_CLOSE) {
     prefixLen = 1; // starts with `
-    if (token.start[token.length - 1] == '\'') suffixLen = 3;
-    else suffixLen = 1;
+    if (token.start[token.length - 1] == '\'')
+      suffixLen = 3;
+    else
+      suffixLen = 1;
   } else if (token.type == TOKEN_STRING_MIDDLE) {
     prefixLen = 1;
     suffixLen = 1;
   }
 
-  ObjString *str = copyStringUnescaped(token.start + prefixLen, token.length - prefixLen - suffixLen);
+  ObjString *str = copyStringUnescaped(token.start + prefixLen,
+                                       token.length - prefixLen - suffixLen);
   return newLiteralNode(OBJ_VAL(str), token.line);
 }
 
@@ -485,6 +493,283 @@ static Node *implicitIt() {
   return newVariableNode(itToken, parser.previous.line);
 }
 
+static bool matchSignatureLookahead(TrieNode *currentNode) {
+  Scanner savedScanner = scanner;
+  Parser savedParser = parser;
+
+  while (currentNode->childCount > 0) {
+    uint32_t nextHash = parser.currentHash;
+    TrieNode *matchedLabel = NULL;
+    bool expectsArgument = false;
+
+    for (int i = 0; i < currentNode->childCount; i++) {
+      TrieNode *child = currentNode->children[i];
+      if (child->type == NODE_LABEL && child->labelHash == nextHash &&
+          parser.current.length == child->labelLength &&
+          memcmp(parser.current.start, child->labelName, child->labelLength) ==
+              0) {
+        matchedLabel = child;
+      } else if (child->type == NODE_ARGUMENT) {
+        expectsArgument = true;
+      }
+    }
+
+    if (matchedLabel != NULL) {
+      advance();
+      currentNode = matchedLabel;
+      continue;
+    }
+
+    if (expectsArgument && canStartExpression(parser.current.type)) {
+      uint32_t possibleLabels[256];
+      const char *possibleLabelNames[256];
+      int possibleLabelLengths[256];
+      int possibleLabelCount = 0;
+
+      for (int i = 0; i < currentNode->childCount; i++) {
+        if (currentNode->children[i]->type == NODE_ARGUMENT) {
+          TrieNode *ac = currentNode->children[i];
+          for (int j = 0; j < ac->childCount; j++) {
+            if (ac->children[j]->type == NODE_LABEL) {
+              possibleLabels[possibleLabelCount] = ac->children[j]->labelHash;
+              possibleLabelNames[possibleLabelCount] =
+                  ac->children[j]->labelName;
+              possibleLabelLengths[possibleLabelCount] =
+                  ac->children[j]->labelLength;
+              possibleLabelCount++;
+            }
+          }
+        }
+      }
+
+      int argGroupingDepth = 0;
+
+      while (parser.current.type != TOKEN_EOF &&
+             parser.current.type != TOKEN_NEWLINE &&
+             parser.current.type != TOKEN_END) {
+        if (argGroupingDepth == 0) {
+          bool hitLabel = false;
+          for (int i = 0; i < possibleLabelCount; i++) {
+            if (parser.currentHash == possibleLabels[i] &&
+                parser.current.length == possibleLabelLengths[i] &&
+                memcmp(parser.current.start, possibleLabelNames[i],
+                       possibleLabelLengths[i]) == 0) {
+              hitLabel = true;
+              break;
+            }
+          }
+          if (hitLabel)
+            break;
+        }
+
+        if (parser.current.type == TOKEN_LEFT_PAREN ||
+            parser.current.type == TOKEN_LEFT_BRACKET ||
+            parser.current.type == TOKEN_LEFT_BRACE) {
+          argGroupingDepth++;
+        } else if (parser.current.type == TOKEN_RIGHT_PAREN ||
+                   parser.current.type == TOKEN_RIGHT_BRACKET ||
+                   parser.current.type == TOKEN_RIGHT_BRACE) {
+          argGroupingDepth--;
+          if (argGroupingDepth < 0) {
+            break;
+          }
+        }
+        advance();
+      }
+
+      TrieNode *matchedArgChild = NULL;
+      for (int i = 0; i < currentNode->childCount; i++) {
+        if (currentNode->children[i]->type == NODE_ARGUMENT) {
+          TrieNode *ac = currentNode->children[i];
+          bool hasLabel = false;
+          for (int j = 0; j < ac->childCount; j++) {
+            if (ac->children[j]->type == NODE_LABEL &&
+                ac->children[j]->labelHash == parser.currentHash &&
+                parser.current.length == ac->children[j]->labelLength &&
+                memcmp(parser.current.start, ac->children[j]->labelName,
+                       parser.current.length) == 0) {
+              hasLabel = true;
+              break;
+            }
+          }
+          if (hasLabel) {
+            matchedArgChild = ac;
+            break;
+          } else if (ac->isTerminal) {
+            matchedArgChild = ac;
+          }
+        }
+      }
+
+      if (matchedArgChild != NULL) {
+        currentNode = matchedArgChild;
+        continue;
+      }
+    }
+    break;
+  }
+
+  bool success = currentNode->isTerminal;
+
+  scanner = savedScanner;
+  parser = savedParser;
+
+  return success;
+}
+
+static Node *parsePhrasalCall(TrieNode *startNode, Token rootToken,
+                              bool isMethod, Node *methodTarget) {
+  NodeArray args;
+  initNodeArray(&args);
+
+  Token phraseTokens[16];
+  int phraseTokenCount = 0;
+  phraseTokens[phraseTokenCount++] = rootToken;
+
+  TrieNode *currentNode = startNode;
+
+  while (currentNode->childCount > 0) {
+    uint32_t nextHash = parser.currentHash;
+    TrieNode *matchedLabel = NULL;
+    bool expectsArgument = false;
+
+    for (int i = 0; i < currentNode->childCount; i++) {
+      TrieNode *child = currentNode->children[i];
+      if (child->type == NODE_LABEL && child->labelHash == nextHash &&
+          parser.current.length == child->labelLength &&
+          memcmp(parser.current.start, child->labelName, child->labelLength) ==
+              0) {
+        matchedLabel = child;
+      } else if (child->type == NODE_ARGUMENT) {
+        expectsArgument = true;
+      }
+    }
+
+    if (matchedLabel != NULL) {
+      if (phraseTokenCount < 16) {
+        phraseTokens[phraseTokenCount++] = parser.current;
+      }
+      advance();
+      currentNode = matchedLabel;
+      continue;
+    }
+
+    if (expectsArgument) {
+      int labelsPushed = 0;
+      for (int i = 0; i < currentNode->childCount; i++) {
+        if (currentNode->children[i]->type == NODE_ARGUMENT) {
+          TrieNode *ac = currentNode->children[i];
+          for (int j = 0; j < ac->childCount; j++) {
+            if (ac->children[j]->type == NODE_LABEL) {
+              if (expectedLabelCount >= 256) {
+                errorAt(&parser.previous, ERR_SYNTAX,
+                        "This expression is too deeply nested and I'm losing "
+                        "track of it!",
+                        "");
+                for (int k = 0; k < args.count; k++)
+                  freeNode(args.items[k]);
+                freeNodeArray(&args);
+                return NULL;
+              }
+              expectedLabelStack[expectedLabelCount].hash =
+                  ac->children[j]->labelHash;
+              expectedLabelStack[expectedLabelCount].depth = groupingDepth;
+              expectedLabelStack[expectedLabelCount].labelText =
+                  ac->children[j]->labelName;
+              expectedLabelStack[expectedLabelCount].labelLength =
+                  ac->children[j]->labelLength;
+              expectedLabelCount++;
+              labelsPushed++;
+            }
+          }
+        }
+      }
+
+      NodeArray tempArgs;
+      initNodeArray(&tempArgs);
+      Node *arg = expression();
+
+      if (arg == NULL) {
+        for (int i = 0; i < tempArgs.count; i++)
+          freeNode(tempArgs.items[i]);
+        freeNodeArray(&tempArgs);
+        break;
+      }
+
+      if (arg != NULL) {
+        if (arg->type == NODE_TUPLE) {
+          for (int j = 0; j < arg->as.tuple.count; j++) {
+            writeNodeArray(&tempArgs, arg->as.tuple.items[j]);
+          }
+          FREE_ARRAY(Node *, arg->as.tuple.items, arg->as.tuple.count);
+          FREE(Node, arg);
+        } else if (arg->type == NODE_GROUPING) {
+          writeNodeArray(&tempArgs, arg->as.singleExpr.expression);
+          FREE(Node, arg);
+        } else {
+          writeNodeArray(&tempArgs, arg);
+        }
+      }
+
+      expectedLabelCount -= labelsPushed;
+
+      TrieNode *matchedArgChild = NULL;
+      for (int i = 0; i < currentNode->childCount; i++) {
+        if (currentNode->children[i]->type == NODE_ARGUMENT &&
+            currentNode->children[i]->arity == tempArgs.count) {
+          matchedArgChild = currentNode->children[i];
+          break;
+        }
+      }
+
+      if (matchedArgChild != NULL) {
+        for (int i = 0; i < tempArgs.count; i++)
+          writeNodeArray(&args, tempArgs.items[i]);
+        freeNodeArray(&tempArgs);
+        currentNode = matchedArgChild;
+        continue;
+      } else {
+        for (int i = 0; i < tempArgs.count; i++)
+          freeNode(tempArgs.items[i]);
+        freeNodeArray(&tempArgs);
+        break;
+      }
+    }
+    break;
+  }
+
+  if (!currentNode->isTerminal) {
+    errorAt(&parser.previous, ERR_SYNTAX,
+            "This phrasal function looks incomplete.",
+            "You started a phrase but didn't finish it. Check the function's "
+            "signature to see what words or arguments are missing.");
+    for (int i = 0; i < args.count; i++)
+      freeNode(args.items[i]);
+    freeNodeArray(&args);
+    return NULL;
+  }
+
+  Token mangledToken = rootToken;
+  mangledToken.start = my_strdup(currentNode->mangledName);
+  mangledToken.length = strlen(currentNode->mangledName);
+
+  for (int i = 0; i < args.count - 1; i++) {
+    validatePureExpression(args.items[i],
+                           "as a non-final argument in a phrase");
+  }
+
+  Node *node;
+  if (isMethod) {
+    node = newPhrasalMethodCallNode(methodTarget, mangledToken, args.items,
+                                    args.count, rootToken.line);
+  } else {
+    node = newPhrasalCallNode(mangledToken, args.items, args.count,
+                              phraseTokens, phraseTokenCount, rootToken.line);
+  }
+  freeNodeArray(&args);
+  return node;
+}
+
 static Node *variable() {
   Token rootToken = parser.previous;
 
@@ -506,158 +791,29 @@ static Node *variable() {
     return newVariableNode(rootToken, rootToken.line);
   }
 
-  // Use dynamic array for accumulated arguments
-  NodeArray args;
-  initNodeArray(&args);
+  Scanner savedScanner = scanner;
+  Parser savedParser = parser;
 
-  TrieNode *startNode = currentNode;
-  TrieNode *lastGoodState = currentNode->isTerminal ? currentNode : NULL;
+  bool hasLookahead = matchSignatureLookahead(currentNode);
 
-  Token phraseTokens[16];
-  int phraseTokenCount = 0;
-  phraseTokens[phraseTokenCount++] = rootToken;
-
-  while (currentNode->childCount > 0) {
-    uint32_t nextHash = hashString(parser.current.start, parser.current.length);
-    TrieNode *matchedLabel = NULL;
-    bool expectsArgument = false;
-
-    for (int i = 0; i < currentNode->childCount; i++) {
-      TrieNode *child = currentNode->children[i];
-      if (child->type == NODE_LABEL && child->labelHash == nextHash) {
-        matchedLabel = child;
-      } else if (child->type == NODE_ARGUMENT) {
-        expectsArgument = true;
-      }
+  if (hasLookahead) {
+    Node *phrasal = parsePhrasalCall(currentNode, rootToken, false, NULL);
+    if (phrasal != NULL) {
+      return phrasal;
     }
+  }
 
-    if (matchedLabel != NULL) {
-      if (phraseTokenCount < 16) {
-        phraseTokens[phraseTokenCount++] = parser.current;
-      }
+  scanner = savedScanner;
+  parser = savedParser;
+
+  if (rootToken.length == 2 && memcmp(rootToken.start, "my", 2) == 0) {
+    if (check(TOKEN_IDENTIFIER)) {
       advance();
-      currentNode = matchedLabel;
-      if (currentNode->isTerminal)
-        lastGoodState = currentNode;
-      continue;
+      Token propertyToken = parser.previous;
+      Node *myVar = newVariableNode(rootToken, rootToken.line);
+      return newPropertyNode(myVar, propertyToken, propertyToken.line);
     }
-
-    if (expectsArgument && canStartExpression(parser.current.type)) {
-      int labelsPushed = 0;
-      for (int i = 0; i < currentNode->childCount; i++) {
-        if (currentNode->children[i]->type == NODE_ARGUMENT) {
-          TrieNode *ac = currentNode->children[i];
-          for (int j = 0; j < ac->childCount; j++) {
-            if (ac->children[j]->type == NODE_LABEL) {
-              expectedLabelStack[expectedLabelCount].hash =
-                  ac->children[j]->labelHash;
-              expectedLabelStack[expectedLabelCount].depth = groupingDepth;
-              expectedLabelCount++;
-              labelsPushed++;
-            }
-          }
-        }
-      }
-
-      NodeArray tempArgs;
-      initNodeArray(&tempArgs);
-
-      Node *arg = expression();
-      if (arg == NULL) {
-        // Syntax error already emitted by parsePrecedence. Clean up and bail!
-        for (int i = 0; i < tempArgs.count; i++)
-          freeNode(tempArgs.items[i]);
-        freeNodeArray(&tempArgs);
-        break;
-      }
-
-      if (arg->type == NODE_TUPLE) {
-        for (int j = 0; j < arg->as.tuple.count; j++) {
-          writeNodeArray(&tempArgs, arg->as.tuple.items[j]);
-        }
-        free(arg->as.tuple.items);
-        free(arg);
-      } else if (arg->type == NODE_GROUPING) {
-        writeNodeArray(&tempArgs, arg->as.singleExpr.expression);
-        free(arg);
-      } else {
-        writeNodeArray(&tempArgs, arg);
-      }
-
-      expectedLabelCount -= labelsPushed;
-
-      TrieNode *matchedArgChild = NULL;
-      for (int i = 0; i < currentNode->childCount; i++) {
-        if (currentNode->children[i]->type == NODE_ARGUMENT &&
-            currentNode->children[i]->arity == tempArgs.count) {
-          matchedArgChild = currentNode->children[i];
-          break;
-        }
-      }
-
-      if (matchedArgChild != NULL) {
-        // Transfer contents
-        for (int i = 0; i < tempArgs.count; i++)
-          writeNodeArray(&args, tempArgs.items[i]);
-
-        freeNodeArray(&tempArgs); // Free the temp buffer before looping!
-
-        currentNode = matchedArgChild;
-        if (currentNode->isTerminal)
-          lastGoodState = currentNode;
-        continue;
-      } else {
-        // --- THE PATCH 1 ---
-        // We hit a dead end. Destroy the orphaned argument nodes!
-        for (int i = 0; i < tempArgs.count; i++)
-          freeNode(tempArgs.items[i]);
-
-        freeNodeArray(&tempArgs); // Free on dead end!
-        break;
-      }
-    }
-    break;
   }
-
-  if (lastGoodState != NULL) {
-    if (currentNode != lastGoodState) {
-      errorAt(&parser.previous, ERR_SYNTAX,
-              "This phrasal function looks incomplete.",
-              "You started a phrase but didn't finish it. Check the function's "
-              "signature to see what words or arguments are missing.");
-      for (int i = 0; i < args.count; i++)
-        freeNode(args.items[i]);
-      freeNodeArray(&args);
-      return newVariableNode(rootToken, rootToken.line);
-    }
-
-    Token mangledToken = rootToken;
-    mangledToken.start = my_strdup(lastGoodState->mangledName);
-    mangledToken.length = strlen(lastGoodState->mangledName);
-
-    // Validate non-final arguments
-    for (int i = 0; i < args.count - 1; i++) {
-      validatePureExpression(args.items[i],
-                             "as a non-final argument in a phrase");
-    }
-
-    Node *node =
-        newPhrasalCallNode(mangledToken, args.items, args.count, phraseTokens,
-                           phraseTokenCount, rootToken.line);
-    freeNodeArray(&args);
-    return node;
-  }
-
-  if (currentNode != startNode) {
-    errorAt(&parser.previous, ERR_REFERENCE,
-            "You called a phrasal function that I don't recognize.",
-            "Did you misspell a word, or forget to define this function "
-            "earlier in the file?");
-  }
-  for (int i = 0; i < args.count; i++)
-    freeNode(args.items[i]);
-
-  freeNodeArray(&args);
   return newVariableNode(rootToken, rootToken.line);
 }
 
@@ -757,30 +913,11 @@ static Node *binary(Node *left) {
     Node *right = parsePrecedence((Precedence)(rule->precedence + 1));
 
     if (left != NULL && left->type == NODE_CHAIN) {
-      ParseRule *chainRule = getRule(left->as.chain.operators[0].type);
+      ParseRule *chainRule = getRule(left->as.chain.operators.items[0].type);
       if (chainRule->precedence == rule->precedence) {
         // Extend the existing chain!
-        int newExprCount = left->as.chain.exprCount + 1;
-
-        Node **newExprs = ALLOCATE(Node *, newExprCount);
-        Token *newOps = ALLOCATE(Token, newExprCount - 1);
-
-        for (int i = 0; i < left->as.chain.exprCount; i++)
-          newExprs[i] = left->as.chain.expressions[i];
-        newExprs[newExprCount - 1] = right;
-
-        for (int i = 0; i < left->as.chain.exprCount - 1; i++)
-          newOps[i] = left->as.chain.operators[i];
-        newOps[newExprCount - 2] = opToken;
-
-        FREE_ARRAY(Node *, left->as.chain.expressions,
-                   left->as.chain.exprCount);
-        FREE_ARRAY(Token, left->as.chain.operators,
-                   left->as.chain.exprCount - 1);
-
-        left->as.chain.expressions = newExprs;
-        left->as.chain.operators = newOps;
-        left->as.chain.exprCount = newExprCount;
+        writeNodeArray(&left->as.chain.expressions, right);
+        writeTokenArray(&left->as.chain.operators, opToken);
 
         if (right) {
           if (right->usesIt)
@@ -793,14 +930,17 @@ static Node *binary(Node *left) {
     }
 
     // Start a new chain!
-    Node **exprs = ALLOCATE(Node *, 2);
-    exprs[0] = left;
-    exprs[1] = right;
+    Node *chain = newChainNode(left, opToken.line);
+    writeNodeArray(&chain->as.chain.expressions, right);
+    writeTokenArray(&chain->as.chain.operators, opToken);
+    
+    if (right) {
+      if (right->usesIt)
+        chain->usesIt = true;
+      right->parent = chain;
+    }
 
-    Token *ops = ALLOCATE(Token, 1);
-    ops[0] = opToken;
-
-    return newChainNode(exprs, ops, 2, opToken.line);
+    return chain;
   }
 
   // --- STANDARD BINARY OPERATORS (+, -, *, etc) ---
@@ -999,7 +1139,8 @@ static Node *dict() {
       } else {
         errorAt(&parser.previous, ERR_SYNTAX,
                 "I was expecting a property name for this dictionary item.",
-                "Dictionary keys should be words, strings, or numbers (e.g., 'name:', '\"age\":', or '1:').");
+                "Dictionary keys should be words, strings, or numbers (e.g., "
+                "'name:', '\"age\":', or '1:').");
         break;
       }
 
@@ -1150,137 +1291,22 @@ static Node *possessive(Node *left) {
     TrieNode *currentNode = getPropertySignatureTrie(rootWord);
 
     if (currentNode != NULL) {
+      Scanner savedScanner = scanner;
+      Parser savedParser = parser;
       advance(); // consume the root word
 
-      NodeArray args;
-      initNodeArray(&args);
+      bool hasLookahead = matchSignatureLookahead(currentNode);
 
-      TrieNode *startNode = currentNode;
-      TrieNode *lastGoodState = currentNode->isTerminal ? currentNode : NULL;
-
-      while (currentNode->childCount > 0) {
-        uint32_t nextHash =
-            hashString(parser.current.start, parser.current.length);
-        TrieNode *matchedLabel = NULL;
-        bool expectsArgument = false;
-
-        for (int i = 0; i < currentNode->childCount; i++) {
-          TrieNode *child = currentNode->children[i];
-          if (child->type == NODE_LABEL && child->labelHash == nextHash) {
-            matchedLabel = child;
-          } else if (child->type == NODE_ARGUMENT) {
-            expectsArgument = true;
-          }
+      if (hasLookahead) {
+        Node *phrasal = parsePhrasalCall(currentNode, rootToken, true, left);
+        if (phrasal != NULL) {
+          return phrasal;
         }
-
-        if (matchedLabel != NULL) {
-          advance();
-          currentNode = matchedLabel;
-          if (currentNode->isTerminal)
-            lastGoodState = currentNode;
-          continue;
-        }
-
-        if (expectsArgument && canStartExpression(parser.current.type)) {
-          int labelsPushed = 0;
-          for (int i = 0; i < currentNode->childCount; i++) {
-            if (currentNode->children[i]->type == NODE_ARGUMENT) {
-              TrieNode *ac = currentNode->children[i];
-              for (int j = 0; j < ac->childCount; j++) {
-                if (ac->children[j]->type == NODE_LABEL) {
-                  expectedLabelStack[expectedLabelCount].hash =
-                      ac->children[j]->labelHash;
-                  expectedLabelStack[expectedLabelCount].depth = groupingDepth;
-                  expectedLabelCount++;
-                  labelsPushed++;
-                }
-              }
-            }
-          }
-
-          NodeArray tempArgs;
-          initNodeArray(&tempArgs);
-          Node *arg = expression();
-          if (arg == NULL) {
-            for (int i = 0; i < tempArgs.count; i++)
-              freeNode(tempArgs.items[i]);
-            freeNodeArray(&tempArgs);
-            break;
-          }
-          if (arg->type == NODE_TUPLE) {
-            for (int j = 0; j < arg->as.tuple.count; j++)
-              writeNodeArray(&tempArgs, arg->as.tuple.items[j]);
-            free(arg->as.tuple.items);
-            free(arg);
-          } else if (arg->type == NODE_GROUPING) {
-            writeNodeArray(&tempArgs, arg->as.singleExpr.expression);
-            free(arg);
-          } else
-            writeNodeArray(&tempArgs, arg);
-
-          expectedLabelCount -= labelsPushed;
-
-          TrieNode *matchedArgChild = NULL;
-          for (int i = 0; i < currentNode->childCount; i++) {
-            if (currentNode->children[i]->type == NODE_ARGUMENT &&
-                currentNode->children[i]->arity == tempArgs.count) {
-              matchedArgChild = currentNode->children[i];
-              break;
-            }
-          }
-
-          if (matchedArgChild != NULL) {
-            for (int i = 0; i < tempArgs.count; i++)
-              writeNodeArray(&args, tempArgs.items[i]);
-            freeNodeArray(&tempArgs);
-            currentNode = matchedArgChild;
-            if (currentNode->isTerminal)
-              lastGoodState = currentNode;
-            continue;
-          } else {
-            for (int i = 0; i < tempArgs.count; i++)
-              freeNode(tempArgs.items[i]);
-            freeNodeArray(&tempArgs);
-            break;
-          }
-        }
-        break;
       }
 
-      if (lastGoodState != NULL) {
-        if (currentNode != lastGoodState) {
-          errorAt(&parser.previous, ERR_SYNTAX,
-                  "This property phrase looks incomplete.", "");
-          for (int i = 0; i < args.count; i++)
-            freeNode(args.items[i]);
-          freeNodeArray(&args);
-          return newPropertyNode(left, rootToken, line);
-        }
-
-        Token mangledToken = rootToken;
-        mangledToken.start = my_strdup(lastGoodState->mangledName);
-        mangledToken.length = strlen(lastGoodState->mangledName);
-
-        for (int i = 0; i < args.count - 1; i++) {
-          validatePureExpression(
-              args.items[i], "as a non-final argument in a property phrase");
-        }
-
-        Node *node = newPhrasalMethodCallNode(left, mangledToken, args.items,
-                                              args.count, line);
-        freeNodeArray(&args);
-        return node;
-      }
-
-      if (currentNode != startNode) {
-        errorAt(&parser.previous, ERR_REFERENCE, "Unknown property phrase.",
-                "");
-      }
-      for (int i = 0; i < args.count; i++)
-        freeNode(args.items[i]);
-      freeNodeArray(&args);
-
-      return newPropertyNode(left, rootToken, line);
+      // If we are here, lookahead failed or parsePhrasalCall returned NULL
+      scanner = savedScanner;
+      parser = savedParser;
     }
   }
 
@@ -1294,7 +1320,15 @@ static Node *possessive(Node *left) {
   return newPropertyNode(left, name, line);
 }
 
-static Node *endKeyword() { return newEndNode(parser.previous.line); }
+static Node *endKeyword() {
+  if (groupingDepth == 0) {
+    errorAt(&parser.previous, ERR_SYNTAX, "I wasn't expecting an 'end' here.",
+            "Did you accidentally add an extra 'end' to a block that doesn't "
+            "need it? Or perhaps you meant to use 'end' inside brackets like "
+            "list[1 to end]?");
+  }
+  return newEndNode(parser.previous.line);
+}
 
 // ==========================================
 // 6. STATEMENTS & DECLARATIONS
@@ -1363,12 +1397,18 @@ static Node *ifStatement(bool invert) {
                       // branch!
 
     if (match(altToken)) {
-      if (match(TOKEN_IF))
+      Token elseStart = parser.previous;
+      if (match(TOKEN_IF)) {
         elseBranch = ifStatement(false);
-      else if (match(TOKEN_UNLESS))
+      } else if (match(TOKEN_UNLESS)) {
         elseBranch = ifStatement(true);
-      else
+      } else if (match(TOKEN_COLON)) {
+        TokenType elseEnds[] = {TOKEN_END};
+        elseBranch = block(elseEnds, 1);
+        consumeBlockEnd(elseStart, "alternate");
+      } else {
         elseBranch = statement();
+      }
     }
   }
 
@@ -1497,6 +1537,8 @@ static Node *addStatement() {
 
   expectedLabelStack[expectedLabelCount].hash = hashString("to", 2);
   expectedLabelStack[expectedLabelCount].depth = groupingDepth;
+  expectedLabelStack[expectedLabelCount].labelText = "to";
+  expectedLabelStack[expectedLabelCount].labelLength = 2;
   expectedLabelCount++;
 
   // 1. Gather all the expressions to add
@@ -2354,6 +2396,7 @@ static Node *letDeclaration() {
 
     char mangled[1024] = {0};
     strncat(mangled, rootName.start, rootName.length);
+
     TrieNode *currentNode = startPhrase(rootName.start, rootName.length);
 
     if (check(TOKEN_COLON)) {
@@ -2661,9 +2704,9 @@ ParseRule rules[] = {
     [TOKEN_SLASH] = {NULL, binary, PREC_FACTOR},
     [TOKEN_STAR] = {explicitSticky, binary, PREC_FACTOR},
     [TOKEN_MOD] = {NULL, binary, PREC_FACTOR},
-    [TOKEN_IS] = {stickyPrefix, binary, PREC_EQUALITY},
-    [TOKEN_EQUAL_EQUAL] = {stickyPrefix, binary, PREC_EQUALITY},
-    [TOKEN_EQUAL] = {stickyPrefix, binary, PREC_EQUALITY},
+    [TOKEN_IS] = {stickyPrefix, binary, PREC_COMPARISON},
+    [TOKEN_EQUAL_EQUAL] = {stickyPrefix, binary, PREC_COMPARISON},
+    [TOKEN_EQUAL] = {stickyPrefix, binary, PREC_COMPARISON},
     [TOKEN_GREATER] = {stickyPrefix, binary, PREC_COMPARISON},
     [TOKEN_GREATER_EQUAL] = {stickyPrefix, binary, PREC_COMPARISON},
     [TOKEN_LESS] = {stickyPrefix, binary, PREC_COMPARISON},

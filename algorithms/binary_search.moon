@@ -14,7 +14,7 @@ let binarySearch (list, target):
     let guess be list[mid]
 
     if guess == target:
-      return mid
+      give mid
     else if guess > target:
       set high to mid - 1
     else:
@@ -23,7 +23,7 @@ let binarySearch (list, target):
   end
 
   # Not found
-  return - 1
+  give - 1
 end
 
 show "--- Binary Search Algorithm ---"

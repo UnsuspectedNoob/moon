@@ -38,4 +38,8 @@ clean:
 -include $(DEP)
 
 # .PHONY tells Make these aren't actual files on the disk, just commands
-.PHONY: all clean
+.PHONY: all clean test release
+
+# 7. Run test harness
+test: clean all
+	python3 scripts/test_harness.py

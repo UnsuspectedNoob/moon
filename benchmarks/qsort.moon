@@ -7,7 +7,7 @@ let quick sort of (list: List):
   let less, greater be [ ]
   for each item in rest:
     add item to less if item <= pivot
-    add item to greater if item > pivot
+      add item to greater if item > pivot
   end
 
   let result be quick sort of less

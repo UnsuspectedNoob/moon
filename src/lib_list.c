@@ -63,7 +63,8 @@ static Value joinNative(int argCount, Value *args) {
     }
   }
 
-  ObjString *result = takeString(sb.chars, sb.length);
+  ObjString *result = copyString(sb.chars, sb.length);
+  FREE_ARRAY(char, sb.chars, sb.capacity);
   return OBJ_VAL(result);
 }
 

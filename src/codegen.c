@@ -514,9 +514,9 @@ static void walkNode(Node *node) {
   }
 
   case NODE_CHAIN: {
-    Node **exprs = node->as.chain.expressions;
-    Token *ops = node->as.chain.operators;
-    int count = node->as.chain.exprCount;
+    Node **exprs = node->as.chain.expressions.items;
+    Token *ops = node->as.chain.operators.items;
+    int count = node->as.chain.expressions.count;
 
     int jumps[256];
     int jumpCount = 0;

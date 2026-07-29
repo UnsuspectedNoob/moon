@@ -12,6 +12,7 @@
 typedef struct {
   Token current;
   Token previous;
+  uint32_t currentHash;
   bool hadError;
   bool panicMode;
 } Parser;

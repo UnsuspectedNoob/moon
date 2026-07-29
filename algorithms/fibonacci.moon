@@ -2,13 +2,13 @@
 # ---------------------------------------------------------
 # RECURSIVE FIBONACCI
 # Showcases Moon's elegant phrasal functions, conditional 
-# returns, and recursion capability.
+# gives, and recursion capability.
 # ---------------------------------------------------------
 let fib_recursive (n):
   if n <= 1:
-    return n
+    give n
   end
-  return fib_recursive(n - 1) + fib_recursive(n - 2)
+  give fib_recursive (n - 1) + fib_recursive (n - 2)
 end
 
 # ---------------------------------------------------------
@@ -18,7 +18,7 @@ end
 # ---------------------------------------------------------
 let fib_iterative (n):
   if n <= 1:
-    return n
+    give n
   end
 
   let a be 0
@@ -30,13 +30,13 @@ let fib_iterative (n):
     set b to temp
   end
 
-  return b
+  give b
 end
 
 show "--- Fibonacci Algorithms ---"
 
 show "Iterative (n=50):"
-show fib_iterative(50)
+show fib_iterative (50)
 
 show "\nRecursive (n=20):"
-show fib_recursive(20)
+show fib_recursive (20)

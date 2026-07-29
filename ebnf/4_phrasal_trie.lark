@@ -1,0 +1,19 @@
+// The Phrasal Trie (Phase 4 - Dynamic Grammar)
+
+// --- THE SIGNATURE BUILDER (Declaration) ---
+// Used when creating a new function via 'let' or 'my'
+function_signature: IDENTIFIER (signature_argument | IDENTIFIER)*
+property_signature: IDENTIFIER (signature_argument | IDENTIFIER)*
+
+signature_argument: "(" param_decl ("," param_decl)* ")"
+param_decl: IDENTIFIER (":" type_annotation)?
+
+// --- THE PHRASAL CALL (Execution) ---
+// Used when invoking a function in an expression. 
+// Because the actual valid identifiers are stored dynamically in the Trie,
+// a CFG must generalize this as any sequence of identifiers and arguments.
+phrasal_call: IDENTIFIER (call_argument | IDENTIFIER)+
+
+// Because arguments are evaluated sequentially by the Pratt parser, 
+// a phrasal call argument can be any valid expression
+call_argument: expression

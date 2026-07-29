@@ -7,7 +7,7 @@
 let quicksort (list):
   # Base case
   if list's length <= 1:
-    return list
+    give list
   end
 
   # Better pivot selection to avoid O(N^2) on reverse-sorted lists
@@ -20,7 +20,7 @@ let quicksort (list):
   let right be [ for each x in list keep x if x > pivot ]
 
   # Recursively sort and easily concatenate lists
-  return quicksort(left) + middle + quicksort(right)
+  give quicksort(left) + middle + quicksort(right)
 end
 
 show "--- Quicksort Algorithm ---"

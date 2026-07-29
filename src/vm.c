@@ -28,7 +28,7 @@ extern char *readFile(const char *path);
 static void resetStack() { vm.stackTop = vm.stack; }
 
 // ==========================================
-// THE ORDEAL RUNTIME ERROR ENGINE
+// THE MOON RUNTIME ERROR ENGINE
 // ==========================================
 
 // The Master Runtime Error function that talks to error.c
@@ -129,6 +129,7 @@ void freeVM() {
   free(vm.grayStack);
   freeSignatureTable();
   freePropertySignatureTable();
+  isCoreBootstrapped = false;
 }
 
 void push(Value value) {
@@ -384,6 +385,10 @@ void initVM() {
   // Inject Native Getters into the Blueprints!
   defineNativeGetter(vm.listType, "length", listLengthGetter);
   defineNativeGetter(vm.stringType, "length", stringLengthGetter);
+
+  for (int i = 0; i < 256; i++) {
+    vm.charStrings[i] = NULL;
+  }
 
   for (int i = 0; i < 256; i++) {
     char c = (char)i;

@@ -69,9 +69,8 @@ typedef struct {
 } BinaryPayload; // Changed operator to opToken
 
 typedef struct {
-  Node **expressions;
-  Token *operators;
-  int exprCount;
+  NodeArray expressions;
+  TokenArray operators;
 } ChainPayload;
 
 typedef struct {
@@ -274,7 +273,7 @@ Node *newLiteralNode(Value value, int line);
 Node *newVariableNode(Token name, int line);
 Node *newUnaryNode(Token opToken, Node *right, int line);
 Node *newBinaryNode(Node *left, Token opToken, Node *right, int line);
-Node *newChainNode(Node **expressions, Token *operators, int exprCount, int line);
+Node *newChainNode(Node *firstExpr, int line);
 Node *newSubscriptNode(Node *target, Node *index, int line);
 Node *newEndNode(int line);
 Node *newLoadStickyNode(int line);

@@ -564,27 +564,22 @@ Node *newCastNode(Node *left, Node *right, int line) {
   return node;
 }
 
-Node *newChainNode(Node **expressions, Token *operators, int exprCount,
-                   int line) {
+Node *newChainNode(Node *firstExpr, int line) {
   Node *node = ALLOCATE(Node, 1);
   node->type = NODE_CHAIN;
   node->line = line;
   node->parent = NULL;
+  
+  initNodeArray(&node->as.chain.expressions);
+  initTokenArray(&node->as.chain.operators);
 
-  bool usesIt = false;
-  for (int i = 0; i < exprCount; i++) {
-    if (expressions[i]) {
-      expressions[i]->parent = node;
-      if (expressions[i]->usesIt) {
-        usesIt = true;
-      }
-    }
+  if (firstExpr) {
+    firstExpr->parent = node;
+    node->usesIt = firstExpr->usesIt;
+    writeNodeArray(&node->as.chain.expressions, firstExpr);
+  } else {
+    node->usesIt = false;
   }
-  node->usesIt = usesIt;
-
-  node->as.chain.expressions = expressions;
-  node->as.chain.operators = operators;
-  node->as.chain.exprCount = exprCount;
 
   return node;
 }
@@ -682,8 +677,8 @@ void freeNode(Node *root) {
       writeNodeArray(&worklist, node->as.unary.right);
       break;
     case NODE_CHAIN:
-      for (int i = 0; i < node->as.chain.exprCount; i++)
-        writeNodeArray(&worklist, node->as.chain.expressions[i]);
+      for (int i = 0; i < node->as.chain.expressions.count; i++)
+        writeNodeArray(&worklist, node->as.chain.expressions.items[i]);
       break;
     case NODE_IF:
       writeNodeArray(&worklist, node->as.ifStmt.condition);
@@ -805,8 +800,8 @@ void freeNode(Node *root) {
       FREE_ARRAY(Node *, node->as.block.statements, node->as.block.count);
       break;
     case NODE_CHAIN:
-      FREE_ARRAY(Node *, node->as.chain.expressions, node->as.chain.exprCount);
-      FREE_ARRAY(Token, node->as.chain.operators, node->as.chain.exprCount - 1);
+      freeNodeArray(&node->as.chain.expressions);
+      freeTokenArray(&node->as.chain.operators);
       break;
     case NODE_LET:
       FREE_ARRAY(Token, node->as.let.names, node->as.let.nameCount);

@@ -81,29 +81,30 @@ static void consumeComment(bool isMultiline, int baseColumn) {
   while (!isAtEnd()) {
     while (peek() != '\n' && !isAtEnd())
       advance();
-      
-    if (isAtEnd()) break;
-    
+
+    if (isAtEnd())
+      break;
+
     // Save state before consuming the newline
     const char *savedCurrent = scanner.current;
     int savedLine = scanner.line;
     int savedColumn = scanner.column;
-    
+
     // Consume '\n'
     scanner.line++;
     scanner.column = 0;
     advance(); // now column is 1
-    
+
     // Consume indentation
     while ((peek() == ' ' || peek() == '\t') && !isAtEnd()) {
       advance();
     }
-    
+
     if (peek() == '\n' || isAtEnd()) {
       // Blank line. Keep it in the comment.
       continue;
     }
-    
+
     if (scanner.column <= baseColumn) {
       // The indentation broke! Backtrack to before the newline.
       scanner.current = savedCurrent;
@@ -386,8 +387,10 @@ static Token string(bool isResuming, bool isMultiline) {
     if (isAtEnd()) {
       scanner.interpolationDepth = 0; // <--- THE REPL UNLOCK FIX
       return errorToken(
-          isMultiline ? "Unterminated multiline string. Make sure to close it with \"'''\"."
-                      : "Unterminated string. Make sure to close it with a '\"'.");
+          isMultiline
+              ? "Unterminated multiline string. Make sure to close it with "
+                "(''')."
+              : "Unterminated string. Make sure to close it with a '\"'.");
     }
 
     // --- THE NEW ESCAPE HATCH (Double Quote) ---
@@ -448,7 +451,9 @@ static Token string(bool isResuming, bool isMultiline) {
 
     if (c == '\n') {
       if (!isMultiline) {
-        return errorToken("Unterminated string. Regular strings (\") cannot span multiple lines. Use ''' for multiline strings.");
+        return errorToken(
+            "Unterminated string. Regular strings (\") cannot span multiple "
+            "lines. Use ''' for multiline strings.");
       }
       scanner.line++;
       scanner.column = 0; // advance() will immediately increment it to 1
@@ -528,7 +533,8 @@ Token scanToken() {
       if (match('\'')) {
         return string(false, true);
       }
-      return errorToken("Unexpected character (double single quote). Did you mean '''?");
+      return errorToken(
+          "Unexpected character (double single quote). Did you mean '''?");
     }
     return errorToken("Unexpected character (orphan single quote).");
   }

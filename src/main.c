@@ -179,17 +179,22 @@ static void runFile(const char *path) {
     exit(70);
 }
 
-int main(int argc, char *argv[]) {
-  initVM();
-
-  char *filePath = NULL;
-
+#ifndef __EMSCRIPTEN__
+int main(int argc, const char *argv[]) {
+  const char *filePath = NULL;
   bool runLsp = false;
 
-  // --- THE ROBUST CLI PARSER ---
+  // --- ENGINE BOOTSTRAP ---
+  initVM();
+  // ------------------------
+
+  // --- COMMAND LINE FLAGS ---
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--debug") == 0) {
       vm.debugMode = true;
+      printAstFlag = true;
+      printScanFlag = true;
+      printBytecodeFlag = true;
     } else if (strcmp(argv[i], "--ast") == 0) {
       printAstFlag = true;
     } else if (strcmp(argv[i], "--scan") == 0) {
@@ -234,3 +239,36 @@ int main(int argc, char *argv[]) {
   freeVM();
   return 0;
 }
+#endif
+
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+
+EMSCRIPTEN_KEEPALIVE
+void initMoonWeb() {
+  initVM();
+  if (!isCoreBootstrapped) {
+    bootstrapCore();
+    isCoreBootstrapped = true;
+  }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void executeMoonCode(const char *code) {
+  freeVM();
+  initMoonWeb();
+  interpret(code, 1);
+}
+
+EMSCRIPTEN_KEEPALIVE
+void setCompilerFlags(bool ast, bool scan, bool bytecode, bool sigtrie) {
+  extern bool printAstFlag;
+  extern bool printScanFlag;
+  extern bool printBytecodeFlag;
+  extern bool printSigTrieFlag;
+  printAstFlag = ast;
+  printScanFlag = scan;
+  printBytecodeFlag = bytecode;
+  printSigTrieFlag = sigtrie;
+}
+#endif

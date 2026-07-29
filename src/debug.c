@@ -560,14 +560,14 @@ void printAST(Node *node, int indent) {
 
   case NODE_CHAIN:
     printf("[CHAINED COMPARISON]\n");
-    printAST(node->as.chain.expressions[0], indent + 1);
-    for (int i = 0; i < node->as.chain.exprCount - 1; i++) {
+    printAST(node->as.chain.expressions.items[0], indent + 1);
+    for (int i = 0; i < node->as.chain.expressions.count - 1; i++) {
       for (int j = 0; j <= indent; j++) {
         printf((j == indent) ? " ├─ " : " │  ");
       }
-      printf("[OP: %.*s]\n", node->as.chain.operators[i].length,
-             node->as.chain.operators[i].start);
-      printAST(node->as.chain.expressions[i + 1], indent + 1);
+      printf("[OP: %.*s]\n", node->as.chain.operators.items[i].length,
+             node->as.chain.operators.items[i].start);
+      printAST(node->as.chain.expressions.items[i + 1], indent + 1);
     }
     break;
 

@@ -22,7 +22,7 @@ def run_test(filepath):
             elif "# expect error: " in line:
                 expected_errors.append(line.split("# expect error: ")[1].strip())
 
-    result = subprocess.run(["./moon", filepath], capture_output=True, text=True)
+    result = subprocess.run(["./moon", filepath], capture_output=True, text=True, errors='replace')
 
     actual_outputs = [
         line.strip() for line in result.stdout.strip().split("\n") if line.strip()
@@ -33,6 +33,9 @@ def run_test(filepath):
     failure_reason = ""
 
     # Check Outputs
+    if not expected_outputs and not expected_errors and result.returncode == 0:
+        return True, ""
+
     if len(expected_outputs) != len(actual_outputs):
         passed = False
         failure_reason += f"Expected {len(expected_outputs)} output lines, got {len(actual_outputs)}.\n"

@@ -8,9 +8,9 @@ let score be 0
 let isActive be true
 let nothingness be nil
 
-set score to 100                 # Standard reassignment
-update score + 50                # In-place math (+, -, *, /, mod)
-update greeting as String        # In-place type casting
+set score to 100 # Standard reassignment
+update score + 50 # In-place math (+, -, *, /, mod)
+update greeting as String # In-place type casting
 
 # 2. STRINGS & INTERPOLATION
 # Strings are enclosed in vertical pipes. Double pipes "" act as an escaped pipe.
@@ -18,18 +18,19 @@ let name be "Aegus"
 let welcome be "Greetings `name`, welcome to MOON!"""
 
 # 3. DATA STRUCTURES
-let fibonacci be [1, 1, 2, 3, 5, 8]
+let fibonacci be [ 1, 1, 2, 3, 5, 8 ]
 let range_list be 1 to 10 by 2
 
 let user_profile be {
   "username": "Munachi",
   "level": 42,
-  "inventory": ["Sword", "Shield"]
+  "inventory": [ "Sword",
+    "Shield" ]
 }
 
 # 4. INDEXING & PROPERTIES
-let third_num be fibonacci[3]          # 1-based indexing!
-let sub_list be fibonacci[2 to 4]      # Slicing with ranges
+let third_num be fibonacci[3] # 1-based indexing!
+let sub_list be fibonacci[2 to 4] # Slicing with ranges
 let user_name be user_profile["username"]
 let user_level be user_profile's level # Possessive access
 
@@ -48,20 +49,19 @@ end
 
 # Ternary & Statement Modifiers
 let status be "Online" if isActive else "Offline"
-give score if score > 0
-
+  give score if score > 0
 
 # 6. LOOPS & ITERATION
 let counter be 10
 while counter > 0:
   update counter - 1
   skip if counter mod 2 == 0 # Continue to next iteration
-  break unless isActive
+    break unless isActive
 end
 
 until counter is 10:
   update counter + 1
-  quit if counter > 100      # Break out of loop (alias for break)
+  quit if counter > 100 # Break out of loop (alias for break)
 end
 
 # For Loops (Lists, Ranges, Strings)
@@ -75,35 +75,43 @@ for each key, value in user_profile:
 end
 
 # 7. COMPREHENSIONS
-let evens be [for each n in 1 to 10 keep n * 2]
-let filtered be [for each n in fibonacci keep n if n > 2]
+let evens be [ for each n in 1 to 10 keep n * 2 ]
+let filtered be [ for each n in fibonacci keep n if n > 2 ]
 
-let flipped_dict be {for each k, v in user_profile keep v: k}
-let block_comp be {for each x in [1, 2, 3]:
-  let doubled be x * 2
-  keep doubled
-end}
+let flipped_dict be {
+  for each k, v in user_profile keep v: k
+}
+let block_comp be {
+  for each x in [ 1,
+    2,
+    3 ]:
+    let doubled be x * 2
+    keep doubled
+  end
+}
 
 # 8. BLUEPRINTS (Object-Oriented Programming)
 type Vector3:
   x: 0.0,
   y: 0.0,
   z: 0.0,
-  
+
   my move to (newX: Number) and (newY: Number):
-    set my x to newX
-    set my y to newY
-  end
+  set my x to newX
+  set my y to newY
+end
 end
 
 type Player:
   name: "Unknown",
   health: 100,
-  position: Vector3 {}, # Nested default instantiation
-  
+  position: Vector3 {
+  },
+  # Nested default instantiation
+
   my battle cry:
-    show "`my name` charges forward with `my health` health!"
-  end
+  show "`my name` charges forward with `my health` health!"
+end
 end
 
 # 9. INSTANTIATION & OVERRIDES
@@ -113,7 +121,8 @@ let p1 be Player {
 }
 
 # The 'with' keyword allows inline, single-line overrides
-let p2 be Player with name: "Villain" end
+let p2 be Player with name: "Villain"
+end
 
 # 10. FUNCTIONS & MULTIPLE DISPATCH
 let jump:
@@ -133,7 +142,7 @@ type Enemy:
   health: 50
 end
 
-let describe (entity: Player or Enemy)'s status:
+let (entity: Player or Enemy)'s describe status:
   if entity as Type is Player:
     show "The valiant player `entity's name` has `entity's health` health remaining."
   else:
@@ -142,13 +151,15 @@ let describe (entity: Player or Enemy)'s status:
 end
 
 # Test embedded methods
-let p3 be Player with name: "Emrys" end
+let p3 be Player with name: "Emrys"
+end
 p3's battle cry
 
 # Test union extension methods
-describe p3's status
-let e1 be Enemy {}
-describe e1's status
+p3's describe status
+let e1 be Enemy {
+}
+e1's describe status
 
 # 11. THE STANDARD LIBRARY (Built-ins)
 
@@ -172,10 +183,10 @@ let clean be trim "  spaces  "
 let words be split "a,b,c" by ","
 
 # List Library
-let reversed be reverse [1, 2, 3]
+let reversed be reverse [ 1, 2, 3 ]
 let sentence be join words with " "
 let popped_val be pop from reversed
-let idx be index of 2 in [1, 2, 3]
+let idx be index of 2 in [ 1, 2, 3 ]
 
 # Type Conversion & Parsing
 let base_ten be numbers in "1010" in base 2

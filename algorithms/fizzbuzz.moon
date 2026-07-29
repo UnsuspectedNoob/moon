@@ -1,21 +1,42 @@
+
 # ---------------------------------------------------------
-# FIZZBUZZ
-# Showcases Moon's elegant loops, modulo operators, and
-# condition chaining.
+# RECURSIVE FIBONACCI
+# Showcases Moon's elegant phrasal functions, conditional 
+# gives, and recursion capability.
 # ---------------------------------------------------------
-let fizzbuzz (n):
-  for i from 1 to n by 1:
-    if i mod 15 is 0:
-      show "FizzBuzz"
-    else if i mod 3 is 0:
-      show "Fizz"
-    else if i mod 5 is 0:
-      show "Buzz"
-    else:
-      show i
-    end
+let fib_recursive (n):
+  if n <= 1:
+    give n
   end
+  give fib_recursive (n - 1) + fib_recursive (n - 2)
 end
 
-show "--- FizzBuzz Algorithm ---"
-fizzbuzz(15)
+# ---------------------------------------------------------
+# ITERATIVE FIBONACCI
+# Showcases Moon's action statements, fast VM math, 
+# and robust 'for' loops.
+# ---------------------------------------------------------
+let fib_iterative (n):
+  if n <= 1:
+    give n
+  end
+
+  let a be 0
+  let b be 1
+
+  for i from 2 to n by 1:
+    let temp be a + b
+    set a to b
+    set b to temp
+  end
+
+  give b
+end
+
+show "--- Fibonacci Algorithms ---"
+
+show "Iterative (n=50):"
+show fib_iterative (50)
+
+show "\nRecursive (n=20):"
+show fib_recursive (20)

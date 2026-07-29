@@ -1,0 +1,4 @@
+
+## You're going to explain things in detail for me in this file.
+## List things out, and then iterate through that list, making things more detailed.
+

@@ -1,5 +1,1 @@
-let string (n: String) in uppercase:
-  return uppercase n
-end
-
-string "" in uppercase
+show join reverse "sdneirf" as List with "."
