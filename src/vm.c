@@ -673,8 +673,8 @@ TARGET_OP_ADD: {
   // --- RULE 2: THE COERCER (String + Any) ---
   else if (IS_STRING(a)) {
     ObjString *leftStr = AS_STRING(a);
-    // Dynamically stringify the right side!
-    ObjString *rightStr = valueToString(b);
+    // Dynamically stringify the right side ONLY if it's not already a string!
+    ObjString *rightStr = IS_STRING(b) ? AS_STRING(b) : valueToString(b);
 
     // Clean the stack
     pop(); // Pop b
@@ -786,7 +786,7 @@ TARGET_OP_ADD_INPLACE: {
   // RULE 3: Strings (Strings are immutable in C, so we still must clone)
   else if (IS_STRING(a)) {
     ObjString *leftStr = AS_STRING(a);
-    ObjString *rightStr = valueToString(b);
+    ObjString *rightStr = IS_STRING(b) ? AS_STRING(b) : valueToString(b);
     pop();
     pop();
     push(OBJ_VAL(leftStr));
