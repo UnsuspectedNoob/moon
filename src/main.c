@@ -192,9 +192,6 @@ int main(int argc, const char *argv[]) {
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--debug") == 0) {
       vm.debugMode = true;
-      printAstFlag = true;
-      printScanFlag = true;
-      printBytecodeFlag = true;
     } else if (strcmp(argv[i], "--ast") == 0) {
       printAstFlag = true;
     } else if (strcmp(argv[i], "--scan") == 0) {

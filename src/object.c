@@ -220,7 +220,11 @@ void printObject(Value value) {
   }
 
   case OBJ_STRING:
-    printf("%s", AS_CSTRING(value));
+    if (AS_STRING(value)->chars == NULL) {
+      printf("<rope string>");
+    } else {
+      printf("%s", AS_CSTRING(value));
+    }
     break;
 
   case OBJ_FUNCTION: {
