@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <string.h>
 
 #include "lib_list.h"
 #include "memory.h"
@@ -86,6 +87,24 @@ static Value popNative(int argCount, Value *args) {
   return lastItem;
 }
 
+static Value shiftNative(int argCount, Value *args) {
+  if (argCount != 1) return NIL_VAL;
+  if (!IS_LIST(args[0])) return NIL_VAL;
+
+  ObjList *list = AS_LIST(args[0]);
+  if (list->count == 0) return NIL_VAL;
+
+  Value firstItem = list->items[0];
+  if (list->count > 1) {
+    // Hardware-accelerated memory shift instead of a slow for loop!
+    memmove(&list->items[0], &list->items[1], sizeof(Value) * (list->count - 1));
+  }
+  list->items[list->count - 1] = NIL_VAL;
+  list->count--;
+
+  return firstItem;
+}
+
 static Value indexOfNative(int argCount, Value *args) {
   if (argCount != 2)
     return NIL_VAL;
@@ -154,6 +173,8 @@ void registerListLibrary() {
   REGISTER_PHRASE(NULL, "join", "$1,with,$1", 2, "join$1_with$1", joinNative,
                   vm.listType, vm.stringType);
   REGISTER_PHRASE(NULL, "pop", "from,$1", 1, "pop_from$1", popNative,
+                  vm.listType);
+  REGISTER_PHRASE(NULL, "shift", "from,$1", 1, "shift_from$1", shiftNative,
                   vm.listType);
   REGISTER_PHRASE(NULL, "numbers", "in,$1,in,base,$1", 2,
                   "numbers_in$1_in_base$1", parseBaseNative, vm.anyType,
