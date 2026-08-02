@@ -17,7 +17,7 @@ typedef struct {
 
 #define TABLE_CAPACITY 1024
 static RegistryEntry phrasalTable[TABLE_CAPACITY];
-static RegistryEntry propertyTable[TABLE_CAPACITY];
+
 
 // --- UTILS ---
 static char *my_strdup(const char *s) {
@@ -34,8 +34,9 @@ static TrieNode *newNode(PhraseNodeType type) {
   node->type = type;
   node->labelHash = 0;
   node->arity = 0;
+  node->isLeadingArg = false;
   node->labelLength = 0;
-  node->isTerminal = false;
+  node->terminalType = TERMINAL_NONE;
   node->isCore = g_isBootstrappingCore;
   node->labelName = NULL;
   node->mangledName = NULL;
@@ -115,73 +116,38 @@ TrieNode *getSignatureTrie(const char *rootWord) {
   }
 }
 
+bool hasInfixSignature(const char *word, int length) {
+  uint32_t hash = hashString(word, length);
+  uint32_t index = hash & (TABLE_CAPACITY - 1);
+
+  for (;;) {
+    RegistryEntry *entry = &phrasalTable[index];
+    if (entry->rootWord == NULL)
+      return false; // Not found
+    if (entry->rootHash == hash &&
+        strncmp(entry->rootWord, word, length) == 0 &&
+        entry->rootWord[length] == '\0') {
+      TrieNode *root = entry->trieRoot;
+      if (root == NULL)
+        return false;
+      for (int i = 0; i < root->childCount; i++) {
+        if (root->children[i]->type == NODE_ARGUMENT &&
+            root->children[i]->isLeadingArg) {
+          return true;
+        }
+      }
+      return false;
+    }
+    index = (index + 1) & (TABLE_CAPACITY - 1);
+  }
+}
+
 TrieNode *startPhrase(const char *rootWord, int length) {
   uint32_t rHash = hashString(rootWord, length);
   uint32_t index = rHash & (TABLE_CAPACITY - 1);
 
   for (;;) {
     RegistryEntry *entry = &phrasalTable[index];
-    if (entry->rootWord == NULL) {
-      entry->rootHash = rHash;
-      char *rootStr = malloc(length + 1);
-      memcpy(rootStr, rootWord, length);
-      rootStr[length] = '\0';
-      entry->rootWord = rootStr;
-
-      entry->trieRoot = newNode(NODE_LABEL);
-      return entry->trieRoot;
-    } else if (entry->rootHash == rHash &&
-               strncmp(entry->rootWord, rootWord, length) == 0 &&
-               entry->rootWord[length] == '\0') {
-      return entry->trieRoot;
-    }
-    index = (index + 1) & (TABLE_CAPACITY - 1);
-  }
-}
-
-// --- PROPERTY SIGNATURE TRIE API ---
-
-void initPropertySignatureTable() {
-  for (int i = 0; i < TABLE_CAPACITY; i++) {
-    propertyTable[i].rootWord = NULL;
-  }
-}
-
-void freePropertySignatureTable() {
-  for (int i = 0; i < TABLE_CAPACITY; i++) {
-    if (propertyTable[i].rootWord != NULL) {
-      if (propertyTable[i].trieRoot->isCore) {
-        freeTrieNode(propertyTable[i].trieRoot);
-        continue;
-      }
-      FREE_TRIE(propertyTable[i].rootWord);
-      destroyTrieNode(propertyTable[i].trieRoot);
-      propertyTable[i].rootWord = NULL;
-    }
-  }
-}
-
-TrieNode *getPropertySignatureTrie(const char *rootWord) {
-  uint32_t hash = hashString(rootWord, strlen(rootWord));
-  uint32_t index = hash & (TABLE_CAPACITY - 1);
-
-  for (;;) {
-    RegistryEntry *entry = &propertyTable[index];
-    if (entry->rootWord == NULL)
-      return NULL;
-    if (entry->rootHash == hash && strcmp(entry->rootWord, rootWord) == 0) {
-      return entry->trieRoot;
-    }
-    index = (index + 1) & (TABLE_CAPACITY - 1);
-  }
-}
-
-TrieNode *startPropertyPhrase(const char *rootWord, int length) {
-  uint32_t rHash = hashString(rootWord, length);
-  uint32_t index = rHash & (TABLE_CAPACITY - 1);
-
-  for (;;) {
-    RegistryEntry *entry = &propertyTable[index];
     if (entry->rootWord == NULL) {
       entry->rootHash = rHash;
       char *rootStr = malloc(length + 1);
@@ -226,15 +192,17 @@ TrieNode *addLabelBranch(TrieNode *current, const char *label, int length) {
   return child;
 }
 
-TrieNode *addArgumentBranch(TrieNode *current, int arity) {
+TrieNode *addArgumentBranch(TrieNode *current, int arity, bool isLeadingArg) {
   for (int i = 0; i < current->childCount; i++) {
     TrieNode *child = current->children[i];
-    if (child->type == NODE_ARGUMENT && child->arity == arity)
+    if (child->type == NODE_ARGUMENT && child->arity == arity &&
+        child->isLeadingArg == isLeadingArg)
       return child;
   }
 
   TrieNode *child = newNode(NODE_ARGUMENT);
   child->arity = arity;
+  child->isLeadingArg = isLeadingArg;
 
   if (current->childCapacity < current->childCount + 1) {
     int old = current->childCapacity;
@@ -246,11 +214,15 @@ TrieNode *addArgumentBranch(TrieNode *current, int arity) {
   return child;
 }
 
-void finalizePhrase(TrieNode *endNode, const char *mangledName) {
-  endNode->isTerminal = true;
+bool finalizePhrase(TrieNode *endNode, const char *mangledName, TerminalType terminalType) {
+  if (endNode->terminalType != TERMINAL_NONE && endNode->terminalType != terminalType) {
+    return false; // Mutual exclusion collision!
+  }
+  endNode->terminalType = terminalType;
   if (endNode->mangledName)
     free(endNode->mangledName);
   endNode->mangledName = my_strdup(mangledName);
+  return true;
 }
 
 static void printTrieNode(TrieNode *node, int indent, bool isLast) {
@@ -265,11 +237,11 @@ static void printTrieNode(TrieNode *node, int indent, bool isLast) {
   if (node->type == NODE_LABEL) {
     printf("[LABEL: %s]", node->labelName ? node->labelName : "?");
   } else if (node->type == NODE_ARGUMENT) {
-    printf("[ARG: $%d]", node->arity);
+    printf("[ARG: $%d%s]", node->arity, node->isLeadingArg ? " (leading)" : "");
   }
 
-  if (node->isTerminal) {
-    printf(" -> %s", node->mangledName);
+  if (node->terminalType != TERMINAL_NONE) {
+    printf(" -> %s (%s)", node->mangledName, node->terminalType == TERMINAL_PHRASE ? "PHRASE" : "VARIABLE");
   }
   printf("\n");
 
@@ -285,8 +257,8 @@ void printSignatureTrie() {
     if (phrasalTable[i].rootWord != NULL) {
       bucketCount++;
       printf("[ROOT: %s]", phrasalTable[i].rootWord);
-      if (phrasalTable[i].trieRoot->isTerminal) {
-        printf(" -> %s\n", phrasalTable[i].trieRoot->mangledName);
+      if (phrasalTable[i].trieRoot->terminalType != TERMINAL_NONE) {
+        printf(" -> %s (%s)\n", phrasalTable[i].trieRoot->mangledName, phrasalTable[i].trieRoot->terminalType == TERMINAL_PHRASE ? "PHRASE" : "VARIABLE");
       } else {
         printf("\n");
       }
@@ -304,7 +276,7 @@ void registerSignature(const char *root, const char *path,
   TrieNode *current = startPhrase(root, strlen(root));
 
   if (path == NULL || strlen(path) == 0) {
-    finalizePhrase(current, mangledName);
+    finalizePhrase(current, mangledName, TERMINAL_PHRASE);
     return;
   }
 
@@ -314,13 +286,13 @@ void registerSignature(const char *root, const char *path,
   while (token != NULL) {
     if (token[0] == '$') {
       int arity = atoi(token + 1);
-      current = addArgumentBranch(current, arity);
+      current = addArgumentBranch(current, arity, false);
     } else {
       current = addLabelBranch(current, token, strlen(token));
     }
     token = strtok(NULL, ",");
   }
 
-  finalizePhrase(current, mangledName);
+  finalizePhrase(current, mangledName, TERMINAL_PHRASE);
   free(pathCopy);
 }

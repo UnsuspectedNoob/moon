@@ -117,8 +117,8 @@ static Value existsNative(int argCount, Value *args) {
 // --- THE HANDSHAKE ---
 
 void registerIOLibrary() {
-  REGISTER_PHRASE(NULL, "read", "file,$1", 1, "read_file$1", readNative, vm.stringType);
-  REGISTER_PHRASE(NULL, "write", "$1,to,$1", 2, "write$1_to$1", writeNative, vm.stringType, vm.stringType);
-  REGISTER_PHRASE(NULL, "append", "$1,to,file,$1", 2, "append$1_to_file$1", appendNative, vm.stringType, vm.stringType);
-  REGISTER_PHRASE(NULL, "file", "$1,exists", 1, "file$1_exists", existsNative, vm.stringType);
+  REGISTER_PHRASE(NULL, "read", "file,$1", 1, "read#file$1", readNative, vm.stringType);
+  REGISTER_PHRASE(NULL, "write", "$1,to,$1", 2, "write$1to$1", writeNative, vm.stringType, vm.stringType);
+  REGISTER_PHRASE(NULL, "append", "$1,to,file,$1", 2, "append$1to#file$1", appendNative, vm.stringType, vm.stringType);
+  REGISTER_PHRASE(NULL, "file", "$1,exists", 1, "file$1exists", existsNative, vm.stringType);
 }

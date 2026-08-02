@@ -30,6 +30,7 @@ static int expectedLabelCount = 0;
 static int groupingDepth = 0; // Tracks if we are inside () or []
 
 static int loopingDepth = 0;
+static bool isReservedKeyword(TokenType type);
 static Token makeHiddenToken(const char *text, int line);
 
 // --- ADD THESE TWO LINES ---
@@ -257,6 +258,7 @@ typedef enum {
   PREC_FACTOR,
   PREC_CAST,
   PREC_UNARY,
+  PREC_PHRASE,
   PREC_CALL,
   PREC_PRIMARY
 } Precedence;
@@ -271,6 +273,19 @@ typedef struct {
 
 static Node *expression();
 static ParseRule *getRule(TokenType type);
+static Precedence getInfixPrecedence(TokenType type);
+static Node *parsePropertySignatureBody(Token receiverName, Node *receiverType,
+                                        int line);
+
+static Precedence getInfixPrecedence(TokenType type) {
+  if (type == TOKEN_IDENTIFIER) {
+    if (hasInfixSignature(parser.current.start, parser.current.length)) {
+      return PREC_PHRASE;
+    }
+    return PREC_NONE;
+  }
+  return getRule(type)->precedence;
+}
 
 static void validatePureExpression(Node *node, const char *context) {
   if (node == NULL)
@@ -280,7 +295,7 @@ static void validatePureExpression(Node *node, const char *context) {
     snprintf(message, sizeof(message),
              "Statement modifiers are not allowed %s.", context);
     errorAt(&parser.previous, ERR_SYNTAX, message,
-            "If you meant to use a ternary, add an 'else' branch.");
+             "If you meant to use a ternary, add an 'else' branch.");
   } else if (node->type == NODE_PHRASAL_CALL) {
     if (node->as.phrasalCall.argCount > 0) {
       validatePureExpression(
@@ -321,7 +336,7 @@ static Node *parsePrecedence(Precedence precedence) {
   // 2. Tracks while-loop depth (Left-heavy trees!)
   int infixDepth = 0;
 
-  while (precedence <= getRule(parser.current.type)->precedence) {
+  while (precedence <= getInfixPrecedence(parser.current.type)) {
     if (isExpectedLabel())
       break;
 
@@ -595,7 +610,7 @@ static bool matchSignatureLookahead(TrieNode *currentNode) {
           if (hasLabel) {
             matchedArgChild = ac;
             break;
-          } else if (ac->isTerminal) {
+          } else if (ac->terminalType != TERMINAL_NONE) {
             matchedArgChild = ac;
           }
         }
@@ -609,7 +624,7 @@ static bool matchSignatureLookahead(TrieNode *currentNode) {
     break;
   }
 
-  bool success = currentNode->isTerminal;
+  bool success = currentNode->terminalType != TERMINAL_NONE;
 
   scanner = savedScanner;
   parser = savedParser;
@@ -687,7 +702,12 @@ static Node *parsePhrasalCall(TrieNode *startNode, Token rootToken,
 
       NodeArray tempArgs;
       initNodeArray(&tempArgs);
-      Node *arg = expression();
+      Node *arg = NULL;
+      if (labelsPushed == 0 && check(TOKEN_LEFT_PAREN)) {
+        arg = parsePrecedence(PREC_CALL);
+      } else {
+        arg = expression();
+      }
 
       if (arg == NULL) {
         for (int i = 0; i < tempArgs.count; i++)
@@ -738,7 +758,7 @@ static Node *parsePhrasalCall(TrieNode *startNode, Token rootToken,
     break;
   }
 
-  if (!currentNode->isTerminal) {
+  if (currentNode->terminalType == TERMINAL_NONE) {
     errorAt(&parser.previous, ERR_SYNTAX,
             "This phrasal function looks incomplete.",
             "You started a phrase but didn't finish it. Check the function's "
@@ -759,12 +779,28 @@ static Node *parsePhrasalCall(TrieNode *startNode, Token rootToken,
   }
 
   Node *node;
-  if (isMethod) {
-    node = newPhrasalMethodCallNode(methodTarget, mangledToken, args.items,
-                                    args.count, rootToken.line);
+  if (currentNode->terminalType == TERMINAL_VARIABLE) {
+    if (args.count > 0) {
+      errorAt(&parser.previous, ERR_SYNTAX, "Variables cannot take arguments.",
+              "");
+      for (int i = 0; i < args.count; i++)
+        freeNode(args.items[i]);
+      freeNodeArray(&args);
+      return NULL;
+    }
+    if (isMethod) {
+      node = newPropertyNode(methodTarget, mangledToken, rootToken.line);
+    } else {
+      node = newVariableNode(mangledToken, rootToken.line);
+    }
   } else {
-    node = newPhrasalCallNode(mangledToken, args.items, args.count,
-                              phraseTokens, phraseTokenCount, rootToken.line);
+    if (isMethod) {
+      node = newPhrasalMethodCallNode(methodTarget, mangledToken, args.items,
+                                      args.count, rootToken.line);
+    } else {
+      node = newPhrasalCallNode(mangledToken, args.items, args.count,
+                                phraseTokens, phraseTokenCount, rootToken.line);
+    }
   }
   freeNodeArray(&args);
   return node;
@@ -781,7 +817,31 @@ static Node *variable() {
 
   if (currentNode == NULL) {
     if (rootToken.length == 2 && memcmp(rootToken.start, "my", 2) == 0) {
-      if (check(TOKEN_IDENTIFIER)) {
+      if (parser.current.type == TOKEN_IDENTIFIER) {
+        Token firstPropToken = parser.current;
+        char propRoot[256] = {0};
+        snprintf(propRoot, sizeof(propRoot), "%.*s", firstPropToken.length,
+                 firstPropToken.start);
+        TrieNode *propNode = getSignatureTrie(propRoot);
+
+        if (propNode != NULL) {
+          Scanner savedScanner = scanner;
+          Parser savedParser = parser;
+          advance(); // consume the first word
+
+          if (matchSignatureLookahead(propNode)) {
+            Node *myVar = newVariableNode(rootToken, rootToken.line);
+            Node *phrasal =
+                parsePhrasalCall(propNode, firstPropToken, true, myVar);
+            if (phrasal != NULL)
+              return phrasal;
+          }
+
+          scanner = savedScanner;
+          parser = savedParser;
+        }
+
+        // Fallback to single token
         advance();
         Token propertyToken = parser.previous;
         Node *myVar = newVariableNode(rootToken, rootToken.line);
@@ -933,7 +993,7 @@ static Node *binary(Node *left) {
     Node *chain = newChainNode(left, opToken.line);
     writeNodeArray(&chain->as.chain.expressions, right);
     writeTokenArray(&chain->as.chain.operators, opToken);
-    
+
     if (right) {
       if (right->usesIt)
         chain->usesIt = true;
@@ -961,6 +1021,323 @@ static Node *or_(Node *left) {
   Token opToken = parser.previous;
   Node *right = parsePrecedence(PREC_OR);
   return newLogicalNode(left, opToken, right, opToken.line);
+}
+
+static Node *parsePhrasalInfixCall(TrieNode *argChild, Token rootToken,
+                                   Node *left) {
+  NodeArray args;
+  initNodeArray(&args);
+
+  if (left != NULL) {
+    if (left->type == NODE_TUPLE) {
+      for (int j = 0; j < left->as.tuple.count; j++) {
+        writeNodeArray(&args, left->as.tuple.items[j]);
+      }
+      FREE_ARRAY(Node *, left->as.tuple.items, left->as.tuple.count);
+      FREE(Node, left);
+    } else if (left->type == NODE_GROUPING) {
+      writeNodeArray(&args, left->as.singleExpr.expression);
+      FREE(Node, left);
+    } else {
+      writeNodeArray(&args, left);
+    }
+  }
+
+  Token phraseTokens[16];
+  int phraseTokenCount = 0;
+  phraseTokens[phraseTokenCount++] = rootToken;
+
+  TrieNode *currentNode = argChild;
+
+  while (currentNode->childCount > 0) {
+    uint32_t nextHash = parser.currentHash;
+    TrieNode *matchedLabel = NULL;
+    bool expectsArgument = false;
+
+    for (int i = 0; i < currentNode->childCount; i++) {
+      TrieNode *child = currentNode->children[i];
+      if (child->type == NODE_LABEL && child->labelHash == nextHash &&
+          parser.current.length == child->labelLength &&
+          memcmp(parser.current.start, child->labelName, child->labelLength) ==
+              0) {
+        matchedLabel = child;
+      } else if (child->type == NODE_ARGUMENT) {
+        expectsArgument = true;
+      }
+    }
+
+    if (matchedLabel != NULL) {
+      if (phraseTokenCount < 16) {
+        phraseTokens[phraseTokenCount++] = parser.current;
+      }
+      advance();
+      currentNode = matchedLabel;
+      continue;
+    }
+
+    if (expectsArgument) {
+      int labelsPushed = 0;
+      for (int i = 0; i < currentNode->childCount; i++) {
+        if (currentNode->children[i]->type == NODE_ARGUMENT) {
+          TrieNode *ac = currentNode->children[i];
+          for (int j = 0; j < ac->childCount; j++) {
+            if (ac->children[j]->type == NODE_LABEL) {
+              if (expectedLabelCount >= 256) {
+                errorAt(&parser.previous, ERR_SYNTAX,
+                        "This expression is too deeply nested and I'm losing "
+                        "track of it!",
+                        "");
+                for (int k = 0; k < args.count; k++)
+                  freeNode(args.items[k]);
+                freeNodeArray(&args);
+                return NULL;
+              }
+              expectedLabelStack[expectedLabelCount].hash =
+                  ac->children[j]->labelHash;
+              expectedLabelStack[expectedLabelCount].depth = groupingDepth;
+              expectedLabelStack[expectedLabelCount].labelText =
+                  ac->children[j]->labelName;
+              expectedLabelStack[expectedLabelCount].labelLength =
+                  ac->children[j]->labelLength;
+              expectedLabelCount++;
+              labelsPushed++;
+            }
+          }
+        }
+      }
+
+      NodeArray tempArgs;
+      initNodeArray(&tempArgs);
+      Node *arg = NULL;
+      if (labelsPushed == 0 && check(TOKEN_LEFT_PAREN)) {
+        arg = parsePrecedence(PREC_CALL);
+      } else {
+        arg = expression();
+      }
+
+      if (arg == NULL) {
+        for (int i = 0; i < tempArgs.count; i++)
+          freeNode(tempArgs.items[i]);
+        freeNodeArray(&tempArgs);
+        break;
+      }
+
+      if (arg->type == NODE_TUPLE) {
+        for (int j = 0; j < arg->as.tuple.count; j++) {
+          writeNodeArray(&tempArgs, arg->as.tuple.items[j]);
+        }
+        FREE_ARRAY(Node *, arg->as.tuple.items, arg->as.tuple.count);
+        FREE(Node, arg);
+      } else if (arg->type == NODE_GROUPING) {
+        writeNodeArray(&tempArgs, arg->as.singleExpr.expression);
+        FREE(Node, arg);
+      } else {
+        writeNodeArray(&tempArgs, arg);
+      }
+
+      expectedLabelCount -= labelsPushed;
+
+      TrieNode *matchedArgChild = NULL;
+      for (int i = 0; i < currentNode->childCount; i++) {
+        if (currentNode->children[i]->type == NODE_ARGUMENT &&
+            currentNode->children[i]->arity == tempArgs.count) {
+          matchedArgChild = currentNode->children[i];
+          break;
+        }
+      }
+
+      if (matchedArgChild != NULL) {
+        for (int i = 0; i < tempArgs.count; i++)
+          writeNodeArray(&args, tempArgs.items[i]);
+        freeNodeArray(&tempArgs);
+        currentNode = matchedArgChild;
+        continue;
+      } else {
+        for (int i = 0; i < tempArgs.count; i++)
+          freeNode(tempArgs.items[i]);
+        freeNodeArray(&tempArgs);
+        break;
+      }
+    }
+    break;
+  }
+
+  if (currentNode->terminalType == TERMINAL_NONE) {
+    errorAt(&parser.previous, ERR_SYNTAX,
+            "This phrasal function looks incomplete.",
+            "You started a phrase but didn't finish it. Check the function's "
+            "signature to see what words or arguments are missing.");
+    for (int i = 0; i < args.count; i++)
+      freeNode(args.items[i]);
+    freeNodeArray(&args);
+    return NULL;
+  }
+
+  Token mangledToken = rootToken;
+  mangledToken.start = my_strdup(currentNode->mangledName);
+  mangledToken.length = strlen(currentNode->mangledName);
+
+  for (int i = 0; i < args.count - 1; i++) {
+    validatePureExpression(args.items[i],
+                           "as a non-final argument in a phrase");
+  }
+
+  Node *node = newPhrasalCallNode(mangledToken, args.items, args.count,
+                                  phraseTokens, phraseTokenCount,
+                                  rootToken.line);
+  freeNodeArray(&args);
+  return node;
+}
+
+static Node *phrasalInfix(Node *left) {
+  Token rootToken = parser.previous;
+  char rootWord[256] = {0};
+  snprintf(rootWord, sizeof(rootWord), "%.*s", rootToken.length,
+           rootToken.start);
+
+  int leftArity = (left != NULL && left->type == NODE_TUPLE) ? left->as.tuple.count : 1;
+
+  TrieNode *rootNode = getSignatureTrie(rootWord);
+  if (rootNode != NULL) {
+    for (int i = 0; i < rootNode->childCount; i++) {
+      if (rootNode->children[i]->type == NODE_ARGUMENT &&
+          rootNode->children[i]->isLeadingArg &&
+          rootNode->children[i]->arity == leftArity) {
+        TrieNode *argChild = rootNode->children[i];
+        Scanner savedScanner = scanner;
+        Parser savedParser = parser;
+
+        if (matchSignatureLookahead(argChild)) {
+          Node *phrasal = parsePhrasalInfixCall(argChild, rootToken, left);
+          if (phrasal != NULL)
+            return phrasal;
+        }
+
+        scanner = savedScanner;
+        parser = savedParser;
+      }
+    }
+  }
+
+  errorAt(
+      &parser.previous, ERR_SYNTAX,
+      "Unexpected identifier following expression.",
+      "If you meant to call a phrasal function, check that the signature is "
+      "defined.");
+  return left;
+}
+
+static Node *binaryInterceptor(Node *left) {
+  Token opToken = parser.previous;
+  char rootWord[256] = {0};
+  snprintf(rootWord, sizeof(rootWord), "%.*s", opToken.length, opToken.start);
+
+  int leftArity = (left != NULL && left->type == NODE_TUPLE) ? left->as.tuple.count : 1;
+
+  TrieNode *rootNode = getSignatureTrie(rootWord);
+  if (rootNode != NULL) {
+    for (int i = 0; i < rootNode->childCount; i++) {
+      if (rootNode->children[i]->type == NODE_ARGUMENT &&
+          rootNode->children[i]->isLeadingArg &&
+          rootNode->children[i]->arity == leftArity) {
+        TrieNode *argChild = rootNode->children[i];
+        Scanner savedScanner = scanner;
+        Parser savedParser = parser;
+
+        if (matchSignatureLookahead(argChild)) {
+          Node *phrasal = parsePhrasalInfixCall(argChild, opToken, left);
+          if (phrasal != NULL)
+            return phrasal;
+        }
+
+        scanner = savedScanner;
+        parser = savedParser;
+      }
+    }
+  }
+
+  return binary(left);
+}
+
+static Node *isInterceptor(Node *left) {
+  Token opToken = parser.previous;
+  int leftArity = (left != NULL && left->type == NODE_TUPLE) ? left->as.tuple.count : 1;
+
+  TrieNode *rootNode = getSignatureTrie("is");
+  if (rootNode != NULL) {
+    for (int i = 0; i < rootNode->childCount; i++) {
+      if (rootNode->children[i]->type == NODE_ARGUMENT &&
+          rootNode->children[i]->isLeadingArg &&
+          rootNode->children[i]->arity == leftArity) {
+        TrieNode *argChild = rootNode->children[i];
+        Scanner savedScanner = scanner;
+        Parser savedParser = parser;
+
+        if (matchSignatureLookahead(argChild)) {
+          Node *phrasal = parsePhrasalInfixCall(argChild, opToken, left);
+          if (phrasal != NULL)
+            return phrasal;
+        }
+
+        scanner = savedScanner;
+        parser = savedParser;
+      }
+    }
+  }
+
+  return binary(left);
+}
+
+static Node *andInterceptor(Node *left) {
+  Token opToken = parser.previous;
+  TrieNode *rootNode = getSignatureTrie("and");
+  if (rootNode != NULL) {
+    for (int i = 0; i < rootNode->childCount; i++) {
+      if (rootNode->children[i]->type == NODE_ARGUMENT &&
+          rootNode->children[i]->arity == 1) {
+        TrieNode *argChild = rootNode->children[i];
+        Scanner savedScanner = scanner;
+        Parser savedParser = parser;
+
+        if (matchSignatureLookahead(argChild)) {
+          Node *phrasal = parsePhrasalInfixCall(argChild, opToken, left);
+          if (phrasal != NULL)
+            return phrasal;
+        }
+
+        scanner = savedScanner;
+        parser = savedParser;
+      }
+    }
+  }
+
+  return and_(left);
+}
+
+static Node *orInterceptor(Node *left) {
+  Token opToken = parser.previous;
+  TrieNode *rootNode = getSignatureTrie("or");
+  if (rootNode != NULL) {
+    for (int i = 0; i < rootNode->childCount; i++) {
+      if (rootNode->children[i]->type == NODE_ARGUMENT &&
+          rootNode->children[i]->arity == 1) {
+        TrieNode *argChild = rootNode->children[i];
+        Scanner savedScanner = scanner;
+        Parser savedParser = parser;
+
+        if (matchSignatureLookahead(argChild)) {
+          Node *phrasal = parsePhrasalInfixCall(argChild, opToken, left);
+          if (phrasal != NULL)
+            return phrasal;
+        }
+
+        scanner = savedScanner;
+        parser = savedParser;
+      }
+    }
+  }
+
+  return or_(left);
 }
 
 static Node *statement();
@@ -1123,10 +1500,21 @@ static Node *dict() {
       // 1. Parse the Key (Force it to be a String Literal!)
       Node *keyNode = NULL;
       if (match(TOKEN_IDENTIFIER)) {
-        // If they type `name:`, convert the bare identifier into the string
-        // "name"
-        ObjString *keyStr =
-            copyString(parser.previous.start, parser.previous.length);
+        char mangled[1024] = {0};
+        int currentLen = parser.previous.length;
+        strncpy(mangled, parser.previous.start, currentLen);
+        mangled[currentLen] = '\0';
+
+        while (check(TOKEN_IDENTIFIER) &&
+               !isReservedKeyword(parser.current.type)) {
+          advance();
+          mangled[currentLen++] = ' ';
+          strncpy(mangled + currentLen, parser.previous.start,
+                  parser.previous.length);
+          currentLen += parser.previous.length;
+          mangled[currentLen] = '\0';
+        }
+        ObjString *keyStr = copyString(mangled, currentLen);
         keyNode = newLiteralNode(OBJ_VAL(keyStr), parser.previous.line);
       } else if (match(TOKEN_STRING)) {
         // If they type `"name":`, chop off the quotes normally
@@ -1192,14 +1580,37 @@ static Node *parseInstantiate(Node *left, bool isWith) {
         break; // Successfully handles trailing commas!
 
       // --- THE FIX ---
-      consumeHint(
-          TOKEN_IDENTIFIER, ERR_SYNTAX, "I was expecting a property name here.",
-          isWith
-              ? "When overriding properties, you need to list them explicitly."
-              : "When instantiating a type, you need to list its properties "
-                "(e.g., 'health: 100').");
+      if (!check(TOKEN_IDENTIFIER)) {
+        errorAt(
+            &parser.current, ERR_SYNTAX,
+            "I was expecting a property name here.",
+            isWith
+                ? "When overriding properties, you need to list them "
+                  "explicitly."
+                : "When instantiating a type, you need to list its properties "
+                  "(e.g., 'health: 100').");
+      }
+      advance();
+      char mangled[1024] = {0};
+      int currentLen = parser.previous.length;
+      strncpy(mangled, parser.previous.start, currentLen);
+      mangled[currentLen] = '\0';
 
-      writeTokenArray(&propNames, parser.previous);
+      while (check(TOKEN_IDENTIFIER) &&
+             !isReservedKeyword(parser.current.type)) {
+        advance();
+        mangled[currentLen++] = ' ';
+        strncpy(mangled + currentLen, parser.previous.start,
+                parser.previous.length);
+        currentLen += parser.previous.length;
+        mangled[currentLen] = '\0';
+      }
+
+      Token finalName = parser.previous;
+      finalName.start = my_strdup(mangled);
+      finalName.length = currentLen;
+
+      writeTokenArray(&propNames, finalName);
       // ---------------
 
       consumeHint(TOKEN_COLON, ERR_SYNTAX,
@@ -1288,7 +1699,7 @@ static Node *possessive(Node *left) {
     snprintf(rootWord, sizeof(rootWord), "%.*s", rootToken.length,
              rootToken.start);
 
-    TrieNode *currentNode = getPropertySignatureTrie(rootWord);
+    TrieNode *currentNode = getSignatureTrie(rootWord);
 
     if (currentNode != NULL) {
       Scanner savedScanner = scanner;
@@ -1316,8 +1727,25 @@ static Node *possessive(Node *left) {
               "Provide the name of the property you want to access (e.g., "
               "'user's age').");
   Token name = parser.previous;
+  char propMangled[1024] = {0};
+  int propLen = name.length;
+  strncpy(propMangled, name.start, propLen);
+  propMangled[propLen] = '\0';
 
-  return newPropertyNode(left, name, line);
+  while (check(TOKEN_IDENTIFIER) && !isReservedKeyword(parser.current.type)) {
+    advance();
+    propMangled[propLen++] = ' ';
+    strncpy(propMangled + propLen, parser.previous.start,
+            parser.previous.length);
+    propLen += parser.previous.length;
+    propMangled[propLen] = '\0';
+  }
+
+  Token finalProp = name;
+  finalProp.start = my_strdup(propMangled);
+  finalProp.length = propLen;
+
+  return newPropertyNode(left, finalProp, line);
 }
 
 static Node *endKeyword() {
@@ -1494,16 +1922,7 @@ static Node *parseLValue() {
       "You started an assignment but didn't tell me what variable to update.",
       "Provide a target variable. For example: 'set score to 10'.");
 
-  Node *lvalue = newVariableNode(parser.previous, parser.previous.line);
-
-  if (parser.previous.length == 2 &&
-      memcmp(parser.previous.start, "my", 2) == 0) {
-    if (check(TOKEN_IDENTIFIER)) {
-      advance();
-      Token propertyToken = parser.previous;
-      lvalue = newPropertyNode(lvalue, propertyToken, propertyToken.line);
-    }
-  }
+  Node *lvalue = variable();
 
   // The Recursive Modifier Loop: [ <expr> ] | . <expr> | 's <id>
   while (true) {
@@ -1836,6 +2255,9 @@ static Node *skipStatement() {
 static Node *parsePropertySignatureBody(Token receiverName, Node *receiverType,
                                         int line);
 static Node *parseTypeAnnotation();
+static bool isReservedKeyword(TokenType type);
+static Token makeHiddenToken(const char *text, int line);
+
 static Node *typeDeclaration() {
   int line = parser.previous.line;
   consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
@@ -1872,50 +2294,162 @@ static Node *typeDeclaration() {
       if (check(TOKEN_END))
         break; // Allow trailing commas before 'end'
 
-      // Check for embedded methods using 'my'
-      if (check(TOKEN_IDENTIFIER) && parser.current.length == 2 &&
-          memcmp(parser.current.start, "my", 2) == 0) {
-        const char *next = parser.current.start + parser.current.length;
-        while (*next == ' ' || *next == '\t')
-          next++;
+      consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
+                  "I was expecting a property or method name here.", "");
+      Token rootName = parser.previous;
 
-        if (*next != ':' && *next != ',' && *next != '\n' && *next != '\r' &&
-            *next != '\0') {
-          advance(); // consume 'my'
-          Token receiverName = parser.previous;
-          Node *receiverType =
-              newVariableNode(name, line); // name is from 'type Person:'
+      TrieNode *currentNode = startPhrase(rootName.start, rootName.length);
+      int mangledCap = 1024;
+      char *mangled = calloc(1, mangledCap);
+      char *mangledField = calloc(1, mangledCap);
+      strncat(mangled, rootName.start, rootName.length);
+      strncat(mangledField, rootName.start, rootName.length);
 
-          Node *method =
-              parsePropertySignatureBody(receiverName, receiverType, line);
-          writeNodeArray(&methods, method);
+      bool lastWasLabel = true;
+      bool containsKeyword = false;
+      Token firstKeyword;
 
-          match(TOKEN_COMMA); // optional trailing comma
-          continue;
+      TokenArray parameters;
+      initTokenArray(&parameters);
+      NodeArray paramTypes;
+      initNodeArray(&paramTypes);
+
+      while (!check(TOKEN_IS) && !check(TOKEN_COMMA) && !check(TOKEN_COLON) &&
+             !check(TOKEN_NEWLINE) && !check(TOKEN_END) && !check(TOKEN_EOF)) {
+        if (match(TOKEN_LEFT_PAREN)) {
+          if (!lastWasLabel) {
+            errorAt(&parser.previous, ERR_SYNTAX,
+                    "Sequential arguments are forbidden in signatures.",
+                    "Two argument blocks cannot appear consecutively. Use a "
+                    "comma-separated tuple instead, like '(a, b)'.");
+          }
+          lastWasLabel = false;
+          int segmentArity = 0;
+          if (!check(TOKEN_RIGHT_PAREN)) {
+            do {
+              consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX, "Expected param name.",
+                          "");
+              writeTokenArray(&parameters, parser.previous);
+              if (match(TOKEN_COLON)) {
+                ignoreNewlines();
+                writeNodeArray(&paramTypes, parseTypeAnnotation());
+              } else {
+                Token anyToken = {.type = TOKEN_IDENTIFIER,
+                                  .start = "Any",
+                                  .length = 3,
+                                  .line = parser.previous.line};
+                writeNodeArray(&paramTypes,
+                               newVariableNode(anyToken, parser.previous.line));
+              }
+              segmentArity++;
+            } while (match(TOKEN_COMMA));
+          }
+          consumeHint(TOKEN_RIGHT_PAREN, ERR_SYNTAX, "Expected ')'", "");
+
+          char buf[16];
+          sprintf(buf, "$%d", segmentArity);
+          if ((int)(strlen(mangled) + strlen(buf)) >= mangledCap - 1) {
+            mangledCap *= 2;
+            mangled = realloc(mangled, mangledCap);
+          }
+          strcat(mangled, buf);
+          currentNode = addArgumentBranch(currentNode, segmentArity, false);
+        } else {
+          if (!containsKeyword && isReservedKeyword(parser.current.type)) {
+            containsKeyword = true;
+            firstKeyword = parser.current;
+          }
+          advance();
+          Token labelTok = parser.previous;
+
+          if ((int)(strlen(mangled) + labelTok.length + 5) >= mangledCap) {
+            mangledCap *= 2;
+            mangled = realloc(mangled, mangledCap);
+          }
+          if (lastWasLabel) {
+            strcat(mangled, "#");
+          }
+          strncat(mangled, labelTok.start, labelTok.length);
+
+          int fieldLen = strlen(mangledField);
+          if (fieldLen + labelTok.length + 5 >= mangledCap) {
+            mangledField = realloc(mangledField, mangledCap);
+          }
+          strcat(mangledField, " ");
+          strncat(mangledField, labelTok.start, labelTok.length);
+
+          currentNode =
+              addLabelBranch(currentNode, labelTok.start, labelTok.length);
+          lastWasLabel = true;
         }
       }
-
-      consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
-                  "I was expecting a property name here.",
-                  "List the properties that belong to this type.");
-      writeTokenArray(&propertyNames, parser.previous);
 
       if (match(TOKEN_COLON)) {
-        writeNodeArray(&defaultValues, expression());
-      } else {
-        writeNodeArray(&defaultValues,
-                       newLiteralNode(NIL_VAL, parser.previous.line));
-      }
+        if (!finalizePhrase(currentNode, mangled, TERMINAL_PHRASE)) {
+          errorAt(&parser.previous, ERR_SYNTAX, "Namespace collision.",
+                  "A field with this exact name already exists.");
+        }
 
-      // we require comma unless we are at the end
-      if (!match(TOKEN_COMMA)) {
+        Token funcStart = parser.previous;
         ignoreNewlines();
-        if (!check(TOKEN_END)) {
-          errorAt(&parser.current, ERR_SYNTAX,
-                  "Expected ',' between properties.", "");
-          break;
+        TokenType functionEnds[] = {TOKEN_END};
+        Node *body = block(functionEnds, 1);
+        consumeBlockEnd(funcStart, "property method declaration");
+
+        Token mangledToken = rootName;
+        mangledToken.start = my_strdup(mangled);
+        mangledToken.length = strlen(mangled);
+
+        Token receiverName = makeHiddenToken("my", line);
+        Node *receiverType = newVariableNode(name, line);
+
+        Node *method = newExtensionMethodNode(
+            mangledToken, receiverName, receiverType, parameters.items,
+            paramTypes.items, parameters.count, body, line);
+        writeNodeArray(&methods, method);
+
+        match(TOKEN_COMMA);
+      } else {
+        if (parameters.count > 0) {
+          errorAt(&parser.previous, ERR_SYNTAX, "Fields cannot have arguments.",
+                  "Only methods ending with ':' can have parameters.");
+        }
+        if (containsKeyword) {
+          errorAt(&firstKeyword, ERR_SYNTAX, "Reserved keyword in field name.",
+                  "Reserved keywords are forbidden in fields.");
+        }
+
+        if (!finalizePhrase(currentNode, mangledField, TERMINAL_VARIABLE)) {
+          errorAt(&parser.previous, ERR_SYNTAX, "Namespace collision.",
+                  "A method with this exact name already exists.");
+        }
+
+        Token fieldName = rootName;
+        fieldName.start = my_strdup(mangledField);
+        fieldName.length = strlen(mangledField);
+        writeTokenArray(&propertyNames, fieldName);
+
+        if (match(TOKEN_IS)) {
+          writeNodeArray(&defaultValues, expression());
+        } else {
+          writeNodeArray(&defaultValues,
+                         newLiteralNode(NIL_VAL, parser.previous.line));
+        }
+
+        if (!match(TOKEN_COMMA)) {
+          ignoreNewlines();
+          if (!check(TOKEN_END)) {
+            errorAt(&parser.current, ERR_SYNTAX,
+                    "Expected ',' between properties.", "");
+            break;
+          }
         }
       }
+
+      freeTokenArray(&parameters);
+      freeNodeArray(&paramTypes);
+      free(mangled);
+      free(mangledField);
     }
   }
 
@@ -1945,6 +2479,7 @@ static Node *typeDeclaration() {
 }
 
 // Helper to create our invisible ghost tokens
+static bool isReservedKeyword(TokenType type);
 static Token makeHiddenToken(const char *text, int line) {
   Token t;
   t.type = TOKEN_IDENTIFIER;
@@ -2147,6 +2682,12 @@ static Node *updateStatement() {
   return finalNode;
 }
 
+extern char *readFile(const char *path);
+
+#define MAX_VISITED_FILES 128
+static const char *visitedFiles[MAX_VISITED_FILES];
+static int visitedCount = 0;
+
 static Node *loadStatement() {
   int line = parser.previous.line;
   consumeHint(TOKEN_STRING, ERR_SYNTAX, "I was expecting a file path here.",
@@ -2168,8 +2709,43 @@ static Node *loadStatement() {
   // Desugar into 'let aliasToken be loadExpr'
   Token names[1] = {aliasToken};
   Node *exprs[1] = {loadExpr};
+  Node *node = newLetNode(names, 1, exprs, 1, line);
 
-  return newLetNode(names, 1, exprs, 1, line);
+  // --- COMPILE-TIME METADATA SCANNER ---
+  char pathStr[256] = {0};
+  snprintf(pathStr, sizeof(pathStr), "%.*s", pathToken.length - 2,
+           pathToken.start + 1);
+
+  bool alreadyVisited = false;
+  for (int i = 0; i < visitedCount; i++) {
+    if (strcmp(visitedFiles[i], pathStr) == 0) {
+      alreadyVisited = true;
+      break;
+    }
+  }
+
+  if (!alreadyVisited && visitedCount < MAX_VISITED_FILES) {
+    visitedFiles[visitedCount] = my_strdup(pathStr);
+    visitedCount++;
+
+    char *source = readFile(pathStr);
+    if (source != NULL) {
+      Scanner savedScanner = scanner;
+      Parser savedParser = parser;
+
+      extern Node *parseSource(const char *source, int startLine);
+      Node *discardAst = parseSource(source, 1);
+      if (discardAst != NULL)
+        freeNode(discardAst);
+
+      free(source);
+
+      scanner = savedScanner;
+      parser = savedParser;
+    }
+  }
+
+  return node;
 }
 
 static Node *keepStatement() {
@@ -2309,22 +2885,325 @@ static Node *parseTypeAnnotation() {
   return baseType; // Just a normal, single type
 }
 
+static bool isReservedKeyword(TokenType type) {
+  if (type >= TOKEN_AND && type <= TOKEN_WITH)
+    return true;
+  if (type == TOKEN_IS || type == TOKEN_TO || type == TOKEN_BE)
+    return true;
+  if (type == TOKEN_LET || type == TOKEN_IF || type == TOKEN_ELSE)
+    return true;
+  if (type == TOKEN_FOR || type == TOKEN_WHILE)
+    return true;
+  return false;
+}
+
 static Node *letDeclaration() {
+  int line = parser.previous.line;
+
   TokenArray names;
   initTokenArray(&names);
 
-  do {
-    consumeHint(
-        TOKEN_IDENTIFIER, ERR_SYNTAX, "I was expecting a variable name here.",
-        "Variables need a name to identify them. e.g., 'let count be 10'");
+  TokenArray parameters;
+  initTokenArray(&parameters);
+  NodeArray paramTypes;
+  initNodeArray(&paramTypes);
 
-    writeTokenArray(&names, parser.previous);
-  } while (match(TOKEN_COMMA));
+  Token rootName;
+  int leadingArity = 0;
+  bool startedWithArg = false;
+  bool hasCustomAnchor = false;
+  bool rootIsOperatorOrKeyword = false;
 
-  if (match(TOKEN_BE)) {
+  int mangledCap = 1024;
+  char *mangled = calloc(1, mangledCap);
+  char *mangledVar = calloc(1, mangledCap);
+
+  if (check(TOKEN_LEFT_PAREN)) {
+    startedWithArg = true;
+    advance(); // consume '('
+
+    Token receiverName;
+    Node *receiverType = NULL;
+
+    if (check(TOKEN_RIGHT_PAREN)) {
+      errorAt(&parser.current, ERR_SYNTAX,
+              "Empty parentheses '()' are not allowed.",
+              "If a function takes no arguments, just write its name without "
+              "parentheses.");
+    } else {
+      do {
+        consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
+                    "You opened a parameter definition but forgot to name the "
+                    "parameter.",
+                    "Give the parameter a name inside the parentheses. (e.g., "
+                    "'(age: Number)')");
+        writeTokenArray(&parameters, parser.previous);
+        if (leadingArity == 0)
+          receiverName = parser.previous;
+
+        if (match(TOKEN_COLON)) {
+          ignoreNewlines();
+          Node *t = parseTypeAnnotation();
+          writeNodeArray(&paramTypes, t);
+          if (leadingArity == 0)
+            receiverType = t;
+        } else {
+          Token anyToken = {.type = TOKEN_IDENTIFIER,
+                            .start = "Any",
+                            .length = 3,
+                            .line = parser.previous.line};
+          Node *t = newVariableNode(anyToken, parser.previous.line);
+          writeNodeArray(&paramTypes, t);
+          if (leadingArity == 0)
+            receiverType = t;
+        }
+        leadingArity++;
+      } while (match(TOKEN_COMMA));
+    }
+
+    consumeHint(TOKEN_RIGHT_PAREN, ERR_SYNTAX,
+                "You opened a parameter list, but forgot to close it.",
+                "Make sure to balance your parentheses! Add a closing ')' at "
+                "the end.");
+
+    // Check for extension method: let (p: Player)'s ...
+    if (match(TOKEN_POSSESSIVE)) {
+      free(mangled);
+      free(mangledVar);
+      freeTokenArray(&names);
+      freeTokenArray(&parameters);
+      freeNodeArray(&paramTypes);
+      return parsePropertySignatureBody(receiverName, receiverType, line);
+    }
+
+    // Check if next token is another argument (sequential arguments error)
+    if (check(TOKEN_LEFT_PAREN)) {
+      errorAt(&parser.current, ERR_SYNTAX,
+              "Sequential arguments are forbidden in signatures.",
+              "Two argument blocks cannot appear consecutively. Use a "
+              "comma-separated tuple instead, like '(a, b)'.");
+      free(mangled);
+      free(mangledVar);
+      freeTokenArray(&names);
+      freeTokenArray(&parameters);
+      freeNodeArray(&paramTypes);
+      return NULL;
+    }
+
+    // Argument-led phrase: next token is root word/operator
+    if (check(TOKEN_EOF) || check(TOKEN_NEWLINE) || check(TOKEN_COLON) ||
+        check(TOKEN_BE)) {
+      errorAt(&parser.current, ERR_SYNTAX,
+              "Expected phrasal root word or operator after leading argument.",
+              "e.g. 'let (s) split by (sep):' or 'let (a) + (b) days:'");
+      free(mangled);
+      free(mangledVar);
+      freeTokenArray(&names);
+      freeTokenArray(&parameters);
+      freeNodeArray(&paramTypes);
+      return NULL;
+    }
+
+    advance();
+    rootName = parser.previous;
+    writeTokenArray(&names, rootName);
+
+    if (rootName.type == TOKEN_IDENTIFIER &&
+        !isReservedKeyword(rootName.type)) {
+      hasCustomAnchor = true;
+    } else {
+      rootIsOperatorOrKeyword = true;
+    }
+
+    strncat(mangled, rootName.start, rootName.length);
+    char buf[16];
+    sprintf(buf, "$%d", leadingArity);
+    strcat(mangled, buf);
+
+  } else if (match(TOKEN_IDENTIFIER)) {
+    rootName = parser.previous;
+    writeTokenArray(&names, rootName);
+    strncat(mangled, rootName.start, rootName.length);
+    strncat(mangledVar, rootName.start, rootName.length);
+    if (!isReservedKeyword(rootName.type)) {
+      hasCustomAnchor = true;
+    }
+  } else {
+    errorAt(&parser.current, ERR_SYNTAX, "I was expecting a name here.",
+            "Variables or functions need a name to identify them. e.g., 'let "
+            "count be 10'");
+    free(mangled);
+    free(mangledVar);
+    freeTokenArray(&names);
+    freeTokenArray(&parameters);
+    freeNodeArray(&paramTypes);
+    return NULL;
+  }
+
+  TrieNode *currentNode = startPhrase(rootName.start, rootName.length);
+  if (startedWithArg) {
+    currentNode = addArgumentBranch(currentNode, leadingArity, true);
+  }
+
+  bool lastWasLabel = true;
+  bool isSpaced = false;
+  bool containsKeyword = isReservedKeyword(rootName.type);
+  Token firstKeyword = rootName;
+
+  while (!check(TOKEN_BE) && !check(TOKEN_EQUAL) && !check(TOKEN_COMMA) &&
+         !check(TOKEN_COLON) && !check(TOKEN_EOF) && !check(TOKEN_NEWLINE)) {
+    isSpaced = true;
+
+    if (match(TOKEN_LEFT_PAREN)) {
+      if (!lastWasLabel) {
+        errorAt(&parser.previous, ERR_SYNTAX,
+                "Sequential arguments are forbidden in signatures.",
+                "Two argument blocks cannot appear consecutively. Use a "
+                "comma-separated tuple instead, like '(a, b)'.");
+      }
+      lastWasLabel = false;
+
+      if (check(TOKEN_RIGHT_PAREN)) {
+        errorAt(&parser.current, ERR_SYNTAX,
+                "Empty parentheses '()' are not allowed.",
+                "If a function takes no arguments, just write its name without "
+                "parentheses (e.g., 'let jump:').");
+      }
+
+      int segmentArity = 0;
+      if (!check(TOKEN_RIGHT_PAREN)) {
+        do {
+          consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
+                      "You opened a parameter definition but forgot to "
+                      "name the parameter.",
+                      "Give the parameter a name inside the parentheses. "
+                      "(e.g., '(age: Number)')");
+          writeTokenArray(&parameters, parser.previous);
+
+          if (match(TOKEN_COLON)) {
+            ignoreNewlines();
+            writeNodeArray(&paramTypes, parseTypeAnnotation());
+          } else {
+            Token anyToken = {.type = TOKEN_IDENTIFIER,
+                              .start = "Any",
+                              .length = 3,
+                              .line = parser.previous.line};
+            writeNodeArray(&paramTypes,
+                           newVariableNode(anyToken, parser.previous.line));
+          }
+          segmentArity++;
+        } while (match(TOKEN_COMMA));
+      }
+
+      consumeHint(TOKEN_RIGHT_PAREN, ERR_SYNTAX,
+                  "You opened a parameter list, but forgot to close it.",
+                  "Make sure to balance your parentheses! Add a closing "
+                  "')' at the end.");
+
+      char buf[16];
+      sprintf(buf, "$%d", segmentArity);
+      int currentLen = strlen(mangled);
+      if ((int)(currentLen + strlen(buf)) >= mangledCap - 1) {
+        mangledCap *= 2;
+        mangled = realloc(mangled, mangledCap);
+      }
+      strcat(mangled, buf);
+      currentNode = addArgumentBranch(currentNode, segmentArity, false);
+    } else {
+      if (!containsKeyword && isReservedKeyword(parser.current.type)) {
+        containsKeyword = true;
+        firstKeyword = parser.current;
+      }
+      if (parser.current.type == TOKEN_IDENTIFIER &&
+          !isReservedKeyword(parser.current.type)) {
+        hasCustomAnchor = true;
+      }
+      advance();
+      Token labelTok = parser.previous;
+
+      int currentLen = strlen(mangled);
+      if (currentLen + labelTok.length + 5 >= mangledCap) {
+        mangledCap *= 2;
+        mangled = realloc(mangled, mangledCap);
+      }
+      if (lastWasLabel) {
+        strcat(mangled, "#");
+      }
+      strncat(mangled, labelTok.start, labelTok.length);
+
+      int varLen = strlen(mangledVar);
+      if (varLen + labelTok.length + 5 >= mangledCap) {
+        mangledVar = realloc(mangledVar, mangledCap);
+      }
+      strcat(mangledVar, " ");
+      strncat(mangledVar, labelTok.start, labelTok.length);
+
+      currentNode =
+          addLabelBranch(currentNode, labelTok.start, labelTok.length);
+      lastWasLabel = true;
+    }
+  }
+
+  if (check(TOKEN_COMMA)) {
+    if (isSpaced || parameters.count > 0 || startedWithArg) {
+      errorAt(&parser.current, ERR_SYNTAX,
+              "Invalid comma in spaced declaration.",
+              "You cannot declare multiple spaced variables or phrases in a "
+              "single line.");
+    }
+    while (match(TOKEN_COMMA)) {
+      consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
+                  "I was expecting a variable name here.",
+                  "e.g., 'let a, b be 1, 2'");
+      writeTokenArray(&names, parser.previous);
+    }
+  }
+
+  if (match(TOKEN_BE) || match(TOKEN_EQUAL)) {
+    if (parser.previous.type == TOKEN_EQUAL) {
+      errorAt(&parser.previous, ERR_SYNTAX,
+              "It looks like you used '=' to assign a variable.",
+              "In MOON, we use the word 'be' for new variables. Try changing "
+              "'=' to 'be' (e.g., 'let x be 10').");
+    }
+
+    if (parameters.count > 0 || startedWithArg) {
+      errorAt(&parser.previous, ERR_SYNTAX, "Variables cannot have arguments.",
+              "You used parentheses, but ended with 'be'. Phrases must end "
+              "with ':'.");
+    }
+
+    if (containsKeyword) {
+      errorAt(
+          &firstKeyword, ERR_SYNTAX,
+          "Reserved keyword used inside variable name.",
+          "You cannot use reserved keywords (like 'and', 'or', 'is') inside "
+          "spaced variable names. They are only allowed in phrasal functions.");
+    }
+
+    if (names.count == 1) {
+      if (!finalizePhrase(currentNode, mangledVar, TERMINAL_VARIABLE)) {
+        errorAt(&parser.previous, ERR_SYNTAX, "Namespace collision.",
+                "A phrase with this exact signature already exists.");
+      }
+      names.items[0].start = my_strdup(mangledVar);
+      names.items[0].length = strlen(mangledVar);
+    } else {
+      for (int i = 0; i < names.count; i++) {
+        TrieNode *node =
+            startPhrase(names.items[i].start, names.items[i].length);
+        char singleMangled[256];
+        snprintf(singleMangled, sizeof(singleMangled), "%.*s",
+                 names.items[i].length, names.items[i].start);
+        if (!finalizePhrase(node, singleMangled, TERMINAL_VARIABLE)) {
+          errorAt(&parser.previous, ERR_SYNTAX, "Namespace collision.",
+                  "A phrase with this exact signature already exists.");
+        }
+      }
+    }
+
     NodeArray exprs;
     initNodeArray(&exprs);
-
     do {
       Node *valNode = expression();
       validatePureExpression(valNode, "as a variable assignment");
@@ -2336,155 +3215,47 @@ static Node *letDeclaration() {
           &parser.previous, ERR_SYNTAX, "Mismatch in assignment counts.",
           "When declaring multiple variables, you must provide exactly 1 value "
           "(to copy to all), or exactly match the number of variables.");
-
-      // --- THE PATCH ---
       for (int i = 0; i < exprs.count; i++)
         freeNode(exprs.items[i]);
-
       freeNodeArray(&exprs);
       freeTokenArray(&names);
-      return NULL; // <--- Ensure this aborts!
-    }
-
-    Node *node = newLetNode(names.items, names.count, exprs.items, exprs.count,
-                            names.items[0].line);
-    freeNodeArray(&exprs);
-    freeTokenArray(&names);
-    return node;
-  } else if (match(TOKEN_EQUAL)) {
-    errorAt(&parser.previous, ERR_SYNTAX,
-            "It looks like you used '=' to assign a variable.",
-            "In MOON, we use the word 'be' for new variables. Try changing '=' "
-            "to 'be' (e.g., 'let x be 10').");
-
-    NodeArray exprs;
-    initNodeArray(&exprs);
-    do {
-      writeNodeArray(&exprs, expression());
-    } while (match(TOKEN_COMMA));
-
-    // --- THE PATCH ---
-    for (int i = 0; i < exprs.count; i++)
-      freeNode(exprs.items[i]);
-
-    freeNodeArray(&exprs);
-    freeTokenArray(&names);
-    return NULL;
-  }
-
-  Token rootName = names.items[0];
-
-  // Only trigger function parsing if the next token is a valid word, keyword,
-  // or punctuation!
-  if (check(TOKEN_LEFT_PAREN) || check(TOKEN_COLON) ||
-      check(TOKEN_IDENTIFIER) ||
-      (parser.current.type >= TOKEN_ADD && parser.current.type <= TOKEN_WITH)) {
-    if (names.count > 1) {
-      errorAt(
-          &parser.previous, ERR_SYNTAX,
-          "You tried to define multiple functions in a single statement.",
-          "Function declarations must happen one at a time. Split these up!");
-      freeTokenArray(&names);
+      freeTokenArray(&parameters);
+      freeNodeArray(&paramTypes);
+      free(mangled);
+      free(mangledVar);
       return NULL;
     }
 
-    int line = rootName.line;
-    TokenArray parameters;
-    initTokenArray(&parameters);
-    NodeArray paramTypes;
-    initNodeArray(&paramTypes);
-
-    char mangled[1024] = {0};
-    strncat(mangled, rootName.start, rootName.length);
-
-    TrieNode *currentNode = startPhrase(rootName.start, rootName.length);
-
-    if (check(TOKEN_COLON)) {
-      // Path A: Single-word zero-arity (e.g., 'let jump:')
-      strcat(mangled, "$0");
-      finalizePhrase(currentNode, mangled);
-    } else {
-      // Path B: Multi-word signatures
-      bool lastWasLabel = false; // <--- THE BULLETPROOF TRACKER
-
-      while (!check(TOKEN_COLON) && !check(TOKEN_EOF) &&
-             !check(TOKEN_NEWLINE)) {
-        if (match(TOKEN_LEFT_PAREN)) {
-          lastWasLabel = false; // <--- We processed an argument block!
-
-          if (check(TOKEN_RIGHT_PAREN)) {
-            errorAt(&parser.current, ERR_SYNTAX,
-                    "Empty parentheses '()' are not allowed.",
-                    "If a function takes no arguments, just write its name "
-                    "without parentheses (e.g., 'let jump:').");
-          }
-
-          int segmentArity = 0;
-          if (!check(TOKEN_RIGHT_PAREN)) {
-            do {
-              consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
-                          "You opened a parameter definition but forgot to "
-                          "name the parameter.",
-                          "Give the parameter a name inside the parentheses. "
-                          "(e.g., '(age: Number)')");
-              writeTokenArray(&parameters, parser.previous);
-
-              // Extract the type annotation
-              if (match(TOKEN_COLON)) {
-                ignoreNewlines();
-                writeNodeArray(&paramTypes, parseTypeAnnotation());
-              } else {
-                Token anyToken = {.type = TOKEN_IDENTIFIER,
-                                  .start = "Any",
-                                  .length = 3,
-                                  .line = parser.previous.line};
-                writeNodeArray(&paramTypes,
-                               newVariableNode(anyToken, parser.previous.line));
-              }
-              segmentArity++;
-            } while (match(TOKEN_COMMA));
-          }
-
-          consumeHint(TOKEN_RIGHT_PAREN, ERR_SYNTAX,
-                      "You opened a parameter list, but forgot to close it.",
-                      "Make sure to balance your parentheses! Add a closing "
-                      "')' at the end.");
-
-          char buf[16];
-          sprintf(buf, "$%d", segmentArity);
-          strcat(mangled, buf);
-          currentNode = addArgumentBranch(currentNode, segmentArity);
-        } else {
-          lastWasLabel = true; // <--- We processed a word/label!
-          advance();
-          strcat(mangled, "_");
-
-          int currentLen = strlen(mangled);
-          if (currentLen + parser.previous.length + 5 >= 1024) {
-            errorAt(&parser.previous, ERR_SYNTAX,
-                    "This function's signature is too massive for me to parse.",
-                    "Try to simplify the function name or break it into "
-                    "smaller functions.");
-            break;
-          }
-          strncat(mangled, parser.previous.start, parser.previous.length);
-          currentNode = addLabelBranch(currentNode, parser.previous.start,
-                                       parser.previous.length);
-        }
-      }
-
-      // If the very last thing we processed was a word, append $0!
-      if (lastWasLabel) {
-        strcat(mangled, "$0");
-      }
-      finalizePhrase(currentNode, mangled);
+    Node *node =
+        newLetNode(names.items, names.count, exprs.items, exprs.count, line);
+    freeNodeArray(&exprs);
+    freeTokenArray(&names);
+    freeTokenArray(&parameters);
+    freeNodeArray(&paramTypes);
+    free(mangled);
+    free(mangledVar);
+    return node;
+  } else if (match(TOKEN_COLON)) {
+    if (names.count > 1) {
+      errorAt(&parser.previous, ERR_SYNTAX, "Multiple function declarations.",
+              "Function declarations must happen one at a time.");
     }
 
-    consumeHint(
-        TOKEN_COLON, ERR_SYNTAX, "I was expecting a colon ':' here.",
-        "Function signatures must end with a colon before the body begins.");
+    if (rootIsOperatorOrKeyword && !hasCustomAnchor) {
+      errorAt(
+          &parser.previous, ERR_SYNTAX,
+          "Operator phrase requires a custom identifier anchor.",
+          "Phrases starting with operators or keywords (like '+', 'is', 'and') "
+          "must contain at least one non-reserved identifier (e.g., 'let (a) + "
+          "(b) days:').");
+    }
 
-    Token funcStart = parser.previous; // <- capture the colon
+    if (!finalizePhrase(currentNode, mangled, TERMINAL_PHRASE)) {
+      errorAt(&parser.previous, ERR_SYNTAX, "Namespace collision.",
+              "A variable with this exact name already exists.");
+    }
+
+    Token funcStart = parser.previous;
     TokenType terminators[] = {TOKEN_END};
     Node *body = block(terminators, 1);
     consumeBlockEnd(funcStart, "function");
@@ -2493,21 +3264,24 @@ static Node *letDeclaration() {
     finalName.start = my_strdup(mangled);
     finalName.length = strlen(mangled);
 
-    // Pass paramTypes.items into the constructor!
     Node *node = newFunctionNode(finalName, parameters.items, paramTypes.items,
                                  parameters.count, body, line);
     freeTokenArray(&parameters);
-    freeNodeArray(&paramTypes); // Free the temp buffer!
+    freeNodeArray(&paramTypes);
     freeTokenArray(&names);
+    free(mangled);
+    free(mangledVar);
     return node;
   }
 
   errorAt(&parser.previous, ERR_SYNTAX,
           "I'm totally lost trying to read this declaration.",
-          "Take a close look at the syntax here. Something is missing or out "
-          "of order.");
-
+          "Expected 'be' or ':'.");
   freeTokenArray(&names);
+  freeTokenArray(&parameters);
+  freeNodeArray(&paramTypes);
+  free(mangled);
+  free(mangledVar);
   return NULL;
 }
 
@@ -2544,30 +3318,7 @@ static Node *grouping() {
   }
 }
 
-static Node *propertySignatureDeclaration(int line) {
-  consumeHint(TOKEN_LEFT_PAREN, ERR_SYNTAX, "Expected '('", "");
 
-  consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX, "Expected receiver name", "");
-  Token receiverName = parser.previous;
-
-  Node *receiverType;
-  if (match(TOKEN_COLON)) {
-    ignoreNewlines();
-    receiverType = parseTypeAnnotation();
-  } else {
-    Token anyToken = {.type = TOKEN_IDENTIFIER,
-                      .start = "Any",
-                      .length = 3,
-                      .line = parser.previous.line};
-    receiverType = newVariableNode(anyToken, line);
-  }
-
-  consumeHint(TOKEN_RIGHT_PAREN, ERR_SYNTAX, "Expected ')'", "");
-  consumeHint(TOKEN_POSSESSIVE, ERR_SYNTAX,
-              "Expected ''s' after receiver declaration.", "");
-
-  return parsePropertySignatureBody(receiverName, receiverType, line);
-}
 
 static Node *parsePropertySignatureBody(Token receiverName, Node *receiverType,
                                         int line) {
@@ -2582,16 +3333,24 @@ static Node *parsePropertySignatureBody(Token receiverName, Node *receiverType,
   char mangled[1024] = {0};
   strncat(mangled, rootName.start, rootName.length);
 
-  TrieNode *currentNode = startPropertyPhrase(rootName.start, rootName.length);
+  TrieNode *currentNode = startPhrase(rootName.start, rootName.length);
 
   if (check(TOKEN_COLON)) {
-    strcat(mangled, "$0");
-    finalizePhrase(currentNode, mangled);
+    if (!finalizePhrase(currentNode, mangled, TERMINAL_PHRASE)) {
+      errorAt(&parser.previous, ERR_SYNTAX, "Namespace collision.",
+              "A property with this exact name already exists.");
+    }
   } else {
-    bool lastWasLabel = false;
+    bool lastWasLabel = true;
 
     while (!check(TOKEN_COLON) && !check(TOKEN_EOF) && !check(TOKEN_NEWLINE)) {
       if (match(TOKEN_LEFT_PAREN)) {
+        if (!lastWasLabel) {
+          errorAt(&parser.previous, ERR_SYNTAX,
+                  "Sequential arguments are forbidden in signatures.",
+                  "Two argument blocks cannot appear consecutively. Use a "
+                  "comma-separated tuple instead, like '(a, b)'.");
+        }
         lastWasLabel = false;
         int segmentArity = 0;
         if (!check(TOKEN_RIGHT_PAREN)) {
@@ -2622,22 +3381,24 @@ static Node *parsePropertySignatureBody(Token receiverName, Node *receiverType,
         snprintf(arityStr, sizeof(arityStr), "$%d", segmentArity);
         strcat(mangled, arityStr);
 
-        currentNode = addArgumentBranch(currentNode, segmentArity);
+        currentNode = addArgumentBranch(currentNode, segmentArity, false);
       } else {
-        lastWasLabel = true;
         advance();
-        strcat(mangled, "_");
+        if (lastWasLabel) {
+          strcat(mangled, "#");
+        }
         strncat(mangled, parser.previous.start, parser.previous.length);
 
         currentNode = addLabelBranch(currentNode, parser.previous.start,
                                      parser.previous.length);
+        lastWasLabel = true;
       }
     }
 
-    if (lastWasLabel) {
-      strcat(mangled, "$0");
+    if (!finalizePhrase(currentNode, mangled, TERMINAL_PHRASE)) {
+      errorAt(&parser.previous, ERR_SYNTAX, "Namespace collision.",
+              "A property with this exact name already exists.");
     }
-    finalizePhrase(currentNode, mangled);
   }
 
   consumeHint(TOKEN_COLON, ERR_SYNTAX,
@@ -2668,15 +3429,10 @@ static Node *declaration() {
     return NULL;
 
   Node *decl;
-  if (match(TOKEN_TYPE)) {    // <--- NEW
-    decl = typeDeclaration(); // <--- NEW
+  if (match(TOKEN_TYPE)) {
+    decl = typeDeclaration();
   } else if (match(TOKEN_LET)) {
-    int line = parser.previous.line;
-    if (check(TOKEN_LEFT_PAREN)) {
-      decl = propertySignatureDeclaration(line);
-    } else {
-      decl = letDeclaration();
-    }
+    decl = letDeclaration();
   } else {
     decl = statement();
   }
@@ -2699,31 +3455,31 @@ ParseRule rules[] = {
     [TOKEN_LEFT_PAREN] = {grouping, NULL, PREC_NONE},
     [TOKEN_LEFT_BRACE] = {dict, instantiate, PREC_CALL}, // <--- Updated!
     [TOKEN_WITH] = {NULL, instantiateWith, PREC_CALL},   // <--- New!
-    [TOKEN_MINUS] = {unary, binary, PREC_TERM},
-    [TOKEN_PLUS] = {NULL, binary, PREC_TERM},
-    [TOKEN_SLASH] = {NULL, binary, PREC_FACTOR},
-    [TOKEN_STAR] = {explicitSticky, binary, PREC_FACTOR},
-    [TOKEN_MOD] = {NULL, binary, PREC_FACTOR},
-    [TOKEN_IS] = {stickyPrefix, binary, PREC_COMPARISON},
-    [TOKEN_EQUAL_EQUAL] = {stickyPrefix, binary, PREC_COMPARISON},
-    [TOKEN_EQUAL] = {stickyPrefix, binary, PREC_COMPARISON},
-    [TOKEN_GREATER] = {stickyPrefix, binary, PREC_COMPARISON},
-    [TOKEN_GREATER_EQUAL] = {stickyPrefix, binary, PREC_COMPARISON},
-    [TOKEN_LESS] = {stickyPrefix, binary, PREC_COMPARISON},
-    [TOKEN_LESS_EQUAL] = {stickyPrefix, binary, PREC_COMPARISON},
+    [TOKEN_MINUS] = {unary, binaryInterceptor, PREC_TERM},
+    [TOKEN_PLUS] = {NULL, binaryInterceptor, PREC_TERM},
+    [TOKEN_SLASH] = {NULL, binaryInterceptor, PREC_FACTOR},
+    [TOKEN_STAR] = {explicitSticky, binaryInterceptor, PREC_FACTOR},
+    [TOKEN_MOD] = {NULL, binaryInterceptor, PREC_FACTOR},
+    [TOKEN_IS] = {stickyPrefix, isInterceptor, PREC_COMPARISON},
+    [TOKEN_EQUAL_EQUAL] = {stickyPrefix, binaryInterceptor, PREC_COMPARISON},
+    [TOKEN_EQUAL] = {stickyPrefix, binaryInterceptor, PREC_COMPARISON},
+    [TOKEN_GREATER] = {stickyPrefix, binaryInterceptor, PREC_COMPARISON},
+    [TOKEN_GREATER_EQUAL] = {stickyPrefix, binaryInterceptor, PREC_COMPARISON},
+    [TOKEN_LESS] = {stickyPrefix, binaryInterceptor, PREC_COMPARISON},
+    [TOKEN_LESS_EQUAL] = {stickyPrefix, binaryInterceptor, PREC_COMPARISON},
     [TOKEN_STRING] = {string, NULL, PREC_NONE},
     [TOKEN_STRING_OPEN] = {interpolation, NULL, PREC_NONE},
     [TOKEN_NUMBER] = {number, NULL, PREC_NONE},
     [TOKEN_NIL] = {literal, NULL, PREC_NONE},
     [TOKEN_TRUE] = {literal, NULL, PREC_NONE},
     [TOKEN_FALSE] = {literal, NULL, PREC_NONE},
-    [TOKEN_IDENTIFIER] = {variable, NULL, PREC_NONE},
+    [TOKEN_IDENTIFIER] = {variable, phrasalInfix, PREC_PHRASE},
     [TOKEN_IT] = {implicitIt, NULL, PREC_NONE},
     [TOKEN_IF] = {NULL, NULL, PREC_NONE},
     [TOKEN_UNLESS] = {NULL, NULL, PREC_NONE},
     [TOKEN_NOT] = {unary, NULL, PREC_NONE},
-    [TOKEN_AND] = {NULL, and_, PREC_AND},
-    [TOKEN_OR] = {NULL, or_, PREC_OR},
+    [TOKEN_AND] = {NULL, andInterceptor, PREC_AND},
+    [TOKEN_OR] = {NULL, orInterceptor, PREC_OR},
     [TOKEN_TO] = {NULL, range, PREC_RANGE},
     [TOKEN_LEFT_BRACKET] = {list, subscript, PREC_CALL},
     [TOKEN_DOT] = {NULL, dot, PREC_CALL},
@@ -2750,7 +3506,6 @@ static void resetParserState() {
     // Destroy the old Signature Trie so deleted/edited functions don't haunt
     // the parser!
     freeSignatureTable();
-    freePropertySignatureTable();
   }
 }
 

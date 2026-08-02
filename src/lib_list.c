@@ -170,15 +170,15 @@ static Value parseBaseNative(int argCount, Value *args) {
 void registerListLibrary() {
   REGISTER_PHRASE(NULL, "reverse", "$1", 1, "reverse$1", reverseNative,
                   vm.listType);
-  REGISTER_PHRASE(NULL, "join", "$1,with,$1", 2, "join$1_with$1", joinNative,
+  REGISTER_PHRASE(NULL, "join", "$1,with,$1", 2, "join$1with$1", joinNative,
                   vm.listType, vm.stringType);
-  REGISTER_PHRASE(NULL, "pop", "from,$1", 1, "pop_from$1", popNative,
+  REGISTER_PHRASE(NULL, "pop", "from,$1", 1, "pop#from$1", popNative,
                   vm.listType);
-  REGISTER_PHRASE(NULL, "shift", "from,$1", 1, "shift_from$1", shiftNative,
+  REGISTER_PHRASE(NULL, "shift", "from,$1", 1, "shift#from$1", shiftNative,
                   vm.listType);
   REGISTER_PHRASE(NULL, "numbers", "in,$1,in,base,$1", 2,
-                  "numbers_in$1_in_base$1", parseBaseNative, vm.anyType,
+                  "numbers#in$1in#base$1", parseBaseNative, vm.anyType,
                   vm.numberType);
-  REGISTER_PHRASE(NULL, "index", "of,$1,in,$1", 2, "index_of$1_in$1",
+  REGISTER_PHRASE(NULL, "index", "of,$1,in,$1", 2, "index#of$1in$1",
                   indexOfNative, vm.anyType, vm.listType);
 }

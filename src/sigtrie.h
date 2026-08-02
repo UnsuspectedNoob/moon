@@ -10,6 +10,12 @@ typedef enum {
   NODE_ARGUMENT // e.g., $1, $2
 } PhraseNodeType;
 
+typedef enum {
+  TERMINAL_NONE,
+  TERMINAL_PHRASE,
+  TERMINAL_VARIABLE
+} TerminalType;
+
 // 2. The Trie Node (The DFA State)
 typedef struct TrieNode {
   PhraseNodeType type;
@@ -19,9 +25,10 @@ typedef struct TrieNode {
   char *labelName;    // Stored string for debugging/printing
   int labelLength;
   int arity;          // Used if type == NODE_ARGUMENT
+  bool isLeadingArg;  // True if this argument appears before root word (infix)
 
   // Accept State
-  bool isTerminal;
+  TerminalType terminalType;
   bool isCore;
   char *mangledName;
 
@@ -36,21 +43,12 @@ void initSignatureTable();
 void freeSignatureTable();
 void printSignatureTrie();
 TrieNode *getSignatureTrie(const char *rootWord);
+bool hasInfixSignature(const char *word, int length);
 
-// --- THE DIRECT BUILDER API ---
 TrieNode *startPhrase(const char *rootWord, int length);
 TrieNode *addLabelBranch(TrieNode *current, const char *label, int length);
-TrieNode *addArgumentBranch(TrieNode *current, int arity);
-void finalizePhrase(TrieNode *endNode, const char *mangledName);
-
-// Used by the Parser to fetch the tree
-TrieNode *getSignatureTrie(const char *rootWord);
-
-// --- PROPERTY SIGNATURE TRIE ---
-void initPropertySignatureTable();
-void freePropertySignatureTable();
-TrieNode *getPropertySignatureTrie(const char *rootWord);
-TrieNode *startPropertyPhrase(const char *rootWord, int length);
+TrieNode *addArgumentBranch(TrieNode *current, int arity, bool isLeadingArg);
+bool finalizePhrase(TrieNode *endNode, const char *mangledName, TerminalType terminalType);
 
 // Used by the Static Linker to register C-level natives
 void registerSignature(const char *root, const char *path, const char *mangledName);

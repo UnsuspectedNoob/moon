@@ -79,12 +79,12 @@ void registerMathLibrary() {
 
   REGISTER_PHRASE(NULL, "sin", "$1", 1, "sin$1", sinNative, vm.numberType);
   REGISTER_PHRASE(NULL, "cos", "$1", 1, "cos$1", cosNative, vm.numberType);
-  REGISTER_PHRASE(NULL, "square", "root,of,$1", 1, "square_root_of$1",
+  REGISTER_PHRASE(NULL, "square", "root,of,$1", 1, "square#root#of$1",
                   sqrtNative, vm.numberType);
-  REGISTER_PHRASE(NULL, "power", "of,$1,to,$1", 2, "power_of$1_to$1", powNative,
+  REGISTER_PHRASE(NULL, "power", "of,$1,to,$1", 2, "power#of$1to$1", powNative,
                   vm.numberType, vm.numberType);
-  REGISTER_PHRASE(NULL, "floor", "of,$1", 1, "floor_of$1", floorNative,
+  REGISTER_PHRASE(NULL, "floor", "of,$1", 1, "floor#of$1", floorNative,
                   vm.numberType);
-  REGISTER_PHRASE(NULL, "random", "from,$1,to,$1", 2, "random_from$1_to$1",
+  REGISTER_PHRASE(NULL, "random", "from,$1,to,$1", 2, "random#from$1to$1",
                   randomNative, vm.numberType, vm.numberType);
 }

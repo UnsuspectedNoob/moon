@@ -128,7 +128,7 @@ void freeVM() {
   freeObjects();
   free(vm.grayStack);
   freeSignatureTable();
-  freePropertySignatureTable();
+  
   isCoreBootstrapped = false;
 }
 
@@ -250,9 +250,9 @@ void registerNativePhrasal(ObjModule *module, const char *root,
     tableSet(targetTable, OBJ_VAL(nameStr), OBJ_VAL(multi));
 
     // --- ROOT NAME ALIAS ---
-    const char *dollar = strchr(mangledName, '$');
-    if (dollar != NULL) {
-      int rootLen = (int)(dollar - mangledName);
+    const char *delimiter = strpbrk(mangledName, "$#");
+    if (delimiter != NULL) {
+      int rootLen = (int)(delimiter - mangledName);
       ObjString *rootName = copyString(mangledName, rootLen);
       push(OBJ_VAL(rootName)); // GC shield
       tableSet(targetTable, OBJ_VAL(rootName), OBJ_VAL(multi));
@@ -352,7 +352,7 @@ void initVM() {
   vm.sequenceCount = 0;
 
   initSignatureTable();
-  initPropertySignatureTable();
+  
 
   // --- NEW GC INIT ---
   vm.bytesAllocated = 0;
@@ -1907,9 +1907,9 @@ TARGET_OP_DEFINE_METHOD: {
     // into the local scope so it's prioritized and visible locally.
     tableSet(frame->globals, OBJ_VAL(name), OBJ_VAL(multi));
 
-    const char *dollar = strchr(name->chars, '$');
-    if (dollar != NULL) {
-      int rootLen = (int)(dollar - name->chars);
+    const char *delimiter = strpbrk(name->chars, "$#");
+    if (delimiter != NULL) {
+      int rootLen = (int)(delimiter - name->chars);
       ObjString *rootName = copyString(name->chars, rootLen);
       push(OBJ_VAL(rootName)); // GC shield
       tableSet(frame->globals, OBJ_VAL(rootName), OBJ_VAL(multi));
@@ -1924,9 +1924,9 @@ TARGET_OP_DEFINE_METHOD: {
     // --- ROOT NAME ALIAS ---
     // Also store under the unmangled root name (e.g. "my_func") so that
     // module property access via `mymod's my_func` works without knowing arity.
-    const char *dollar = strchr(name->chars, '$');
-    if (dollar != NULL) {
-      int rootLen = (int)(dollar - name->chars);
+    const char *delimiter = strpbrk(name->chars, "$#");
+    if (delimiter != NULL) {
+      int rootLen = (int)(delimiter - name->chars);
       ObjString *rootName = copyString(name->chars, rootLen);
       push(OBJ_VAL(rootName)); // GC shield
       tableSet(frame->globals, OBJ_VAL(rootName), OBJ_VAL(multi));

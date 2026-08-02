@@ -86,15 +86,12 @@ void registerNativePhrasal(ObjModule *module, const char *root, const char *path
                            int arity, const char *mangledName, NativeFn function,
                            ObjType **expectedTypes);
 
-// Macros to make writing standard libraries incredibly clean
 #define REGISTER_PHRASE(module, root, path, arity, mangledName, fn, ...)       \
   do {                                                                         \
     ObjType *types[] = {__VA_ARGS__};                                          \
-    registerNativePhrasal(module, root, path, arity, mangledName, fn, types);  \
+    registerNativePhrasal(module, root, path, arity, mangledName, fn,          \
+                          (arity) > 0 ? types : NULL);                         \
   } while (0)
-
-#define REGISTER_PHRASE_0(module, root, path, mangledName, fn)                 \
-  registerNativePhrasal(module, root, path, 0, mangledName, fn, NULL)
 
 // --- THE NATIVE API ---
 void push(Value value);

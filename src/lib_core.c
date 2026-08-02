@@ -157,7 +157,7 @@ static Value gcNative(int argCount, Value *args) {
 void registerCoreLibrary() {
   REGISTER_PHRASE(NULL, "show", "$1", 1, "show$1", showNative, vm.anyType);
   REGISTER_PHRASE(NULL, "ask", "$1", 1, "ask$1", askNative, vm.stringType);
-  REGISTER_PHRASE_0(NULL, "clock", NULL, "clock$0", clockNative);
-  REGISTER_PHRASE_0(NULL, "memory", NULL, "memory$0", memoryNative);
-  REGISTER_PHRASE_0(NULL, "gc", NULL, "gc$0", gcNative);
+  REGISTER_PHRASE(NULL, "clock", NULL, 0, "clock", clockNative);
+  REGISTER_PHRASE(NULL, "memory", NULL, 0, "memory", memoryNative);
+  REGISTER_PHRASE(NULL, "gc", NULL, 0, "gc", gcNative);
 }
