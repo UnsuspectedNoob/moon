@@ -73,8 +73,8 @@ show true as Number
 
 printTitle "6. Custom Types & Instantiation"
 type Player:
-  name: "Unknown",
-  health: 100
+  name is "Unknown",
+  health is 100
 end
 
 let p1 be Player with name: "Emrys"
@@ -201,7 +201,7 @@ type Warrior:
   name,
   health,
   damage,
-  my attack description:
+  attack description:
   give "`my name` swings their sword for `my damage` damage!"
 end
 end
@@ -210,7 +210,7 @@ type Mage:
   name,
   health,
   mana,
-  my attack description:
+  attack description:
   give "`my name` casts a spell using `my mana` mana!"
 end
 end

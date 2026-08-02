@@ -92,26 +92,26 @@ let block_comp be {
 
 # 8. BLUEPRINTS (Object-Oriented Programming)
 type Vector3:
-  x: 0.0,
-  y: 0.0,
-  z: 0.0,
+  x is 0.0,
+  y is 0.0,
+  z is 0.0,
 
-  my move to (newX: Number) and (newY: Number):
-  set my x to newX
-  set my y to newY
-end
+  move to (newX: Number) and (newY: Number):
+    set my x to newX
+    set my y to newY
+  end
 end
 
 type Player:
-  name: "Unknown",
-  health: 100,
-  position: Vector3 {
+  name is "Unknown",
+  health is 100,
+  position is Vector3 {
   },
   # Nested default instantiation
 
-  my battle cry:
-  show "`my name` charges forward with `my health` health!"
-end
+  battle cry:
+    show "`my name` charges forward with `my health` health!"
+  end
 end
 
 # 9. INSTANTIATION & OVERRIDES
@@ -138,8 +138,8 @@ let process (data: String or List):
 end
 
 type Enemy:
-  kind: "Goblin",
-  health: 50
+  kind is "Goblin",
+  health is 50
 end
 
 let (entity: Player or Enemy)'s describe status:
