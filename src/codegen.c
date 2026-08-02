@@ -419,7 +419,7 @@ static void walkNode(Node *node) {
 
       // Memory Storage Logic
       if (current->scopeDepth > 0) {
-        addLocal(node->as.let.names[i]);
+        declareVariableToken(&node->as.let.names[i]);
         markInitialized();
       } else {
         uint16_t globalName = identifierConstant(&node->as.let.names[i]);
@@ -765,7 +765,7 @@ static void walkNode(Node *node) {
     beginScope();
     for (int i = 0; i < node->as.function.paramCount; i++) {
       fnCompiler.function->arity++;
-      addLocal(node->as.function.parameters[i]);
+      declareVariableToken(&node->as.function.parameters[i]);
       markInitialized();
     }
 
@@ -812,7 +812,7 @@ static void walkNode(Node *node) {
     // Now inject the parameters!
     for (int i = 0; i < node->as.extensionMethod.paramCount; i++) {
       fnCompiler.function->arity++;
-      addLocal(node->as.extensionMethod.parameters[i]);
+      declareVariableToken(&node->as.extensionMethod.parameters[i]);
       markInitialized();
     }
 

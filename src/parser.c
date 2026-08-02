@@ -1937,6 +1937,12 @@ static Node *parseLValue() {
     }
   }
 
+  if (lvalue != NULL && lvalue->type != NODE_VARIABLE &&
+      lvalue->type != NODE_SUBSCRIPT && lvalue->type != NODE_PROPERTY) {
+    errorAt(&parser.previous, ERR_SYNTAX, "Invalid assignment target.",
+            "You can only assign values to variables, properties, or list items.");
+  }
+
   return lvalue;
 }
 

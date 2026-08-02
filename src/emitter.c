@@ -148,11 +148,10 @@ int resolveLocal(Compiler *compiler, Token *name) {
   return -1;
 }
 
-void declareVariable() {
+void declareVariableToken(Token *name) {
   if (current->scopeDepth == 0)
     return;
 
-  Token *name = &parser.previous;
   for (int i = current->localCount - 1; i >= 0; i--) {
     Local *local = &current->locals[i];
     if (local->depth != -1 && local->depth < current->scopeDepth) {
@@ -160,14 +159,19 @@ void declareVariable() {
     }
     if (identifiersEqual(name, &local->name)) {
       errorAt(
-          &parser.previous, ERR_REFERENCE,
+          name, ERR_REFERENCE,
           "You tried to declare a variable name that is already in use.",
           "Each scope requires unique variable names. Choose a different name, "
           "or use 'set' or 'add' to update the existing one instead.");
+      return;
     }
   }
 
   addLocal(*name);
+}
+
+void declareVariable() {
+  declareVariableToken(&parser.previous);
 }
 
 void markInitialized() {

@@ -6,6 +6,7 @@ moon_lsp.log
 *.log
 test
 core.*
+file.moon
 
 # Scratch and test files
 debug_output.txt

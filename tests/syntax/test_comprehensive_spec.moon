@@ -68,11 +68,12 @@ type User:
   first name is "Alan",
   last name is "Turing",
   greeting:
-    give "Hello, " + my's first name + " " + my's last name
-  end
+  give "Hello, " + my's first name + " " + my's last name
+end
 end
 
-let u be User {}
+let u be User {
+}
 show "User direct access: `u's first name` `u's last name`"
 # expect: User direct access: Alan Turing
 show "User method: `u's greeting`"

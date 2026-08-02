@@ -53,6 +53,7 @@ bool identifiersEqual(Token *a, Token *b);
 void addLocal(Token name);
 int resolveLocal(Compiler *compiler, Token *name);
 void declareVariable();
+void declareVariableToken(Token *name);
 void markInitialized();
 void defineVariable(uint8_t global);
 

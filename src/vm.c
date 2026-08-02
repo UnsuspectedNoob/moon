@@ -227,6 +227,43 @@ void defineModuleNative(ObjModule *module, const char *name,
   pop(); // pop name
 }
 
+static bool typesEqual(Value a, Value b) {
+  if (a == b)
+    return true;
+  if (IS_UNION(a) && IS_UNION(b)) {
+    ObjUnion *uA = AS_UNION(a);
+    ObjUnion *uB = AS_UNION(b);
+    if (uA->count != uB->count)
+      return false;
+    for (int i = 0; i < uA->count; i++) {
+      bool found = false;
+      for (int j = 0; j < uB->count; j++) {
+        if (uA->types[i] == uB->types[j]) {
+          found = true;
+          break;
+        }
+      }
+      if (!found)
+        return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+static bool signaturesEqual(int arity, Value *sigA, Value *sigB) {
+  if (arity == 0)
+    return true;
+  if (sigA == NULL || sigB == NULL)
+    return sigA == sigB;
+  for (int i = 0; i < arity; i++) {
+    if (!typesEqual(sigA[i], sigB[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
 void registerNativePhrasal(ObjModule *module, const char *root,
                            const char *path, int arity, const char *mangledName,
                            NativeFn function, ObjType **expectedTypes) {
@@ -925,6 +962,12 @@ TARGET_OP_DEFINE_GLOBAL: {
                 "keyword (e.g., 'set a to 30').",
                 "Variable '%s' has already been declared.", name->chars);
   }
+  if (tableGet(&vm.globals, OBJ_VAL(name), &dummy) && IS_TYPE(dummy)) {
+    THROW_ERROR(ERR_REFERENCE,
+                "Cannot shadow or overwrite a built-in type name.",
+                "Variable '%s' collides with a reserved built-in type.",
+                name->chars);
+  }
   // --------------------------------
 
   tableSet(frame->globals, OBJ_VAL(name), peek(0));
@@ -974,9 +1017,24 @@ TARGET_OP_SET_GLOBAL: {
   Value dummy;
   // Try to set in current module first
   if (tableGet(frame->globals, OBJ_VAL(name), &dummy)) {
+    if (IS_TYPE(dummy)) {
+      THROW_ERROR(ERR_RUNTIME,
+                  "Type blueprints are immutable structures. You cannot reassign them.",
+                  "Cannot reassign Type Blueprint '%s'.", name->chars);
+    }
+    if (IS_MULTI_FUNCTION(dummy)) {
+      THROW_ERROR(ERR_RUNTIME,
+                  "Functions cannot be overwritten with 'set'.",
+                  "Cannot reassign function '%s'.", name->chars);
+    }
     tableSet(frame->globals, OBJ_VAL(name), peek(0));
   } else if (tableGet(&vm.globals, OBJ_VAL(name), &dummy)) {
     // Check if it exists in Universe scope instead
+    if (IS_TYPE(dummy) || IS_NATIVE(dummy) || IS_MULTI_FUNCTION(dummy)) {
+      THROW_ERROR(ERR_RUNTIME,
+                  "Built-in types and standard library functions cannot be reassigned.",
+                  "Cannot reassign built-in '%s'.", name->chars);
+    }
     tableSet(&vm.globals, OBJ_VAL(name), peek(0));
   } else {
     // --- THE ORACLE INTERCEPT ---
@@ -1845,6 +1903,19 @@ TARGET_OP_TYPE_DEF: {
   uint16_t propertyCount = READ_SHORT();
   EXPECT_STACK(propertyCount * 2);
 
+  // Check if type name is already declared
+  Value existing;
+  if (tableGet(frame->globals, OBJ_VAL(name), &existing)) {
+    THROW_ERROR(ERR_REFERENCE,
+                "Type names are permanent blueprints and cannot be redefined.",
+                "Type '%s' has already been defined.", name->chars);
+  }
+  if (tableGet(&vm.globals, OBJ_VAL(name), &existing) && IS_TYPE(existing)) {
+    THROW_ERROR(ERR_REFERENCE,
+                "Cannot shadow or overwrite a built-in type blueprint.",
+                "Type '%s' is a reserved built-in type.", name->chars);
+  }
+
   // 1. Construct the Blueprint!
   ObjType *type = newType(name);
 
@@ -1935,6 +2006,18 @@ TARGET_OP_DEFINE_METHOD: {
     // -----------------------
 
     pop(); // pop multi
+  }
+
+  // Check for duplicate method signatures on this MultiFunction
+  for (int m = 0; m < multi->methodCount; m++) {
+    if (signaturesEqual(arity, signatures, multi->signatures[m])) {
+      THROW_ERROR(
+          ERR_REFERENCE,
+          "A method with the exact same parameter types is already defined on this "
+          "function. Overloads must have different parameter types.",
+          "Method '%s' with identical parameter signature has already been declared.",
+          name->chars);
+    }
   }
 
   // --- THE NEW SHIELD ---
@@ -2037,6 +2120,17 @@ TARGET_OP_DEFINE_EXTENSION_METHOD: {
     for (int i = 0; i < arity; i++) {
       sigCopy[i] = signatures[i];
       push(sigCopy[i]); // Shield
+    }
+
+    // Check for duplicate signatures on this type's method
+    for (int m = 0; m < multi->methodCount; m++) {
+      if (signaturesEqual(arity, sigCopy, multi->signatures[m])) {
+        THROW_ERROR(
+            ERR_REFERENCE,
+            "An extension method with the exact same parameter types is already defined on this type. Overloads must have different parameter types.",
+            "Method '%s' with identical parameter signature has already been declared.",
+            name->chars);
+      }
     }
 
     if (multi->methodCapacity < multi->methodCount + 1) {
