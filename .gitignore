@@ -8,7 +8,6 @@ test
 core.*
 
 # Scratch and test files
-test_*.moon
 debug_output.txt
 
 # Editor / IDE
@@ -19,5 +18,4 @@ debug_output.txt
 # Temporary / Scratch Files
 scratch/
 signatures_output.txt
-test_extract.py
-test_lsp.py
+

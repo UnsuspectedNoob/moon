@@ -1,21 +1,15 @@
-##
-  test_concat.moon
-  Benchmarking Moon's O(1) Rope Architecture
-##
+let p be {
+  age: 10,
+  name: "Munachi",
+}
 
-show "Starting MOON string concatenation..."
-let start be clock
-
-let text be "moon"
-let i be 0
-
-while i < 5000:
-  set text to "a" + text + "b"
-  update i + 1
+let (l: List)'s left:
+  give l[1 to end / 2]
 end
 
-let stop be clock
+let (l: List)'s right:
+  give l[end / 2 + 1 to end]
+end
 
-# We only measure the time it took to build the tree!
-show "Final String Length: `text's length` characters"
-show "Time Taken: `stop - start` seconds"
+let list be [ 1 to 9 ]
+show "`list's left` and `list's right`"
