@@ -203,8 +203,15 @@ void advance() {
       } else {
         printf("   | ");
       }
-      printf("%-22s '%.*s'\n", getTokenTypeName(parser.current.type),
-             parser.current.length, parser.current.start);
+      printf("%-22s '", getTokenTypeName(parser.current.type));
+      if (parser.current.type == TOKEN_NEWLINE) {
+        printf("\\n");
+      } else if (parser.current.type == TOKEN_EOF) {
+        // empty quotes ''
+      } else {
+        printEscapedLexeme(parser.current.start, parser.current.length);
+      }
+      printf("'\n");
     }
     if (parser.current.type != TOKEN_ERROR) {
       parser.currentHash =
@@ -703,7 +710,16 @@ static Node *parsePhrasalCall(TrieNode *startNode, Token rootToken,
       NodeArray tempArgs;
       initNodeArray(&tempArgs);
       Node *arg = NULL;
-      if (labelsPushed == 0 && check(TOKEN_LEFT_PAREN)) {
+      bool hasMultiArgChild = false;
+      for (int i = 0; i < currentNode->childCount; i++) {
+        if (currentNode->children[i]->type == NODE_ARGUMENT &&
+            currentNode->children[i]->arity > 1) {
+          hasMultiArgChild = true;
+          break;
+        }
+      }
+
+      if (hasMultiArgChild && labelsPushed == 0 && check(TOKEN_LEFT_PAREN)) {
         arg = parsePrecedence(PREC_CALL);
       } else {
         arg = expression();
@@ -1109,7 +1125,16 @@ static Node *parsePhrasalInfixCall(TrieNode *argChild, Token rootToken,
       NodeArray tempArgs;
       initNodeArray(&tempArgs);
       Node *arg = NULL;
-      if (labelsPushed == 0 && check(TOKEN_LEFT_PAREN)) {
+      bool hasMultiArgChild = false;
+      for (int i = 0; i < currentNode->childCount; i++) {
+        if (currentNode->children[i]->type == NODE_ARGUMENT &&
+            currentNode->children[i]->arity > 1) {
+          hasMultiArgChild = true;
+          break;
+        }
+      }
+
+      if (hasMultiArgChild && labelsPushed == 0 && check(TOKEN_LEFT_PAREN)) {
         arg = parsePrecedence(PREC_CALL);
       } else {
         arg = expression();
@@ -1338,6 +1363,35 @@ static Node *orInterceptor(Node *left) {
   }
 
   return or_(left);
+}
+
+static Node *asInterceptor(Node *left) {
+  Token opToken = parser.previous;
+  int leftArity = (left != NULL && left->type == NODE_TUPLE) ? left->as.tuple.count : 1;
+
+  TrieNode *rootNode = getSignatureTrie("as");
+  if (rootNode != NULL) {
+    for (int i = 0; i < rootNode->childCount; i++) {
+      if (rootNode->children[i]->type == NODE_ARGUMENT &&
+          rootNode->children[i]->isLeadingArg &&
+          rootNode->children[i]->arity == leftArity) {
+        TrieNode *argChild = rootNode->children[i];
+        Scanner savedScanner = scanner;
+        Parser savedParser = parser;
+
+        if (matchSignatureLookahead(argChild)) {
+          Node *phrasal = parsePhrasalInfixCall(argChild, opToken, left);
+          if (phrasal != NULL)
+            return phrasal;
+        }
+
+        scanner = savedScanner;
+        parser = savedParser;
+      }
+    }
+  }
+
+  return castExpression(left);
 }
 
 static Node *statement();
@@ -2903,6 +2957,27 @@ static bool isReservedKeyword(TokenType type) {
   return false;
 }
 
+static bool registerVariableInTrie(const char *varName, int len) {
+  const char *start = varName;
+  const char *end = varName + len;
+  const char *p = start;
+  while (p < end && *p != ' ')
+    p++;
+
+  TrieNode *node = startPhrase(start, (int)(p - start));
+  while (p < end) {
+    while (p < end && *p == ' ')
+      p++;
+    if (p >= end)
+      break;
+    const char *wordStart = p;
+    while (p < end && *p != ' ')
+      p++;
+    node = addLabelBranch(node, wordStart, (int)(p - wordStart));
+  }
+  return finalizePhrase(node, varName, TERMINAL_VARIABLE);
+}
+
 static Node *letDeclaration() {
   int line = parser.previous.line;
 
@@ -3052,13 +3127,11 @@ static Node *letDeclaration() {
   }
 
   bool lastWasLabel = true;
-  bool isSpaced = false;
   bool containsKeyword = isReservedKeyword(rootName.type);
   Token firstKeyword = rootName;
 
   while (!check(TOKEN_BE) && !check(TOKEN_EQUAL) && !check(TOKEN_COMMA) &&
          !check(TOKEN_COLON) && !check(TOKEN_EOF) && !check(TOKEN_NEWLINE)) {
-    isSpaced = true;
 
     if (match(TOKEN_LEFT_PAREN)) {
       if (!lastWasLabel) {
@@ -3150,18 +3223,89 @@ static Node *letDeclaration() {
     }
   }
 
+  // Update the first variable name to its full spaced representation
+  names.items[0].start = my_strdup(mangledVar);
+  names.items[0].length = strlen(mangledVar);
+
   if (check(TOKEN_COMMA)) {
-    if (isSpaced || parameters.count > 0 || startedWithArg) {
+    if (parameters.count > 0 || startedWithArg) {
       errorAt(&parser.current, ERR_SYNTAX,
-              "Invalid comma in spaced declaration.",
-              "You cannot declare multiple spaced variables or phrases in a "
-              "single line.");
+              "Invalid comma in phrasal declaration.",
+              "You cannot declare multiple phrases or functions in a single "
+              "line.");
     }
     while (match(TOKEN_COMMA)) {
+      if (check(TOKEN_LEFT_PAREN)) {
+        errorAt(&parser.current, ERR_SYNTAX,
+                "Variables cannot have arguments.",
+                "You used parentheses in a variable declaration list.");
+        advance();
+        break;
+      }
+      if (isReservedKeyword(parser.current.type)) {
+        errorAt(&parser.current, ERR_SYNTAX,
+                "Reserved keyword used inside variable name.",
+                "You cannot use reserved keywords (like 'and', 'or', 'is') inside "
+                "spaced variable names. They are only allowed in phrasal functions.");
+        advance();
+        break;
+      }
       consumeHint(TOKEN_IDENTIFIER, ERR_SYNTAX,
                   "I was expecting a variable name here.",
                   "e.g., 'let a, b be 1, 2'");
-      writeTokenArray(&names, parser.previous);
+      Token subRoot = parser.previous;
+      int subCap = 128;
+      char *subVar = calloc(1, subCap);
+      if ((int)subRoot.length + 1 >= subCap) {
+        subCap = subRoot.length + 16;
+        subVar = realloc(subVar, subCap);
+      }
+      strncat(subVar, subRoot.start, subRoot.length);
+
+      while (!check(TOKEN_BE) && !check(TOKEN_EQUAL) && !check(TOKEN_COMMA) &&
+             !check(TOKEN_COLON) && !check(TOKEN_EOF) && !check(TOKEN_NEWLINE)) {
+        if (check(TOKEN_LEFT_PAREN)) {
+          errorAt(&parser.current, ERR_SYNTAX,
+                  "Variables cannot have arguments.",
+                  "You used parentheses in a variable declaration list.");
+          advance();
+          break;
+        }
+        if (isReservedKeyword(parser.current.type)) {
+          errorAt(&parser.current, ERR_SYNTAX,
+                  "Reserved keyword used inside variable name.",
+                  "You cannot use reserved keywords (like 'and', 'or', 'is') inside "
+                  "spaced variable names. They are only allowed in phrasal functions.");
+          advance();
+          break;
+        }
+        if (!check(TOKEN_IDENTIFIER)) {
+          errorAt(&parser.current, ERR_SYNTAX,
+                  "I was expecting a variable name here.",
+                  "e.g., 'let first name, last name be ...'");
+          advance();
+          break;
+        }
+
+        advance();
+        Token labelTok = parser.previous;
+        int curLen = strlen(subVar);
+        if (curLen + labelTok.length + 5 >= subCap) {
+          subCap *= 2;
+          subVar = realloc(subVar, subCap);
+        }
+        strcat(subVar, " ");
+        strncat(subVar, labelTok.start, labelTok.length);
+      }
+
+      Token nextVarTok = {
+          .type = TOKEN_IDENTIFIER,
+          .start = my_strdup(subVar),
+          .length = strlen(subVar),
+          .line = subRoot.line,
+      };
+      writeTokenArray(&names, nextVarTok);
+      free(subVar);
     }
   }
 
@@ -3187,24 +3331,13 @@ static Node *letDeclaration() {
           "spaced variable names. They are only allowed in phrasal functions.");
     }
 
-    if (names.count == 1) {
-      if (!finalizePhrase(currentNode, mangledVar, TERMINAL_VARIABLE)) {
+    for (int i = 0; i < names.count; i++) {
+      char singleMangled[256];
+      snprintf(singleMangled, sizeof(singleMangled), "%.*s",
+               names.items[i].length, names.items[i].start);
+      if (!registerVariableInTrie(singleMangled, names.items[i].length)) {
         errorAt(&parser.previous, ERR_SYNTAX, "Namespace collision.",
                 "A phrase with this exact signature already exists.");
-      }
-      names.items[0].start = my_strdup(mangledVar);
-      names.items[0].length = strlen(mangledVar);
-    } else {
-      for (int i = 0; i < names.count; i++) {
-        TrieNode *node =
-            startPhrase(names.items[i].start, names.items[i].length);
-        char singleMangled[256];
-        snprintf(singleMangled, sizeof(singleMangled), "%.*s",
-                 names.items[i].length, names.items[i].start);
-        if (!finalizePhrase(node, singleMangled, TERMINAL_VARIABLE)) {
-          errorAt(&parser.previous, ERR_SYNTAX, "Namespace collision.",
-                  "A phrase with this exact signature already exists.");
-        }
       }
     }
 
@@ -3457,7 +3590,7 @@ static Node *declaration() {
 // ==========================================
 
 ParseRule rules[] = {
-    [TOKEN_AS] = {NULL, castExpression, PREC_CAST},
+    [TOKEN_AS] = {NULL, asInterceptor, PREC_CAST},
     [TOKEN_LEFT_PAREN] = {grouping, NULL, PREC_NONE},
     [TOKEN_LEFT_BRACE] = {dict, instantiate, PREC_CALL}, // <--- Updated!
     [TOKEN_WITH] = {NULL, instantiateWith, PREC_CALL},   // <--- New!

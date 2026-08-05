@@ -175,9 +175,30 @@ void reportCompileError(Token *token, ErrorType type, const char *message,
 
   fprintf(stderr, "\n" COLOR_RED "Oops! %s on line %d\n" COLOR_RESET,
           getErrorTypeName(type), token->line);
-  fprintf(stderr,
-          "I found a problem near '" COLOR_YELLOW "%.*s" COLOR_RESET "':\n",
-          token->length, token->start);
+
+  if (token->type == TOKEN_EOF) {
+    fprintf(stderr,
+            "I found a problem near '" COLOR_YELLOW "<EOF>" COLOR_RESET "':\n");
+  } else if (token->type == TOKEN_NEWLINE) {
+    fprintf(stderr,
+            "I found a problem near '" COLOR_YELLOW "\\n" COLOR_RESET "':\n");
+  } else {
+    fprintf(stderr, "I found a problem near '" COLOR_YELLOW);
+    for (int i = 0; i < token->length; i++) {
+      char c = token->start[i];
+      if (c == '\n')
+        fprintf(stderr, "\\n");
+      else if (c == '\r')
+        fprintf(stderr, "\\r");
+      else if (c == '\t')
+        fprintf(stderr, "\\t");
+      else if (c == '\0')
+        fprintf(stderr, "\\0");
+      else
+        fputc(c, stderr);
+    }
+    fprintf(stderr, COLOR_RESET "':\n");
+  }
 
   printSnippet(token->line, token->column, token->length);
 

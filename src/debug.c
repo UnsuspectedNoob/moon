@@ -5,6 +5,41 @@
 #include "value.h"
 #include "vm.h"
 
+void printEscapedLexeme(const char *start, int length) {
+  for (int i = 0; i < length; i++) {
+    switch (start[i]) {
+    case '\n':
+      printf("\\n");
+      break;
+    case '\r':
+      printf("\\r");
+      break;
+    case '\t':
+      printf("\\t");
+      break;
+    case '\0':
+      printf("\\0");
+      break;
+    case '\\':
+      printf("\\\\");
+      break;
+    default:
+      putchar(start[i]);
+      break;
+    }
+  }
+}
+
+void printValueEscaped(Value value) {
+  if (IS_OBJ(value) && IS_STRING(value)) {
+    ObjString *string = AS_STRING(value);
+    flattenString(string);
+    printEscapedLexeme(string->chars, string->length);
+  } else {
+    printValue(value);
+  }
+}
+
 // 1. The Stack Visualizer
 void debugStack(VM *vm) {
   printf("          "); // Indent to align with opcode column
@@ -12,7 +47,7 @@ void debugStack(VM *vm) {
   // Loop from bottom (vm->stack) to top (vm->stackTop)
   for (Value *slot = vm->stack; slot < vm->stackTop; slot++) {
     printf("[ ");
-    printValue(*slot);
+    printValueEscaped(*slot);
     printf(" ]");
   }
 
@@ -56,7 +91,7 @@ static int jumpInstruction(const char *name, int sign, Chunk *chunk,
 static int constantInstruction(const char *name, Chunk *chunk, int offset) {
   uint8_t constant = chunk->code[offset + 1];
   printf("%-16s %4d '", name, constant);
-  printValue(chunk->constants.values[constant]);
+  printValueEscaped(chunk->constants.values[constant]);
   printf("'\n");
   return offset + 2;
 }
@@ -65,7 +100,7 @@ static int constantLongInstruction(const char *name, Chunk *chunk, int offset) {
   uint16_t constant = (uint16_t)(chunk->code[offset + 1] << 8);
   constant |= chunk->code[offset + 2];
   printf("%-16s %4d '", name, constant);
-  printValue(chunk->constants.values[constant]);
+  printValueEscaped(chunk->constants.values[constant]);
   printf("'\n");
   return offset + 3;
 }
@@ -76,7 +111,7 @@ static int typeInstruction(const char *name, Chunk *chunk, int offset) {
   uint16_t count =
       (uint16_t)(chunk->code[offset + 3] << 8) | chunk->code[offset + 4];
   printf("%-16s %4d '", name, nameConst);
-  printValue(chunk->constants.values[nameConst]);
+  printValueEscaped(chunk->constants.values[nameConst]);
   printf("' (%d properties)\n", count);
   return offset + 5;
 }
@@ -107,7 +142,7 @@ static int invokeInstruction(const char *name, Chunk *chunk, int offset) {
 
   printf("%-16s (%d args) [cache: %d] %4d '", name, argCount, cacheIdx,
          constant);
-  printValue(chunk->constants.values[constant]);
+  printValueEscaped(chunk->constants.values[constant]);
   printf("'\n");
   return offset + 6;
 }
@@ -277,7 +312,7 @@ void printAST(Node *node, int indent) {
   switch (node->type) {
   case NODE_LITERAL:
     printf("[LITERAL: ");
-    printValue(node->as.literal.value);
+    printValueEscaped(node->as.literal.value);
     printf("]\n");
     break;
 

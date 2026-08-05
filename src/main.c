@@ -188,18 +188,27 @@ int main(int argc, const char *argv[]) {
   initVM();
   // ------------------------
 
+  bool hasInspectionFlag = false;
+  bool runRequested = false;
+
   // --- COMMAND LINE FLAGS ---
   for (int i = 1; i < argc; i++) {
-    if (strcmp(argv[i], "--debug") == 0) {
+    if (strcmp(argv[i], "--vm") == 0) {
       vm.debugMode = true;
     } else if (strcmp(argv[i], "--ast") == 0) {
       printAstFlag = true;
+      hasInspectionFlag = true;
     } else if (strcmp(argv[i], "--scan") == 0) {
       printScanFlag = true;
+      hasInspectionFlag = true;
     } else if (strcmp(argv[i], "--bytecode") == 0) {
       printBytecodeFlag = true;
+      hasInspectionFlag = true;
     } else if (strcmp(argv[i], "--sigtrie") == 0) {
       printSigTrieFlag = true;
+      hasInspectionFlag = true;
+    } else if (strcmp(argv[i], "-r") == 0 || strcmp(argv[i], "--run") == 0) {
+      runRequested = true;
     } else if (strcmp(argv[i], "--no-run") == 0) {
       noRunFlag = true;
     } else if (strcmp(argv[i], "--lsp") == 0) {
@@ -207,8 +216,8 @@ int main(int argc, const char *argv[]) {
       isLspMode = true; // Tell the Error Engine to stay quiet!
     } else if (argv[i][0] == '-') {
       fprintf(stderr, "Unknown flag: %s\n", argv[i]);
-      fprintf(stderr, "Usage: moon [--debug] [--ast] [--scan] [--bytecode] "
-                      "[--sigtrie] [--no-run] [--lsp] [path]\n");
+      fprintf(stderr, "Usage: moon [--vm] [--ast] [--scan] [--bytecode] "
+                      "[--sigtrie] [-r | --run] [--no-run] [--lsp] [path]\n");
       exit(64);
     } else {
       if (filePath != NULL) {
@@ -217,6 +226,10 @@ int main(int argc, const char *argv[]) {
       }
       filePath = argv[i];
     }
+  }
+
+  if (hasInspectionFlag && !runRequested) {
+    noRunFlag = true;
   }
 
   // --- EXECUTION ROUTING ---

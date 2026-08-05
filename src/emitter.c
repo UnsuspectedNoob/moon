@@ -56,7 +56,7 @@ ObjFunction *endCompiler() {
   ObjFunction *function = current->function;
 
 #ifdef DEBUG_FUNCTION_NAME
-  if ((vm.debugMode || printBytecodeFlag) && !parser.hadError) {
+  if (printBytecodeFlag && !parser.hadError) {
     disassembleChunk(currentChunk(),
                      function->name != NULL ? function->name->chars : "<main>");
   }

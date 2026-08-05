@@ -188,6 +188,21 @@ ObjString *copyStringUnescaped(const char *chars, int length) {
   return takeString(heapChars, dest);
 }
 
+static void printSignatureType(Value sig) {
+  if (IS_TYPE(sig)) {
+    printf("%s", AS_TYPE(sig)->name->chars);
+  } else if (IS_UNION(sig)) {
+    ObjUnion *unionObj = AS_UNION(sig);
+    for (int k = 0; k < unionObj->count; k++) {
+      printSignatureType(unionObj->types[k]);
+      if (k < unionObj->count - 1)
+        printf(" or ");
+    }
+  } else {
+    printValue(sig);
+  }
+}
+
 void printObject(Value value) {
   switch (OBJ_TYPE(value)) {
   case OBJ_DICT:
@@ -207,15 +222,6 @@ void printObject(Value value) {
 
   case OBJ_LIST: {
     printf("%s", "<list>");
-    // ObjList *list = AS_LIST(value);
-    // printf("[");
-    // for (int i = 0; i < list->count; i++) {
-    //   printValue(list->items[i]);
-    //   if (i < list->count - 1)
-    //     printf(", ");
-    // }
-    //
-    // printf("]");
     break;
   }
 
@@ -246,17 +252,19 @@ void printObject(Value value) {
 
   case OBJ_MULTI_FUNCTION: {
     ObjMultiFunction *multi = AS_MULTI_FUNCTION(value);
-    printf("<multi-fn %s (", multi->name->chars);
+    printf("<%s ", multi->name->chars);
     for (int i = 0; i < multi->methodCount; i++) {
-       printf("[");
-       for (int j = 0; j < multi->arity; j++) {
-         printObject(multi->signatures[i][j]);
-         if (j < multi->arity - 1) printf(", ");
-       }
-       printf("]");
-       if (i < multi->methodCount - 1) printf(" | ");
+      printf("(");
+      for (int j = 0; j < multi->arity; j++) {
+        printSignatureType(multi->signatures[i][j]);
+        if (j < multi->arity - 1)
+          printf(", ");
+      }
+      printf(")");
+      if (i < multi->methodCount - 1)
+        printf(" | ");
     }
-    printf(")>");
+    printf(">");
     break;
   }
 
@@ -452,6 +460,21 @@ ObjString *valueToString(Value value) {
   return stringifyValue(value, 0); 
 }
 
+static void stringifySignatureType(Value sig, StringBuffer *sb) {
+  if (IS_TYPE(sig)) {
+    appendBuffer(sb, AS_TYPE(sig)->name->chars, AS_TYPE(sig)->name->length);
+  } else if (IS_UNION(sig)) {
+    ObjUnion *unionObj = AS_UNION(sig);
+    for (int k = 0; k < unionObj->count; k++) {
+      stringifySignatureType(unionObj->types[k], sb);
+      if (k < unionObj->count - 1)
+        appendBuffer(sb, " or ", 4);
+    }
+  } else {
+    stringifyValueToBuffer(sig, 0, sb);
+  }
+}
+
 void stringifyValueToBuffer(Value value, int indent, StringBuffer* sb) {
   if (IS_STRING(value)) {
     flattenString(AS_STRING(value)); // <--- SHIELD
@@ -590,19 +613,21 @@ void stringifyValueToBuffer(Value value, int indent, StringBuffer* sb) {
 
   if (IS_MULTI_FUNCTION(value)) {
     ObjMultiFunction *mfn = AS_MULTI_FUNCTION(value);
-    char buffer[256];
-    int len = snprintf(buffer, sizeof(buffer), "<multi-fn %s (", mfn->name->chars);
-    appendBuffer(sb, buffer, len);
+    appendBuffer(sb, "<", 1);
+    appendBuffer(sb, mfn->name->chars, mfn->name->length);
+    appendBuffer(sb, " ", 1);
     for (int i = 0; i < mfn->methodCount; i++) {
-       appendBuffer(sb, "[", 1);
-       for (int j = 0; j < mfn->arity; j++) {
-         stringifyValueToBuffer(mfn->signatures[i][j], indent, sb);
-         if (j < mfn->arity - 1) appendBuffer(sb, ", ", 2);
-       }
-       appendBuffer(sb, "]", 1);
-       if (i < mfn->methodCount - 1) appendBuffer(sb, " | ", 3);
+      appendBuffer(sb, "(", 1);
+      for (int j = 0; j < mfn->arity; j++) {
+        stringifySignatureType(mfn->signatures[i][j], sb);
+        if (j < mfn->arity - 1)
+          appendBuffer(sb, ", ", 2);
+      }
+      appendBuffer(sb, ")", 1);
+      if (i < mfn->methodCount - 1)
+        appendBuffer(sb, " | ", 3);
     }
-    appendBuffer(sb, ")>", 2);
+    appendBuffer(sb, ">", 1);
     return;
   }
 

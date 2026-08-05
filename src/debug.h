@@ -9,6 +9,9 @@ void disassembleChunk(Chunk *chunk, const char *name);
 int disassembleInstruction(Chunk *chunk, int offset);
 void debugStack(VM *vm);
 
+void printEscapedLexeme(const char *start, int length);
+void printValueEscaped(Value value);
+
 extern bool printAstFlag;
 extern bool printScanFlag;
 extern bool printBytecodeFlag;

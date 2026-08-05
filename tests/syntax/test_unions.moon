@@ -12,7 +12,7 @@ let test2 (x: Number or Any):
 end
 
 show process
-# expect: <multi-fn process$1 ([<union [<type List>, <type String>]>])>
+# expect: <process$1 (List or String)>
 
 show test2
-# expect: <multi-fn test2$1 ([<type Any>])>
+# expect: <test2$1 (Any)>
