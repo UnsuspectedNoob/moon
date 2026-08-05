@@ -956,7 +956,8 @@ TARGET_OP_DEFINE_GLOBAL: {
 
   // --- THE REDECLARATION SHIELD ---
   Value dummy;
-  if (tableGet(frame->globals, OBJ_VAL(name), &dummy)) {
+  if (tableGet(frame->globals, OBJ_VAL(name), &dummy) &&
+      !IS_MULTI_FUNCTION(dummy)) {
     THROW_ERROR(ERR_REFERENCE,
                 "To change the value of an existing variable, use the 'set' "
                 "keyword (e.g., 'set a to 30').",
@@ -1983,7 +1984,11 @@ TARGET_OP_DEFINE_METHOD: {
       int rootLen = (int)(delimiter - name->chars);
       ObjString *rootName = copyString(name->chars, rootLen);
       push(OBJ_VAL(rootName)); // GC shield
-      tableSet(frame->globals, OBJ_VAL(rootName), OBJ_VAL(multi));
+      Value existingRoot;
+      if (!tableGet(frame->globals, OBJ_VAL(rootName), &existingRoot) ||
+          IS_MULTI_FUNCTION(existingRoot)) {
+        tableSet(frame->globals, OBJ_VAL(rootName), OBJ_VAL(multi));
+      }
       pop(); // pop rootName
     }
   } else {
@@ -2000,7 +2005,11 @@ TARGET_OP_DEFINE_METHOD: {
       int rootLen = (int)(delimiter - name->chars);
       ObjString *rootName = copyString(name->chars, rootLen);
       push(OBJ_VAL(rootName)); // GC shield
-      tableSet(frame->globals, OBJ_VAL(rootName), OBJ_VAL(multi));
+      Value existingRoot;
+      if (!tableGet(frame->globals, OBJ_VAL(rootName), &existingRoot) ||
+          IS_MULTI_FUNCTION(existingRoot)) {
+        tableSet(frame->globals, OBJ_VAL(rootName), OBJ_VAL(multi));
+      }
       pop(); // pop rootName
     }
     // -----------------------

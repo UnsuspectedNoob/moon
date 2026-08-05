@@ -245,6 +245,18 @@ let timestamp be 1000 + 5 days
 show timestamp # Output: 433000
 ```
 
+#### Coexisting Variables and Phrasal Overloads
+Variables and overloaded multi-functions can share the same root identifier in the same scope:
+```moon
+let calculate (n: Number):
+  give n * 2
+end
+
+let calculate be 100
+show calculate     # Resolves variable: 100
+show calculate 5   # Resolves function call: 10
+```
+
 ### 2.8 Type Blueprints & Object-Oriented Semantics
 ```moon
 # Blueprint definition
@@ -415,11 +427,12 @@ typedef struct TrieNode {
 | `numbers in (seq) in base (b)` | `numbers#in$1in#base$1` |
 | `(s: String) repeated (n: Number) times` | `$1_repeated$1_times` |
 
-#### Disambiguation Strategy
+#### Disambiguation Strategy & Terminal Coexistence
 When the parser encounters an identifier, it queries the `phrasalTable` and `propertyTable` hash tables:
-1. If the word starts a registered phrasal signature, it advances the DFA across argument expressions and intervening label tokens.
-2. If it is a multi-word variable (e.g. `user score`), the parser checks ahead to avoid consuming following statements.
-3. If no phrasal signature matches, it treats the identifier as a standard variable reference.
+1. **Phrasal vs Variable Coexistence**: An identifier can simultaneously serve as a root variable terminal (`TERMINAL_VARIABLE`) and have child argument branches (`NODE_ARGUMENT`) leading to overloaded multi-function terminals (`TERMINAL_PHRASE` / `TERMINAL_MULTI_FN`).
+2. **Expression Boundary Guard (`canStartExpression`)**: When traversing the DFA, `parsePhrasalCall` and `parsePhrasalInfixCall` check `canStartExpression(parser.current.type)` before consuming arguments. If the next token cannot begin an expression (e.g. `\n`, `EOF`, `end`, delimiters `,`, `:`, or binary operators `+`, `-`, `*`, `==`, `is`, etc.) and the current node is already a valid terminal, the DFA traversal breaks immediately, resolving the terminal (e.g. returning a `NODE_VARIABLE`) rather than eagerly consuming invalid tokens as arguments.
+3. **Multi-Word Variable Lookahead**: If an identifier starts a multi-word variable (e.g. `user score`), the parser checks ahead to avoid consuming following statements.
+4. **Fallback**: If no phrasal signature matches and the identifier has no phrasal arguments, it treats the identifier as a standard variable reference.
 
 ---
 

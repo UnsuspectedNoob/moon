@@ -78,6 +78,30 @@ static bool canStartExpression(TokenType type) {
   case TOKEN_RIGHT_BRACE:
   case TOKEN_COMMA:
   case TOKEN_COLON:
+  case TOKEN_DOT:
+  case TOKEN_POSSESSIVE:
+  case TOKEN_PLUS:
+  case TOKEN_STAR:
+  case TOKEN_SLASH:
+  case TOKEN_MOD:
+  case TOKEN_ADD_INPLACE:
+  case TOKEN_EQUAL:
+  case TOKEN_EQUAL_EQUAL:
+  case TOKEN_BANG_EQUAL:
+  case TOKEN_GREATER:
+  case TOKEN_GREATER_EQUAL:
+  case TOKEN_LESS:
+  case TOKEN_LESS_EQUAL:
+  case TOKEN_IS:
+  case TOKEN_AND:
+  case TOKEN_OR:
+  case TOKEN_AS:
+  case TOKEN_WITH:
+  case TOKEN_IN:
+  case TOKEN_FROM:
+  case TOKEN_EACH:
+  case TOKEN_KEEP:
+  case TOKEN_END:
   case TOKEN_ELSE:
   case TOKEN_BE:
   case TOKEN_TO:
@@ -85,6 +109,18 @@ static bool canStartExpression(TokenType type) {
   case TOKEN_UNLESS:
   case TOKEN_THEN:
   case TOKEN_BY:
+  case TOKEN_SET:
+  case TOKEN_LET:
+  case TOKEN_UPDATE:
+  case TOKEN_GIVE:
+  case TOKEN_BREAK:
+  case TOKEN_QUIT:
+  case TOKEN_SKIP:
+  case TOKEN_WHILE:
+  case TOKEN_UNTIL:
+  case TOKEN_FOR:
+  case TOKEN_TYPE:
+  case TOKEN_LOAD:
     return false;
   default:
     return true;
@@ -677,6 +713,11 @@ static Node *parsePhrasalCall(TrieNode *startNode, Token rootToken,
     }
 
     if (expectsArgument) {
+      if (!canStartExpression(parser.current.type) &&
+          currentNode->terminalType != TERMINAL_NONE) {
+        break;
+      }
+
       int labelsPushed = 0;
       for (int i = 0; i < currentNode->childCount; i++) {
         if (currentNode->children[i]->type == NODE_ARGUMENT) {
@@ -1092,6 +1133,11 @@ static Node *parsePhrasalInfixCall(TrieNode *argChild, Token rootToken,
     }
 
     if (expectsArgument) {
+      if (!canStartExpression(parser.current.type) &&
+          currentNode->terminalType != TERMINAL_NONE) {
+        break;
+      }
+
       int labelsPushed = 0;
       for (int i = 0; i < currentNode->childCount; i++) {
         if (currentNode->children[i]->type == NODE_ARGUMENT) {
